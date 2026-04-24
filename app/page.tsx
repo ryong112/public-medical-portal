@@ -18,7 +18,7 @@ export default function IntegratedPortal() {
   const [isError, setIsError] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
 
-  // --- [2. 상태 관리: 팀장님 스타일 100% 고정] ---
+  // --- [2. 상태 관리] ---
   const [messages, setMessages] = useState<any[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [myId, setMyId] = useState<string | null>(null);
@@ -77,7 +77,7 @@ export default function IntegratedPortal() {
     }
   }, [isAuthenticated, isChatOpen]);
 
-  // --- [4. 기능 함수 로직: 100% 보존] ---
+  // --- [4. 기능 함수 로직] ---
   const onMouseDownChat = (e: React.MouseEvent) => { setIsDraggingChat(true); dragStartPos.current = { x: e.clientX - position.x, y: e.clientY - position.y }; };
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => { if (!isDraggingChat) return; setPosition({ x: e.clientX - dragStartPos.current.x, y: e.clientY - dragStartPos.current.y }); };
@@ -121,7 +121,6 @@ export default function IntegratedPortal() {
   };
   const handleDownload = async (url: string, originalName: string) => { try { const response = await fetch(url); const blob = await response.blob(); const downloadUrl = window.URL.createObjectURL(blob); const link = document.createElement('a'); link.href = downloadUrl; link.download = originalName; document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(downloadUrl); } catch (e) { alert('오류'); } };
   
-  // --- [고급 아이콘 디자인 복구] ---
   const getFileIcon = (fileName: string) => {
     const ext = fileName.split('.').pop()?.toLowerCase(); const iconSize = 20;
     if (ext === 'hwp') return { icon: <FileText size={iconSize} className="text-blue-500" />, color: 'bg-blue-50', label: 'HWP' };
@@ -174,36 +173,44 @@ export default function IntegratedPortal() {
   // --- [메인 UI] ---
   return (
     <div className="flex flex-col h-screen bg-[#F0F2F5] text-[#2C3E50] overflow-hidden select-none font-sans">
-      <header className="bg-[#1A1C1E] p-4 px-6 md:px-8 flex justify-between items-center z-[60] shadow-md text-white border-b border-white/5">
-        <div className="flex items-center gap-3">
-          <button onClick={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)} className="md:hidden p-2 hover:bg-white/10 rounded-xl transition-colors"><Menu size={24}/></button>
-          <span className="text-2xl">📂</span>
-          <h1 className="font-extrabold text-base md:text-lg tracking-tight uppercase truncate">공공의료지원과 공유문서함</h1>
+      <header className="bg-[#1A1C1E] p-3 md:p-4 px-4 md:px-8 flex justify-between items-center z-[60] shadow-md text-white border-b border-white/5 gap-2">
+        <div className="flex items-center gap-2 md:gap-3 overflow-hidden">
+          <button onClick={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)} className="md:hidden p-1 hover:bg-white/10 rounded-lg transition-colors shrink-0"><Menu size={22}/></button>
+          <span className="text-lg md:text-2xl hidden sm:inline shrink-0">📂</span>
+          <h1 className="font-extrabold text-xs sm:text-sm md:text-lg tracking-tight uppercase truncate">공공의료지원과 문서함</h1>
         </div>
-        <div className="flex items-center gap-3 md:gap-4">
-          {/* [새로 추가된 실적공유 버튼 시작] */}
-          <button 
-            onClick={() => window.open('https://docs.google.com/spreadsheets/d/1lDD-otVP5s7h-94deku3hLRF4buztn0lO0MBqzNN17M/edit?usp=sharing', '_blank')} 
-            className="flex items-center gap-2 px-4 md:px-6 py-2.5 rounded-2xl font-black transition-all shadow-md active:scale-95 bg-emerald-500 hover:bg-emerald-600 text-white text-xs md:text-sm"
-          >
-            <FileSpreadsheet size={18}/> <span className="hidden sm:inline">실적공유</span>
-          </button>
-          {/* [새로 추가된 실적공유 버튼 끝] */}
 
-          {/* [PC 버전: 텍스트 포함 / 모바일: 아이콘만] */}
-          <button onClick={() => setViewMode(viewMode === 'calendar' ? 'files' : 'calendar')} className="flex items-center gap-2 px-4 md:px-6 py-2.5 rounded-2xl font-black transition-all shadow-md active:scale-95 bg-white text-slate-900 text-xs md:text-sm">
-            <CalendarIcon size={18}/> <span className="hidden sm:inline">{viewMode === 'calendar' ? '문서함으로 돌아가기' : '부서 공유 달력'}</span>
+        <div className="flex items-center gap-1.5 md:gap-4 shrink-0">
+          {/* 실적공유 (a 태그로 변경하여 팝업 차단 우회) */}
+          <a 
+            href="https://docs.google.com/spreadsheets/d/1lDD-otVP5s7h-94deku3hLRF4buztn0lO0MBqzNN17M/edit?usp=sharing" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 md:gap-2 px-2.5 md:px-6 py-2 md:py-2.5 rounded-xl md:rounded-2xl font-black transition-all shadow-md active:scale-95 bg-emerald-500 hover:bg-emerald-600 text-white text-xs md:text-sm"
+          >
+            <FileSpreadsheet size={16} className="md:w-[18px] md:h-[18px]"/> <span className="hidden md:inline">실적공유</span>
+          </a>
+
+          <button 
+            onClick={() => setViewMode(viewMode === 'calendar' ? 'files' : 'calendar')} 
+            className="flex items-center gap-1.5 md:gap-2 px-2.5 md:px-6 py-2 md:py-2.5 rounded-xl md:rounded-2xl font-black transition-all shadow-md active:scale-95 bg-white text-slate-900 text-xs md:text-sm"
+          >
+            <CalendarIcon size={16} className="md:w-[18px] md:h-[18px]"/> <span className="hidden md:inline">{viewMode === 'calendar' ? '문서함' : '달력'}</span>
           </button>
-          <button onClick={() => setIsChatOpen(!isChatOpen)} className="relative bg-[#3498DB] hover:bg-[#2980B9] px-4 md:px-5 py-2.5 rounded-2xl font-black transition-all shadow-md active:scale-95 flex items-center gap-2 text-xs md:text-sm">
-            <span>💬 <span className="hidden sm:inline">정보공유방</span></span>
-            {hasUnread && <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full border-2 border-[#1A1C1E] animate-bounce"></span>}
+
+          <button 
+            onClick={() => setIsChatOpen(!isChatOpen)} 
+            className="relative bg-[#3498DB] hover:bg-[#2980B9] px-2.5 md:px-5 py-2 md:py-2.5 rounded-xl md:rounded-2xl font-black transition-all shadow-md active:scale-95 flex items-center gap-1.5 md:gap-2 text-xs md:text-sm text-white"
+          >
+            <span>💬 <span className="hidden md:inline">정보공유방</span></span>
+            {hasUnread && <span className="absolute -top-1 -right-1 w-3 h-3 md:w-4 md:h-4 bg-red-500 rounded-full border-2 border-[#1A1C1E] animate-bounce"></span>}
           </button>
-          <button onClick={() => { localStorage.removeItem('dept_auth_confirm'); window.location.reload(); }} className="text-slate-500 hover:text-white p-2 transition-colors"><X size={20}/></button>
+
+          <button onClick={() => { localStorage.removeItem('dept_auth_confirm'); window.location.reload(); }} className="text-slate-500 hover:text-white p-1 md:p-2 transition-colors ml-0.5 md:ml-0"><X size={18} className="md:w-[20px] md:h-[20px]"/></button>
         </div>
       </header>
 
       <main className="flex-1 flex overflow-hidden relative">
-        {/* 사이드바: PC 상시 노출 / 모바일 햄버거 */}
         <aside className={`
           fixed md:relative inset-y-0 left-0 z-50 w-80 bg-[#EBEEF2] border-r border-slate-300 flex flex-col shadow-2xl md:shadow-none transition-transform duration-300 transform
           ${isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
@@ -234,10 +241,8 @@ export default function IntegratedPortal() {
           </div>
         </aside>
 
-        {/* 배경 오버레이 (모바일용) */}
         {isMobileSidebarOpen && <div onClick={() => setIsMobileSidebarOpen(false)} className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40 md:hidden animate-in fade-in" />}
 
-        {/* 본문 영역 */}
         <section 
           onDragOver={(e) => { e.preventDefault(); if(viewMode==='files') setIsDragOver(true); }} 
           onDragLeave={() => setIsDragOver(false)} 
@@ -319,7 +324,6 @@ export default function IntegratedPortal() {
                           <tr key={file.id} className="group hover:bg-slate-50/50 transition-all">
                             <td className="py-6 px-4">
                               <div onClick={() => handleDownload(file.url, file.name)} className="flex items-center gap-4 cursor-pointer">
-                                {/* [PC에서만 보이는 예쁜 아이콘 박스] */}
                                 <div className={`w-12 h-12 ${info.color} rounded-2xl flex flex-col items-center justify-center border border-transparent group-hover:border-slate-200 shadow-sm transition-all`}>
                                   {info.icon} <span className="text-[7px] font-black text-slate-400 mt-0.5">{info.label}</span>
                                 </div>
@@ -340,10 +344,8 @@ export default function IntegratedPortal() {
         </section>
       </main>
 
-      {/* 일정 상세 팝업 */}
       {selectedSchedule && (<div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in"><div className="bg-white w-full max-w-md rounded-[32px] shadow-2xl p-8 flex flex-col items-center"><div className="bg-blue-50 p-3 rounded-2xl text-blue-600 mb-6"><CalendarDays size={24}/></div><h3 className="text-2xl font-black text-slate-800 mb-2 leading-tight text-center">{selectedSchedule.title}</h3><p className="text-slate-400 font-bold mb-8 text-center">{selectedSchedule.date} | {selectedSchedule.start_time} - {selectedSchedule.end_time}</p><div className="flex gap-3 w-full"><button onClick={() => onDeleteSchedule(selectedSchedule.id)} className="flex-1 bg-red-50 text-red-500 py-4 rounded-2xl font-black flex items-center justify-center gap-2 hover:bg-red-500 hover:text-white transition-all"><Trash2 size={18}/> 삭제하시겠습니까?</button><button onClick={() => setSelectedSchedule(null)} className="flex-1 bg-slate-900 text-white py-4 rounded-2xl font-black transition-all hover:bg-black">닫기</button></div></div></div>)}
 
-      {/* 정보공유방: PC에서만 드래그 가능, 모바일은 하단 고정 */}
       {isChatOpen && (
         <div ref={chatRef} style={typeof window !== 'undefined' && window.innerWidth > 768 ? { transform: `translate(${position.x}px, ${position.y}px)` } : {}} className="fixed bottom-0 md:bottom-10 right-0 md:right-10 w-full md:w-[420px] h-[80vh] md:h-[650px] bg-[#A9C7E3] rounded-t-[32px] md:rounded-[40px] shadow-2xl border-x-4 border-t-4 md:border-4 border-white flex flex-col z-[100]">
           <div onMouseDown={onMouseDownChat} className="p-5 md:p-6 bg-white/95 backdrop-blur-md flex justify-between items-center cursor-move border-b border-black/5 rounded-t-[28px] md:rounded-t-[36px] text-slate-900"><span className="font-black text-sm">🗨️ 정보공유방</span><button onClick={() => setIsChatOpen(false)} className="w-9 h-9 bg-slate-100 hover:bg-red-500 hover:text-white rounded-full flex items-center justify-center font-bold transition-all">✕</button></div>
