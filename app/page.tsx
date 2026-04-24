@@ -42,8 +42,6 @@ export default function IntegratedPortal() {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editTitleValue, setEditTitleValue] = useState('');
   const [isDragOver, setIsDragOver] = useState(false);
-  
-  // 모바일 전용 메뉴 상태
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
   const [schedules, setSchedules] = useState<any[]>([]);
@@ -79,7 +77,7 @@ export default function IntegratedPortal() {
     }
   }, [isAuthenticated, isChatOpen]);
 
-  // --- [4. 기능 함수 (팀장님 코드 100% 복구)] ---
+  // --- [4. 기능 함수 로직: 100% 보존] ---
   const onMouseDownChat = (e: React.MouseEvent) => { setIsDraggingChat(true); dragStartPos.current = { x: e.clientX - position.x, y: e.clientY - position.y }; };
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => { if (!isDraggingChat) return; setPosition({ x: e.clientX - dragStartPos.current.x, y: e.clientY - dragStartPos.current.y }); };
@@ -122,12 +120,17 @@ export default function IntegratedPortal() {
     } catch (e) { alert("압축 오류"); } finally { setIsDownloadingAll(false); }
   };
   const handleDownload = async (url: string, originalName: string) => { try { const response = await fetch(url); const blob = await response.blob(); const downloadUrl = window.URL.createObjectURL(blob); const link = document.createElement('a'); link.href = downloadUrl; link.download = originalName; document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(downloadUrl); } catch (e) { alert('오류'); } };
+  
+  // --- [고급 아이콘 디자인 복구] ---
   const getFileIcon = (fileName: string) => {
     const ext = fileName.split('.').pop()?.toLowerCase(); const iconSize = 20;
     if (ext === 'hwp') return { icon: <FileText size={iconSize} className="text-blue-500" />, color: 'bg-blue-50', label: 'HWP' };
     if (ext === 'pdf') return { icon: <FileText size={iconSize} className="text-red-500" />, color: 'bg-red-50', label: 'PDF' };
+    if (ext === 'ppt' || ext === 'pptx') return { icon: <FileSpreadsheet size={iconSize} className="text-orange-500" />, color: 'bg-orange-50', label: 'PPT' };
+    if (ext === 'xls' || ext === 'xlsx') return { icon: <FileSpreadsheet size={iconSize} className="text-green-600" />, color: 'bg-green-50', label: 'XLS' };
     return { icon: <File size={iconSize} className="text-slate-400" />, color: 'bg-slate-50', label: 'FILE' };
   };
+
   const handleUpload = async (fileList: FileList | File[]) => {
     setUploading(true);
     for (const file of Array.from(fileList)) {
@@ -141,8 +144,7 @@ export default function IntegratedPortal() {
     await fetchFiles(); setUploading(false);
   };
   const onUpdateCategoryName = async () => { 
-    const targetCat = categories.find(c => c.name === selectedCategory); 
-    if (!targetCat || !editTitleValue.trim()) return; 
+    const targetCat = categories.find(c => c.name === selectedCategory); if (!targetCat || !editTitleValue.trim()) return; 
     await supabase.from('categories').update({ name: editTitleValue.trim() }).eq('id', targetCat.id); 
     setSelectedCategory(editTitleValue.trim()); setIsEditingTitle(false); fetchCategories(); 
   };
@@ -153,13 +155,13 @@ export default function IntegratedPortal() {
 
   if (!isMounted) return null;
 
-  // --- [보안 게이트웨이] ---
+  // --- [보안 화면] ---
   if (!isAuthenticated) {
     return (
-      <div className="h-screen bg-[#1A1C1E] flex items-center justify-center p-4 sm:p-6 font-sans">
-        <div className="bg-white w-full max-w-md rounded-[40px] shadow-2xl p-8 sm:p-12 flex flex-col items-center animate-in zoom-in-95 duration-300">
+      <div className="h-screen bg-[#1A1C1E] flex items-center justify-center p-6 font-sans">
+        <div className="bg-white w-full max-w-md rounded-[40px] shadow-2xl p-12 flex flex-col items-center">
           <div className="bg-blue-50 p-6 rounded-[32px] mb-8 text-blue-600 shadow-inner"><Lock size={48} strokeWidth={2.5} /></div>
-          <h1 className="text-xl sm:text-2xl font-black text-slate-800 mb-2 tracking-tight text-center leading-tight">공공의료지원과 전용</h1>
+          <h1 className="text-2xl font-black text-slate-800 mb-2 tracking-tight text-center leading-tight">공공의료지원과 전용</h1>
           <form onSubmit={handleAuthSubmit} className="w-full space-y-4">
             <input type="password" className={`w-full bg-white border-2 ${isError ? 'border-red-400' : 'border-slate-100'} p-5 rounded-[24px] font-black text-center outline-none focus:border-blue-500 transition-all text-xl text-slate-900 shadow-sm`} placeholder="코드 입력" value={accessCode} onChange={(e) => { setAccessCode(e.target.value); setIsError(false); }} autoFocus />
             <button className="w-full bg-slate-900 hover:bg-black text-white py-5 rounded-[24px] font-black shadow-xl transition-all hover:-translate-y-1 active:scale-95 text-lg">인증 및 입장</button>
@@ -172,28 +174,29 @@ export default function IntegratedPortal() {
   // --- [메인 UI] ---
   return (
     <div className="flex flex-col h-screen bg-[#F0F2F5] text-[#2C3E50] overflow-hidden select-none font-sans">
-      <header className="bg-[#1A1C1E] p-4 px-4 sm:px-8 flex justify-between items-center z-[60] shadow-md text-white border-b border-white/5">
-        <div className="flex items-center gap-2 sm:gap-3">
-          {/* 모바일 햄버거 메뉴 버튼 */}
+      <header className="bg-[#1A1C1E] p-4 px-6 md:px-8 flex justify-between items-center z-[60] shadow-md text-white border-b border-white/5">
+        <div className="flex items-center gap-3">
           <button onClick={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)} className="md:hidden p-2 hover:bg-white/10 rounded-xl transition-colors"><Menu size={24}/></button>
-          <span className="text-xl sm:text-2xl">📂</span>
-          <h1 className="font-extrabold text-sm sm:text-lg tracking-tight uppercase truncate max-w-[120px] sm:max-w-none">공공의료지원과 포털</h1>
+          <span className="text-2xl">📂</span>
+          <h1 className="font-extrabold text-base md:text-lg tracking-tight uppercase truncate">공공의료지원과 공유문서함</h1>
         </div>
-        <div className="flex items-center gap-2 sm:gap-4">
-          <button onClick={() => setViewMode(viewMode === 'calendar' ? 'files' : 'calendar')} className="flex items-center gap-2 px-3 sm:px-6 py-2 sm:py-2.5 rounded-2xl font-black transition-all shadow-md active:scale-95 bg-white text-slate-900 text-xs sm:text-sm">
-            <CalendarIcon size={16}/> <span className="hidden xs:inline">{viewMode === 'calendar' ? '문서함' : '달력'}</span>
+        <div className="flex items-center gap-3 md:gap-4">
+          {/* [PC 버전: 텍스트 포함 / 모바일: 아이콘만] */}
+          <button onClick={() => setViewMode(viewMode === 'calendar' ? 'files' : 'calendar')} className="flex items-center gap-2 px-4 md:px-6 py-2.5 rounded-2xl font-black transition-all shadow-md active:scale-95 bg-white text-slate-900 text-xs md:text-sm">
+            <CalendarIcon size={18}/> <span className="hidden sm:inline">{viewMode === 'calendar' ? '문서함으로 돌아가기' : '부서 공유 달력'}</span>
           </button>
-          <button onClick={() => setIsChatOpen(!isChatOpen)} className="relative bg-[#3498DB] hover:bg-[#2980B9] px-3 sm:px-5 py-2 sm:py-2.5 rounded-2xl font-black transition-all shadow-md active:scale-95 flex items-center gap-2 text-xs sm:text-sm">
-            <span>💬 <span className="hidden xs:inline">정보공유방</span></span>
-            {hasUnread && <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-[#1A1C1E] animate-bounce"></span>}
+          <button onClick={() => setIsChatOpen(!isChatOpen)} className="relative bg-[#3498DB] hover:bg-[#2980B9] px-4 md:px-5 py-2.5 rounded-2xl font-black transition-all shadow-md active:scale-95 flex items-center gap-2 text-xs md:text-sm">
+            <span>💬 <span className="hidden sm:inline">정보공유방</span></span>
+            {hasUnread && <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full border-2 border-[#1A1C1E] animate-bounce"></span>}
           </button>
+          <button onClick={() => { localStorage.removeItem('dept_auth_confirm'); window.location.reload(); }} className="text-slate-500 hover:text-white p-2 transition-colors"><X size={20}/></button>
         </div>
       </header>
 
       <main className="flex-1 flex overflow-hidden relative">
-        {/* 사이드바: 모바일 대응 레이어 */}
+        {/* 사이드바: PC 상시 노출 / 모바일 햄버거 */}
         <aside className={`
-          fixed md:relative inset-y-0 left-0 z-50 w-72 bg-[#EBEEF2] border-r border-slate-300 flex flex-col shadow-2xl md:shadow-none transition-transform duration-300 transform
+          fixed md:relative inset-y-0 left-0 z-50 w-80 bg-[#EBEEF2] border-r border-slate-300 flex flex-col shadow-2xl md:shadow-none transition-transform duration-300 transform
           ${isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
         `}>
           <div className="p-6 pb-2 text-slate-400 flex justify-between items-center">
@@ -202,20 +205,23 @@ export default function IntegratedPortal() {
           </div>
           <div className="flex-1 overflow-y-auto px-6 py-2 custom-scrollbar">
             <div className="space-y-1.5 mb-4">
-              <button onClick={() => { setViewMode('files'); setSelectedCategory('전체'); setIsMobileSidebarOpen(false); }} className={`w-full text-left px-4 py-3.5 rounded-xl text-sm font-bold transition-all ${selectedCategory === '전체' && viewMode === 'files' ? 'bg-white shadow-md text-blue-600' : 'text-slate-500'}`}>🏠 전체 문서 보기</button>
+              <button onClick={() => { setViewMode('files'); setSelectedCategory('전체'); setIsMobileSidebarOpen(false); }} className={`w-full text-left px-4 py-3.5 rounded-xl text-sm font-bold transition-all ${selectedCategory === '전체' && viewMode === 'files' ? 'bg-white shadow-md text-blue-600 ring-1 ring-slate-200' : 'text-slate-500 hover:bg-slate-200/60'}`}>🏠 전체 문서 보기</button>
               {categories.map((cat, idx) => (
-                <div key={cat.id} className="group relative flex items-center gap-1 transition-transform">
-                  <button onClick={() => { setViewMode('files'); setSelectedCategory(cat.name); setIsMobileSidebarOpen(false); }} className={`flex-1 text-left px-4 py-3.5 rounded-xl text-sm font-bold transition-all ${selectedCategory === cat.name && viewMode === 'files' ? 'bg-white shadow-md text-blue-600' : 'text-slate-500'}`}>📁 {cat.name}</button>
-                  <button onClick={() => onDeleteCategoryWithFiles(cat.id, cat.name)} className="absolute right-2 opacity-0 group-hover:opacity-100 text-red-300 hover:text-red-500 text-xs px-2">✕</button>
+                <div key={cat.id} draggable onDragStart={() => setDraggedItemIndex(idx)} onDragOver={(e) => e.preventDefault()} onDrop={async() => {
+                   if (draggedItemIndex === null || draggedItemIndex === idx) return;
+                   const newCats = [...categories]; const item = newCats.splice(draggedItemIndex, 1)[0]; newCats.splice(idx, 0, item);
+                   setCategories(newCats); for(let i=0; i<newCats.length; i++) await supabase.from('categories').update({order_index: i}).eq('id', newCats[i].id);
+                   setDraggedItemIndex(null);
+                }} className={`group relative flex items-center gap-1 cursor-grab active:cursor-grabbing transition-transform ${draggedItemIndex === idx ? 'opacity-30' : 'opacity-100'}`}>
+                  <div className="absolute left-1 opacity-0 group-hover:opacity-40"><GripVertical size={14}/></div>
+                  <button onClick={() => { setViewMode('files'); setSelectedCategory(cat.name); setIsMobileSidebarOpen(false); }} className={`flex-1 text-left px-4 py-3.5 rounded-xl text-sm font-bold transition-all pl-6 ${selectedCategory === cat.name && viewMode === 'files' ? 'bg-white shadow-md text-blue-600 ring-1 ring-slate-200' : 'text-slate-500 hover:bg-slate-200/60'}`}>📁 {cat.name}</button>
+                  <button onClick={() => onDeleteCategoryWithFiles(cat.id, cat.name)} className="absolute right-2 top-4 opacity-0 group-hover:opacity-100 text-red-300 hover:text-red-500 text-xs px-2 transition-opacity">✕</button>
                 </div>
               ))}
             </div>
           </div>
           <div className="p-6 border-t border-slate-300 bg-[#EBEEF2]">
-            <div className="flex gap-2 bg-white p-2.5 rounded-2xl border border-slate-200 shadow-sm">
-              <input className="flex-1 bg-transparent border-none text-xs font-bold outline-none px-2 text-slate-900" placeholder="분류 추가..." value={newCatName} onChange={(e) => setNewCatName(e.target.value)} onKeyDown={async(e) => { if(e.key === 'Enter' && newCatName.trim()) { await supabase.from('categories').insert([{ name: newCatName.trim(), order_index: categories.length }]); setNewCatName(''); } }} />
-              <button onClick={async() => { if(newCatName.trim()) { await supabase.from('categories').insert([{ name: newCatName.trim(), order_index: categories.length }]); setNewCatName(''); } }} className="bg-slate-900 text-white w-8 h-8 rounded-xl font-black text-sm">+</button>
-            </div>
+            <div className="flex gap-2 bg-white p-2.5 rounded-2xl border border-slate-200 focus-within:ring-2 focus-within:ring-blue-100 shadow-sm transition-all"><input className="flex-1 bg-transparent border-none text-xs font-bold outline-none px-2 text-slate-900" placeholder="분류 추가..." value={newCatName} onChange={(e) => setNewCatName(e.target.value)} onKeyDown={async(e) => { if(e.key === 'Enter' && newCatName.trim()) { await supabase.from('categories').insert([{ name: newCatName.trim(), order_index: categories.length }]); setNewCatName(''); } }} /><button onClick={async() => { if(newCatName.trim()) { await supabase.from('categories').insert([{ name: newCatName.trim(), order_index: categories.length }]); setNewCatName(''); } }} className="bg-slate-900 text-white w-8 h-8 rounded-xl shadow-sm font-black text-sm">+</button></div>
           </div>
         </aside>
 
@@ -223,73 +229,96 @@ export default function IntegratedPortal() {
         {isMobileSidebarOpen && <div onClick={() => setIsMobileSidebarOpen(false)} className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40 md:hidden animate-in fade-in" />}
 
         {/* 본문 영역 */}
-        <section className="flex-1 flex flex-col bg-white overflow-hidden relative shadow-inner">
-          <div className="w-full mx-auto flex flex-col h-full p-4 sm:p-8 md:p-12">
-            <div className="flex flex-col sm:flex-row justify-between items-start gap-4 mb-6 sm:mb-10">
+        <section 
+          onDragOver={(e) => { e.preventDefault(); if(viewMode==='files') setIsDragOver(true); }} 
+          onDragLeave={() => setIsDragOver(false)} 
+          onDrop={(e) => { e.preventDefault(); setIsDragOver(false); if(viewMode==='files') handleUpload(e.dataTransfer.files); }} 
+          className={`flex-1 flex flex-col bg-white overflow-hidden relative shadow-inner transition-all duration-300 ${isDragOver ? 'bg-blue-50/50' : 'bg-white'}`}
+        >
+          {isDragOver && (
+            <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none animate-in fade-in duration-200">
+              <div className="bg-blue-600/90 text-white px-10 py-6 rounded-[40px] shadow-2xl font-black flex flex-col items-center gap-4 animate-bounce">
+                <FilePlus size={48} /> <p className="text-xl">파일을 이곳에 놓으세요!</p>
+              </div>
+            </div>
+          )}
+
+          <div className="max-w-6xl w-full mx-auto flex flex-col h-full p-6 md:p-12">
+            <div className="flex flex-col md:flex-row justify-between items-start mb-10 gap-6">
               <div className="flex-1 w-full">
-                <div className="group flex items-center gap-3 mb-2">
+                <div className="group flex items-center gap-4 mb-2">
                   {isEditingTitle && viewMode === 'files' ? (
-                    <div className="flex items-center gap-2 w-full">
-                      <input className="text-xl sm:text-4xl font-black text-slate-900 tracking-tighter bg-white border-b-4 border-blue-600 outline-none w-full max-w-2xl" value={editTitleValue} onChange={(e)=>setEditTitleValue(e.target.value)} autoFocus onKeyDown={(e) => e.key === 'Enter' && onUpdateCategoryName()} />
-                      <button onClick={onUpdateCategoryName} className="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-black">저장</button>
+                    <div className="flex items-center gap-3 w-full">
+                      <input className="text-2xl md:text-4xl font-black text-slate-900 tracking-tighter bg-white border-b-4 border-blue-600 outline-none w-full max-w-2xl py-1" value={editTitleValue} onChange={(e)=>setEditTitleValue(e.target.value)} autoFocus onKeyDown={(e) => e.key === 'Enter' && onUpdateCategoryName()} />
+                      <button onClick={onUpdateCategoryName} className="bg-blue-600 text-white px-5 py-2 rounded-2xl text-xs font-black shadow-lg">저장</button>
                     </div>
                   ) : (
                     <>
-                      <h2 className="text-xl sm:text-4xl font-black text-slate-800 tracking-tighter uppercase truncate">{viewMode === 'calendar' ? '부서 공유 달력' : selectedCategory}</h2>
-                      {viewMode === 'files' && selectedCategory !== '전체' && <button onClick={() => { setEditTitleValue(selectedCategory); setIsEditingTitle(true); }} className="text-slate-400 hover:text-blue-500 transition-all text-xs">✎</button>}
-                      {viewMode === 'files' && <button onClick={handleDownloadCategoryZip} disabled={isDownloadingAll} className="bg-blue-50 text-blue-600 p-2 rounded-xl hover:bg-blue-600 hover:text-white transition-all shadow-sm"><Archive size={14} /></button>}
+                      <h2 className="text-2xl md:text-4xl font-black text-slate-800 tracking-tighter uppercase truncate">{viewMode === 'calendar' ? '부서 공유 달력' : selectedCategory}</h2>
+                      {viewMode === 'files' && selectedCategory !== '전체' && <button onClick={() => { setEditTitleValue(selectedCategory); setIsEditingTitle(true); }} className="opacity-100 md:opacity-0 group-hover:opacity-100 bg-slate-100 text-slate-400 p-2 rounded-xl hover:text-blue-500 text-xs font-bold transition-all">✎ 수정</button>}
+                      {viewMode === 'files' && <button onClick={handleDownloadCategoryZip} disabled={isDownloadingAll} className="flex items-center gap-2 bg-blue-50 text-blue-600 px-4 py-2 rounded-xl text-xs font-black hover:bg-blue-600 hover:text-white transition-all ml-2 shadow-sm"><Archive size={14} /> <span className="hidden sm:inline">전체 다운로드(ZIP)</span></button>}
                     </>
                   )}
                 </div>
-                <p className="text-[10px] sm:text-sm text-slate-400 font-medium italic truncate">본 서비스는 부서 전용 시스템입니다.</p>
+                <p className="text-xs md:text-sm text-slate-400 font-medium tracking-tight italic">{viewMode === 'calendar' ? '팀원들의 시간을 확인하고 일정을 공유하세요.' : '본 서비스는 부서 전용 시스템입니다.'}</p>
               </div>
               {viewMode === 'files' && (
-                <label className="w-full sm:w-auto bg-blue-600 text-white px-6 py-3 rounded-2xl font-black cursor-pointer shadow-lg text-center text-sm active:scale-95 flex items-center justify-center gap-2">
+                <label className="w-full md:w-auto bg-blue-600 text-white px-8 py-3.5 rounded-3xl font-black cursor-pointer shadow-lg active:scale-95 flex items-center justify-center gap-2">
                   <Plus size={18} /><span>파일 업로드</span>
                   <input type="file" className="hidden" multiple onChange={(e) => e.target.files && handleUpload(e.target.files)} />
                 </label>
               )}
             </div>
 
-            {/* 달력/파일 리스트: 가로 스크롤 대응 */}
             <div className="flex-1 overflow-auto custom-scrollbar">
               {viewMode === 'calendar' ? (
-                <div className="min-w-[600px] sm:min-w-0">
-                  <div className="flex items-center gap-4 mb-6">
-                    <h3 className="text-lg sm:text-2xl font-black text-slate-700">{currentMonth.getFullYear()}년 {currentMonth.getMonth() + 1}월</h3>
-                    <div className="flex gap-1">
-                      <button onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() - 1)))} className="p-2 bg-slate-100 rounded-xl"><ChevronLeft size={16}/></button>
-                      <button onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() + 1)))} className="p-2 bg-slate-100 rounded-xl"><ChevronRight size={16}/></button>
+                <div className="min-w-[600px] md:min-w-0">
+                  <div className="flex items-center gap-6 mb-8">
+                    <h3 className="text-xl md:text-2xl font-black text-slate-700">{currentMonth.getFullYear()}년 {currentMonth.getMonth() + 1}월</h3>
+                    <div className="flex gap-2">
+                      <button onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() - 1)))} className="p-3 bg-slate-100 rounded-2xl hover:bg-slate-200 transition-colors"><ChevronLeft size={18}/></button>
+                      <button onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() + 1)))} className="p-3 bg-slate-100 rounded-2xl hover:bg-slate-200 transition-colors"><ChevronRight size={18}/></button>
+                      <button onClick={() => setCurrentMonth(new Date())} className="px-6 py-2 bg-slate-900 text-white text-xs font-bold rounded-2xl shadow-md hidden sm:block">오늘</button>
                     </div>
                   </div>
-                  <div className="grid grid-cols-7 gap-px bg-slate-200 border rounded-[24px] overflow-hidden shadow-xl">
-                    {['일', '월', '화', '수', '목', '금', '토'].map(d => (<div key={d} className="bg-slate-50 p-3 sm:p-5 text-center text-[10px] font-black text-slate-400">{d}</div>))}
-                    {Array.from({length: new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1).getDay()}).map((_, i) => <div key={`empty-${i}`} className="bg-slate-50/40 min-h-[100px] sm:min-h-[160px]" />)}
+                  <div className="grid grid-cols-7 gap-px bg-slate-200 border border-slate-200 rounded-[32px] overflow-hidden shadow-2xl">
+                    {['일', '월', '화', '수', '목', '금', '토'].map(d => (<div key={d} className="bg-slate-50 p-3 md:p-5 text-center text-xs font-black text-slate-400 uppercase tracking-widest">{d}</div>))}
+                    {Array.from({length: new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1).getDay()}).map((_, i) => <div key={`empty-${i}`} className="bg-slate-50/40 min-h-[100px] md:min-h-[160px]" />)}
                     {Array.from({length: new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0).getDate()}).map((_, i) => {
                       const day = i + 1; const dateStr = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                       const daySchedules = schedules.filter(s => s.date === dateStr);
                       return (
-                        <div key={day} onDragOver={(e)=>e.preventDefault()} onDrop={()=>onDayDrop(dateStr)} className="bg-white min-h-[100px] sm:min-h-[160px] p-2 sm:p-4 hover:bg-blue-50/20 group relative border-r border-b border-slate-100">
-                          <div className="flex justify-between items-start mb-2"><span className={`text-xs sm:text-base font-black ${ (new Date(dateStr).getDay() === 0) ? 'text-red-500' : (new Date(dateStr).getDay() === 6) ? 'text-blue-500' : 'text-slate-800' }`}>{day}</span><button onClick={() => onAddSchedule(dateStr)} className="opacity-0 group-hover:opacity-100 text-slate-400"><Plus size={12}/></button></div>
-                          <div className="space-y-1">{daySchedules.map(s => (<div key={s.id} onClick={()=>setSelectedSchedule(s)} className="bg-blue-50 text-slate-800 text-[8px] sm:text-[10px] p-1.5 rounded-lg font-bold truncate cursor-pointer hover:bg-blue-100">{s.title}</div>))}</div>
+                        <div key={day} onDragOver={(e)=>e.preventDefault()} onDrop={()=>onDayDrop(dateStr)} className="bg-white min-h-[100px] md:min-h-[160px] p-2 md:p-4 transition-all hover:bg-blue-50/20 group relative border-r border-b border-slate-100">
+                          <div className="flex justify-between items-start mb-3"><span className={`text-sm md:text-base font-black ${ (new Date(dateStr).getDay() === 0) ? 'text-red-500' : (new Date(dateStr).getDay() === 6) ? 'text-blue-500' : 'text-slate-800' }`}>{day}</span><button onClick={() => onAddSchedule(dateStr)} className="opacity-0 group-hover:opacity-100 bg-slate-900 text-white p-1 rounded-lg transition-all"><Plus size={12}/></button></div>
+                          <div className="space-y-1.5">{daySchedules.map(s => (<div key={s.id} draggable onDragStart={(e)=>onScheduleDragStart(e, s.id)} onClick={()=>setSelectedSchedule(s)} className="bg-white border border-blue-100 text-slate-800 text-[9px] md:text-[11px] p-2 rounded-xl font-bold shadow-sm flex flex-col gap-0.5 truncate cursor-pointer hover:border-blue-400"><div className="flex items-center gap-1 text-blue-600 hidden md:flex"><Clock size={10}/><span className="text-[9px] font-black">{s.start_time}</span></div><span>{s.title}</span></div>))}</div>
                         </div>
                       );
                     })}
                   </div>
                 </div>
               ) : (
-                <div className="min-w-[700px] sm:min-w-0">
-                  <div className="relative mb-6 group"><input className="w-full bg-[#F8FAFC] border p-4 pl-12 rounded-2xl text-xs sm:text-sm font-bold outline-none" placeholder="파일명 검색..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} /></div>
+                <div className="min-w-[700px] md:min-w-0">
+                  <div className="relative mb-10 group"><span className="absolute left-6 top-5 text-slate-300 font-black text-[10px] tracking-widest hidden md:block">SEARCH</span><input className="w-full bg-[#F8FAFC] border border-slate-100 p-4 md:p-5 md:pl-24 rounded-3xl text-sm font-bold text-slate-800 outline-none focus:bg-white focus:ring-4 focus:ring-blue-50 shadow-sm transition-all" placeholder="파일명 검색..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} /></div>
                   <table className="w-full text-left">
-                    <thead className="sticky top-0 bg-white z-10 border-b"><tr className="text-[10px] text-slate-300 font-black uppercase tracking-widest"><th className="pb-4 px-4">Title</th><th className="pb-4">Label</th><th className="pb-4 text-right px-4">Action</th></tr></thead>
+                    <thead className="sticky top-0 bg-white z-10 border-b border-slate-100">
+                      <tr className="text-[11px] text-slate-300 font-black uppercase tracking-widest"><th className="pb-5 px-4 w-2/3">Document Title</th><th className="pb-5">Label</th><th className="pb-5 text-right px-4">Action</th></tr>
+                    </thead>
                     <tbody className="divide-y divide-slate-50">
                       {files.filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()) && (selectedCategory === '전체' || f.category === selectedCategory)).map(file => {
                         const info = getFileIcon(file.name);
                         return (
                           <tr key={file.id} className="group hover:bg-slate-50/50 transition-all">
-                            <td className="py-4 px-4"><div onClick={() => handleDownload(file.url, file.name)} className="flex items-center gap-3 cursor-pointer"><div className={`w-10 h-10 ${info.color} rounded-xl flex items-center justify-center`}>{info.icon}</div><span className="font-bold text-slate-900 text-sm sm:text-base truncate max-w-[200px] sm:max-w-none">{file.name}</span></div></td>
-                            <td className="py-4"><span className="text-[9px] font-black bg-blue-50 text-blue-500 px-2 py-1 rounded-lg border uppercase">{file.category}</span></td>
-                            <td className="py-4 text-right px-4 space-x-3"><button onClick={() => handleDownload(file.url, file.name)} className="text-blue-400"><Download size={18}/></button><button onClick={() => onDeleteFile(file)} className="text-red-200 hover:text-red-500"><Trash2 size={18}/></button></td>
+                            <td className="py-6 px-4">
+                              <div onClick={() => handleDownload(file.url, file.name)} className="flex items-center gap-4 cursor-pointer">
+                                {/* [PC에서만 보이는 예쁜 아이콘 박스] */}
+                                <div className={`w-12 h-12 ${info.color} rounded-2xl flex flex-col items-center justify-center border border-transparent group-hover:border-slate-200 shadow-sm transition-all`}>
+                                  {info.icon} <span className="text-[7px] font-black text-slate-400 mt-0.5">{info.label}</span>
+                                </div>
+                                <span className="font-bold text-slate-900 text-sm md:text-base group-hover:text-blue-600 transition-colors">{file.name}</span>
+                              </div>
+                            </td>
+                            <td className="py-6"><span className="text-[10px] font-black bg-blue-50 text-blue-500 px-3 py-1.5 rounded-lg border border-blue-100 uppercase">{file.category}</span></td>
+                            <td className="py-6 text-right px-4 space-x-4"><button onClick={() => handleDownload(file.url, file.name)} className="text-blue-400 hover:text-blue-600 transition-colors"><Download size={18}/></button><button onClick={() => onDeleteFile(file)} className="text-red-200 hover:text-red-500 transition-colors"><Trash2 size={18}/></button></td>
                           </tr>
                         );
                       })}
@@ -302,19 +331,19 @@ export default function IntegratedPortal() {
         </section>
       </main>
 
-      {/* 모달: 모바일 반응형 크기 조정 */}
-      {selectedSchedule && (<div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in"><div className="bg-white w-full max-w-sm rounded-[32px] p-8 flex flex-col items-center"><div className="bg-blue-50 p-3 rounded-2xl text-blue-600 mb-4"><CalendarDays size={24}/></div><h3 className="text-xl font-black text-slate-800 mb-2 text-center">{selectedSchedule.title}</h3><p className="text-slate-400 font-bold mb-6 text-center text-xs">{selectedSchedule.date} | {selectedSchedule.start_time}-{selectedSchedule.end_time}</p><div className="flex gap-2 w-full"><button onClick={() => onDeleteSchedule(selectedSchedule.id)} className="flex-1 bg-red-50 text-red-500 py-4 rounded-2xl font-black text-xs hover:bg-red-500 hover:text-white transition-all">삭제하시겠습니까?</button><button onClick={() => setSelectedSchedule(null)} className="flex-1 bg-slate-900 text-white py-4 rounded-2xl font-black text-xs">닫기</button></div></div></div>)}
+      {/* 일정 상세 팝업 */}
+      {selectedSchedule && (<div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in"><div className="bg-white w-full max-w-md rounded-[32px] shadow-2xl p-8 flex flex-col items-center"><div className="bg-blue-50 p-3 rounded-2xl text-blue-600 mb-6"><CalendarDays size={24}/></div><h3 className="text-2xl font-black text-slate-800 mb-2 leading-tight text-center">{selectedSchedule.title}</h3><p className="text-slate-400 font-bold mb-8 text-center">{selectedSchedule.date} | {selectedSchedule.start_time} - {selectedSchedule.end_time}</p><div className="flex gap-3 w-full"><button onClick={() => onDeleteSchedule(selectedSchedule.id)} className="flex-1 bg-red-50 text-red-500 py-4 rounded-2xl font-black flex items-center justify-center gap-2 hover:bg-red-500 hover:text-white transition-all"><Trash2 size={18}/> 삭제하시겠습니까?</button><button onClick={() => setSelectedSchedule(null)} className="flex-1 bg-slate-900 text-white py-4 rounded-2xl font-black transition-all hover:bg-black">닫기</button></div></div></div>)}
 
-      {/* 정보공유방: 모바일 대응 위치 및 크기 */}
+      {/* 정보공유방: PC에서만 드래그 가능, 모바일은 하단 고정 */}
       {isChatOpen && (
         <div ref={chatRef} style={typeof window !== 'undefined' && window.innerWidth > 768 ? { transform: `translate(${position.x}px, ${position.y}px)` } : {}} className="fixed bottom-0 md:bottom-10 right-0 md:right-10 w-full md:w-[420px] h-[80vh] md:h-[650px] bg-[#A9C7E3] rounded-t-[32px] md:rounded-[40px] shadow-2xl border-x-4 border-t-4 md:border-4 border-white flex flex-col z-[100]">
-          <div onMouseDown={onMouseDownChat} className="p-4 sm:p-6 bg-white/95 backdrop-blur-md flex justify-between items-center cursor-move border-b border-black/5 rounded-t-[28px] md:rounded-t-[36px] text-slate-900"><span className="font-black text-sm">🗨️ 정보공유방</span><button onClick={() => setIsChatOpen(false)} className="w-8 h-8 bg-slate-100 hover:bg-red-500 hover:text-white rounded-full flex items-center justify-center font-bold transition-all">✕</button></div>
-          <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 sm:space-y-6">{messages.map((m) => (<div key={m.id} className={`flex ${m.sender_id === myId ? 'flex-row-reverse' : 'flex-row'} items-end gap-2 group`}><button onClick={() => onDeleteMessage(m.id)} className="opacity-0 group-hover:opacity-100 text-red-600 text-[10px]">X</button><div className={`p-3 sm:p-4 shadow-md ${m.sender_id === myId ? 'bg-[#FEE500] rounded-[18px] rounded-tr-none' : 'bg-white rounded-[18px] rounded-tl-none'} max-w-[85%]`}> <p className="text-[13px] sm:text-[15px] text-black font-extrabold whitespace-pre-wrap leading-snug">{m.content}</p></div><span className="text-[8px] font-black text-slate-700 mb-1 leading-none">{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>))} <div ref={scrollRef} /></div>
-          <form onSubmit={onSend} className="p-4 sm:p-6 bg-white md:rounded-b-[36px] border-t"><div className="flex gap-2"><input className="flex-1 bg-slate-100 p-3 sm:p-4 rounded-xl text-xs sm:text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-yellow-400" value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="메시지 입력..." /><button className="bg-[#FEE500] px-4 sm:px-6 py-3 sm:py-4 rounded-xl font-black text-xs sm:text-sm shadow-md active:scale-95 text-slate-900">전송</button></div></form>
+          <div onMouseDown={onMouseDownChat} className="p-5 md:p-6 bg-white/95 backdrop-blur-md flex justify-between items-center cursor-move border-b border-black/5 rounded-t-[28px] md:rounded-t-[36px] text-slate-900"><span className="font-black text-sm">🗨️ 정보공유방</span><button onClick={() => setIsChatOpen(false)} className="w-9 h-9 bg-slate-100 hover:bg-red-500 hover:text-white rounded-full flex items-center justify-center font-bold transition-all">✕</button></div>
+          <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">{messages.map((m) => (<div key={m.id} className={`flex ${m.sender_id === myId ? 'flex-row-reverse' : 'flex-row'} items-end gap-2 group`}><button onClick={() => onDeleteMessage(m.id)} className="opacity-0 group-hover:opacity-100 w-7 h-7 bg-white/80 rounded-full text-red-600 font-black text-[11px] flex items-center justify-center transition-all">X</button><div className={`p-4 shadow-xl ${m.sender_id === myId ? 'bg-[#FEE500] rounded-[24px] rounded-tr-none' : 'bg-white rounded-[24px] rounded-tl-none'} max-w-[80%]`}> <p className="text-[15px] text-black font-extrabold whitespace-pre-wrap leading-snug">{m.content}</p></div><span className="text-[10px] font-black text-slate-700 mb-1 leading-none">{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>))} <div ref={scrollRef} /></div>
+          <form onSubmit={onSend} className="p-4 md:p-6 bg-white md:rounded-b-[36px] border-t-2 border-slate-50"><div className="flex gap-3"><input className="flex-1 bg-slate-100 p-4 rounded-2xl text-sm font-bold text-slate-900 outline-none focus:ring-4 focus:ring-yellow-400 transition-all" value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="메시지 입력..." /><button className="bg-[#FEE500] hover:bg-[#F9E000] px-6 py-4 rounded-2xl font-black text-sm shadow-lg active:scale-95 transition-all text-slate-900">전송</button></div></form>
         </div>
       )}
 
-      <style jsx global>{`.custom-scrollbar::-webkit-scrollbar { width: 4px; } .custom-scrollbar::-webkit-scrollbar-thumb { background: #CBD5E0; border-radius: 10px; }`}</style>
+      <style jsx global>{`.custom-scrollbar::-webkit-scrollbar { width: 6px; } .custom-scrollbar::-webkit-scrollbar-thumb { background: #CBD5E0; border-radius: 10px; }`}</style>
     </div>
   );
 }
