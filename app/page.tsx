@@ -181,6 +181,15 @@ export default function IntegratedPortal() {
           <h1 className="font-extrabold text-base md:text-lg tracking-tight uppercase truncate">공공의료지원과 공유문서함</h1>
         </div>
         <div className="flex items-center gap-3 md:gap-4">
+          {/* [새로 추가된 실적공유 버튼 시작] */}
+          <button 
+            onClick={() => window.open('https://docs.google.com/spreadsheets/d/1lDD-otVP5s7h-94deku3hLRF4buztn0lO0MBqzNN17M/edit?usp=sharing', '_blank')} 
+            className="flex items-center gap-2 px-4 md:px-6 py-2.5 rounded-2xl font-black transition-all shadow-md active:scale-95 bg-emerald-500 hover:bg-emerald-600 text-white text-xs md:text-sm"
+          >
+            <FileSpreadsheet size={18}/> <span className="hidden sm:inline">실적공유</span>
+          </button>
+          {/* [새로 추가된 실적공유 버튼 끝] */}
+
           {/* [PC 버전: 텍스트 포함 / 모바일: 아이콘만] */}
           <button onClick={() => setViewMode(viewMode === 'calendar' ? 'files' : 'calendar')} className="flex items-center gap-2 px-4 md:px-6 py-2.5 rounded-2xl font-black transition-all shadow-md active:scale-95 bg-white text-slate-900 text-xs md:text-sm">
             <CalendarIcon size={18}/> <span className="hidden sm:inline">{viewMode === 'calendar' ? '문서함으로 돌아가기' : '부서 공유 달력'}</span>
