@@ -11,14 +11,14 @@ import {
 } from 'lucide-react';
 
 export default function IntegratedPortal() {
-  // --- [1. 보안 및 입장 코드 설정] ---
   const DEPARTMENT_PASSWORD = process.env.NEXT_PUBLIC_ACCESS_CODE || "dphs"; 
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [accessCode, setAccessCode] = useState('');
   const [isError, setIsError] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
 
-  // --- [2. 상태 관리] ---
+  const [viewMode, setViewMode] = useState<'files' | 'calendar' | 'external_calendar'>('files');
+  
   const [messages, setMessages] = useState<any[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [myId, setMyId] = useState<string | null>(null);
@@ -30,7 +30,6 @@ export default function IntegratedPortal() {
   const chatRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const [viewMode, setViewMode] = useState<'files' | 'calendar'>('files');
   const [files, setFiles] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
   const [newCatName, setNewCatName] = useState('');
@@ -49,7 +48,6 @@ export default function IntegratedPortal() {
   const [selectedSchedule, setSelectedSchedule] = useState<any | null>(null);
   const [draggedScheduleId, setDraggedScheduleId] = useState<number | null>(null);
 
-  // --- [3. 초기 로드 및 실시간 구독] ---
   useEffect(() => {
     setIsMounted(true);
     if (localStorage.getItem('dept_auth_confirm') === 'true') setIsAuthenticated(true);
@@ -77,7 +75,6 @@ export default function IntegratedPortal() {
     }
   }, [isAuthenticated, isChatOpen]);
 
-  // --- [4. 기능 함수 로직] ---
   const onMouseDownChat = (e: React.MouseEvent) => { setIsDraggingChat(true); dragStartPos.current = { x: e.clientX - position.x, y: e.clientY - position.y }; };
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => { if (!isDraggingChat) return; setPosition({ x: e.clientX - dragStartPos.current.x, y: e.clientY - dragStartPos.current.y }); };
@@ -154,7 +151,6 @@ export default function IntegratedPortal() {
 
   if (!isMounted) return null;
 
-  // --- [보안 화면] ---
   if (!isAuthenticated) {
     return (
       <div className="h-screen bg-[#1A1C1E] flex items-center justify-center p-6 font-sans">
@@ -170,7 +166,6 @@ export default function IntegratedPortal() {
     );
   }
 
-  // --- [메인 UI] ---
   return (
     <div className="flex flex-col h-screen bg-[#F0F2F5] text-[#2C3E50] overflow-hidden select-none font-sans">
       <header className="bg-[#1A1C1E] p-3 md:p-4 px-4 md:px-8 flex justify-between items-center z-[60] shadow-md text-white border-b border-white/5 gap-2">
@@ -180,33 +175,39 @@ export default function IntegratedPortal() {
           <h1 className="font-extrabold text-xs sm:text-sm md:text-lg tracking-tight uppercase truncate">공공의료지원과 문서함</h1>
         </div>
 
-        <div className="flex items-center gap-1.5 md:gap-4 shrink-0">
-          {/* 실적공유 (a 태그로 변경하여 팝업 차단 우회) */}
+        <div className="flex items-center gap-1.5 md:gap-4 shrink-0 overflow-x-auto scrollbar-hide">
           <a 
             href="https://docs.google.com/spreadsheets/d/1lDD-otVP5s7h-94deku3hLRF4buztn0lO0MBqzNN17M/edit?usp=sharing" 
             target="_blank" 
             rel="noopener noreferrer"
-            className="flex items-center gap-1.5 md:gap-2 px-2.5 md:px-6 py-2 md:py-2.5 rounded-xl md:rounded-2xl font-black transition-all shadow-md active:scale-95 bg-emerald-500 hover:bg-emerald-600 text-white text-xs md:text-sm"
+            className="flex items-center gap-1.5 md:gap-2 px-2.5 md:px-6 py-2 md:py-2.5 rounded-xl md:rounded-2xl font-black transition-all shadow-md active:scale-95 bg-emerald-500 hover:bg-emerald-600 text-white text-xs md:text-sm shrink-0"
           >
             <FileSpreadsheet size={16} className="md:w-[18px] md:h-[18px]"/> <span className="hidden md:inline">실적공유</span>
           </a>
 
           <button 
-            onClick={() => setViewMode(viewMode === 'calendar' ? 'files' : 'calendar')} 
-            className="flex items-center gap-1.5 md:gap-2 px-2.5 md:px-6 py-2 md:py-2.5 rounded-xl md:rounded-2xl font-black transition-all shadow-md active:scale-95 bg-white text-slate-900 text-xs md:text-sm"
+            onClick={() => setViewMode(viewMode === 'external_calendar' ? 'files' : 'external_calendar')} 
+            className="flex items-center gap-1.5 md:gap-2 px-2.5 md:px-6 py-2 md:py-2.5 rounded-xl md:rounded-2xl font-black transition-all shadow-md active:scale-95 bg-indigo-500 hover:bg-indigo-600 text-white text-xs md:text-sm shrink-0"
           >
-            <CalendarIcon size={16} className="md:w-[18px] md:h-[18px]"/> <span className="hidden md:inline">{viewMode === 'calendar' ? '문서함' : '달력'}</span>
+            <CalendarDays size={16} className="md:w-[18px] md:h-[18px]"/> <span className="hidden md:inline">{viewMode === 'external_calendar' ? '문서함' : '손)일정확인'}</span>
+          </button>
+
+          <button 
+            onClick={() => setViewMode(viewMode === 'calendar' ? 'files' : 'calendar')} 
+            className="flex items-center gap-1.5 md:gap-2 px-2.5 md:px-6 py-2 md:py-2.5 rounded-xl md:rounded-2xl font-black transition-all shadow-md active:scale-95 bg-white text-slate-900 text-xs md:text-sm shrink-0"
+          >
+            <CalendarIcon size={16} className="md:w-[18px] md:h-[18px]"/> <span className="hidden md:inline">{viewMode === 'calendar' ? '문서함' : '중요일정공유'}</span>
           </button>
 
           <button 
             onClick={() => setIsChatOpen(!isChatOpen)} 
-            className="relative bg-[#3498DB] hover:bg-[#2980B9] px-2.5 md:px-5 py-2 md:py-2.5 rounded-xl md:rounded-2xl font-black transition-all shadow-md active:scale-95 flex items-center gap-1.5 md:gap-2 text-xs md:text-sm text-white"
+            className="relative bg-[#3498DB] hover:bg-[#2980B9] px-2.5 md:px-5 py-2 md:py-2.5 rounded-xl md:rounded-2xl font-black transition-all shadow-md active:scale-95 flex items-center gap-1.5 md:gap-2 text-xs md:text-sm text-white shrink-0"
           >
             <span>💬 <span className="hidden md:inline">정보공유방</span></span>
             {hasUnread && <span className="absolute -top-1 -right-1 w-3 h-3 md:w-4 md:h-4 bg-red-500 rounded-full border-2 border-[#1A1C1E] animate-bounce"></span>}
           </button>
 
-          <button onClick={() => { localStorage.removeItem('dept_auth_confirm'); window.location.reload(); }} className="text-slate-500 hover:text-white p-1 md:p-2 transition-colors ml-0.5 md:ml-0"><X size={18} className="md:w-[20px] md:h-[20px]"/></button>
+          <button onClick={() => { localStorage.removeItem('dept_auth_confirm'); window.location.reload(); }} className="text-slate-500 hover:text-white p-1 md:p-2 transition-colors ml-0.5 md:ml-0 shrink-0"><X size={18} className="md:w-[20px] md:h-[20px]"/></button>
         </div>
       </header>
 
@@ -247,7 +248,7 @@ export default function IntegratedPortal() {
           onDragOver={(e) => { e.preventDefault(); if(viewMode==='files') setIsDragOver(true); }} 
           onDragLeave={() => setIsDragOver(false)} 
           onDrop={(e) => { e.preventDefault(); setIsDragOver(false); if(viewMode==='files') handleUpload(e.dataTransfer.files); }} 
-          className={`flex-1 flex flex-col bg-white overflow-hidden relative shadow-inner transition-all duration-300 ${isDragOver ? 'bg-blue-50/50' : 'bg-white'}`}
+          className={`flex-1 flex flex-col bg-white overflow-hidden relative shadow-inner transition-all duration-300 min-h-0 ${isDragOver ? 'bg-blue-50/50' : 'bg-white'}`}
         >
           {isDragOver && (
             <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none animate-in fade-in duration-200">
@@ -257,10 +258,11 @@ export default function IntegratedPortal() {
             </div>
           )}
 
-          <div className="max-w-6xl w-full mx-auto flex flex-col h-full p-6 md:p-12">
-            <div className="flex flex-col md:flex-row justify-between items-start mb-10 gap-6">
-              <div className="flex-1 w-full">
-                <div className="group flex items-center gap-4 mb-2">
+          <div className={`max-w-6xl w-full mx-auto flex flex-col flex-1 overflow-hidden min-h-0 ${viewMode === 'external_calendar' || viewMode === 'calendar' ? 'p-2 md:p-4' : 'p-6 md:p-12'}`}>
+            
+            <div className={`flex flex-col md:flex-row justify-between items-start gap-4 shrink-0 ${viewMode === 'external_calendar' || viewMode === 'calendar' ? 'mb-2 md:mb-4' : 'mb-10'}`}>
+              <div className="flex-1 w-full overflow-hidden">
+                <div className="group flex items-center gap-4 mb-1">
                   {isEditingTitle && viewMode === 'files' ? (
                     <div className="flex items-center gap-3 w-full">
                       <input className="text-2xl md:text-4xl font-black text-slate-900 tracking-tighter bg-white border-b-4 border-blue-600 outline-none w-full max-w-2xl py-1" value={editTitleValue} onChange={(e)=>setEditTitleValue(e.target.value)} autoFocus onKeyDown={(e) => e.key === 'Enter' && onUpdateCategoryName()} />
@@ -268,50 +270,83 @@ export default function IntegratedPortal() {
                     </div>
                   ) : (
                     <>
-                      <h2 className="text-2xl md:text-4xl font-black text-slate-800 tracking-tighter uppercase truncate">{viewMode === 'calendar' ? '부서 공유 달력' : selectedCategory}</h2>
+                      <h2 className={`font-black text-slate-800 tracking-tighter uppercase truncate ${viewMode === 'external_calendar' || viewMode === 'calendar' ? 'text-xl md:text-2xl' : 'text-2xl md:text-4xl'}`}>
+                        {viewMode === 'calendar' ? '부서 공유 달력' : viewMode === 'external_calendar' ? '손)일정확인' : selectedCategory}
+                      </h2>
                       {viewMode === 'files' && selectedCategory !== '전체' && <button onClick={() => { setEditTitleValue(selectedCategory); setIsEditingTitle(true); }} className="opacity-100 md:opacity-0 group-hover:opacity-100 bg-slate-100 text-slate-400 p-2 rounded-xl hover:text-blue-500 text-xs font-bold transition-all">✎ 수정</button>}
                       {viewMode === 'files' && <button onClick={handleDownloadCategoryZip} disabled={isDownloadingAll} className="flex items-center gap-2 bg-blue-50 text-blue-600 px-4 py-2 rounded-xl text-xs font-black hover:bg-blue-600 hover:text-white transition-all ml-2 shadow-sm"><Archive size={14} /> <span className="hidden sm:inline">전체 다운로드(ZIP)</span></button>}
                     </>
                   )}
                 </div>
-                <p className="text-xs md:text-sm text-slate-400 font-medium tracking-tight italic">{viewMode === 'calendar' ? '팀원들의 시간을 확인하고 일정을 공유하세요.' : '본 서비스는 부서 전용 시스템입니다.'}</p>
+                <p className="text-[10px] md:text-xs text-slate-400 font-medium tracking-tight italic truncate">
+                  {viewMode === 'calendar' ? '팀원들의 시간을 확인하고 일정을 공유하세요.' : viewMode === 'external_calendar' ? '연동된 외부 일정을 확인합니다.' : '본 서비스는 부서 전용 시스템입니다.'}
+                </p>
               </div>
               {viewMode === 'files' && (
-                <label className="w-full md:w-auto bg-blue-600 text-white px-8 py-3.5 rounded-3xl font-black cursor-pointer shadow-lg active:scale-95 flex items-center justify-center gap-2">
+                <label className="w-full md:w-auto bg-blue-600 text-white px-8 py-3.5 rounded-3xl font-black cursor-pointer shadow-lg active:scale-95 flex items-center justify-center gap-2 shrink-0">
                   <Plus size={18} /><span>파일 업로드</span>
                   <input type="file" className="hidden" multiple onChange={(e) => e.target.files && handleUpload(e.target.files)} />
                 </label>
               )}
             </div>
 
-            <div className="flex-1 overflow-auto custom-scrollbar">
-              {viewMode === 'calendar' ? (
-                <div className="min-w-[600px] md:min-w-0">
-                  <div className="flex items-center gap-6 mb-8">
+            <div className={`flex-1 flex flex-col min-h-0 ${viewMode === 'external_calendar' || viewMode === 'calendar' ? 'overflow-hidden' : 'overflow-auto custom-scrollbar'}`}>
+              
+              {viewMode === 'external_calendar' ? (
+                <div className="w-full h-full relative rounded-[16px] md:rounded-[24px] overflow-hidden shadow-xl bg-slate-50">
+                  <iframe 
+                    src="https://my-calendar-eta.vercel.app" 
+                    className="absolute inset-0 w-full h-full border-0" 
+                    title="손 일정확인 외부 달력" 
+                  />
+                </div>
+
+              ) : viewMode === 'calendar' ? (
+                <div className="flex-1 flex flex-col min-h-0 w-full">
+                  <div className="flex items-center gap-6 mb-4 shrink-0">
                     <h3 className="text-xl md:text-2xl font-black text-slate-700">{currentMonth.getFullYear()}년 {currentMonth.getMonth() + 1}월</h3>
                     <div className="flex gap-2">
-                      <button onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() - 1)))} className="p-3 bg-slate-100 rounded-2xl hover:bg-slate-200 transition-colors"><ChevronLeft size={18}/></button>
-                      <button onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() + 1)))} className="p-3 bg-slate-100 rounded-2xl hover:bg-slate-200 transition-colors"><ChevronRight size={18}/></button>
-                      <button onClick={() => setCurrentMonth(new Date())} className="px-6 py-2 bg-slate-900 text-white text-xs font-bold rounded-2xl shadow-md hidden sm:block">오늘</button>
+                      <button onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() - 1)))} className="p-2 md:p-3 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"><ChevronLeft size={18}/></button>
+                      <button onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() + 1)))} className="p-2 md:p-3 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"><ChevronRight size={18}/></button>
+                      <button onClick={() => setCurrentMonth(new Date())} className="px-5 py-2 bg-slate-900 text-white text-xs font-bold rounded-xl shadow-md hidden sm:block">오늘</button>
                     </div>
                   </div>
-                  <div className="grid grid-cols-7 gap-px bg-slate-200 border border-slate-200 rounded-[32px] overflow-hidden shadow-2xl">
-                    {['일', '월', '화', '수', '목', '금', '토'].map(d => (<div key={d} className="bg-slate-50 p-3 md:p-5 text-center text-xs font-black text-slate-400 uppercase tracking-widest">{d}</div>))}
-                    {Array.from({length: new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1).getDay()}).map((_, i) => <div key={`empty-${i}`} className="bg-slate-50/40 min-h-[100px] md:min-h-[160px]" />)}
-                    {Array.from({length: new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0).getDate()}).map((_, i) => {
-                      const day = i + 1; const dateStr = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                      const daySchedules = schedules.filter(s => s.date === dateStr);
-                      return (
-                        <div key={day} onDragOver={(e)=>e.preventDefault()} onDrop={()=>onDayDrop(dateStr)} className="bg-white min-h-[100px] md:min-h-[160px] p-2 md:p-4 transition-all hover:bg-blue-50/20 group relative border-r border-b border-slate-100">
-                          <div className="flex justify-between items-start mb-3"><span className={`text-sm md:text-base font-black ${ (new Date(dateStr).getDay() === 0) ? 'text-red-500' : (new Date(dateStr).getDay() === 6) ? 'text-blue-500' : 'text-slate-800' }`}>{day}</span><button onClick={() => onAddSchedule(dateStr)} className="opacity-0 group-hover:opacity-100 bg-slate-900 text-white p-1 rounded-lg transition-all"><Plus size={12}/></button></div>
-                          <div className="space-y-1.5">{daySchedules.map(s => (<div key={s.id} draggable onDragStart={(e)=>onScheduleDragStart(e, s.id)} onClick={()=>setSelectedSchedule(s)} className="bg-white border border-blue-100 text-slate-800 text-[9px] md:text-[11px] p-2 rounded-xl font-bold shadow-sm flex flex-col gap-0.5 truncate cursor-pointer hover:border-blue-400"><div className="flex items-center gap-1 text-blue-600 hidden md:flex"><Clock size={10}/><span className="text-[9px] font-black">{s.start_time}</span></div><span>{s.title}</span></div>))}</div>
-                        </div>
-                      );
-                    })}
+
+                  <div className="flex-1 flex flex-col min-h-0 bg-slate-200 border border-slate-200 rounded-[16px] md:rounded-[32px] overflow-hidden shadow-2xl">
+                    <div className="grid grid-cols-7 bg-slate-50 border-b border-slate-200 shrink-0">
+                      {['일', '월', '화', '수', '목', '금', '토'].map(d => (
+                        <div key={d} className="p-2 md:p-3 text-center text-[10px] md:text-xs font-black text-slate-400 uppercase tracking-widest">{d}</div>
+                      ))}
+                    </div>
+                    
+                    <div className="flex-1 grid grid-cols-7 gap-px bg-slate-200 min-h-0 auto-rows-fr">
+                      {Array.from({length: new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1).getDay()}).map((_, i) => <div key={`empty-${i}`} className="bg-slate-50/40" />)}
+                      {Array.from({length: new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0).getDate()}).map((_, i) => {
+                        const day = i + 1; const dateStr = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                        const daySchedules = schedules.filter(s => s.date === dateStr);
+                        return (
+                          <div key={day} onDragOver={(e)=>e.preventDefault()} onDrop={()=>onDayDrop(dateStr)} className="bg-white flex flex-col min-h-0 p-1.5 md:p-3 transition-all hover:bg-blue-50/20 group relative border-r border-b border-slate-100">
+                            <div className="flex justify-between items-start mb-1.5 shrink-0">
+                              <span className={`text-xs md:text-sm font-black ${ (new Date(dateStr).getDay() === 0) ? 'text-red-500' : (new Date(dateStr).getDay() === 6) ? 'text-blue-500' : 'text-slate-800' }`}>{day}</span>
+                              <button onClick={() => onAddSchedule(dateStr)} className="opacity-0 group-hover:opacity-100 bg-slate-900 text-white p-1 rounded-md transition-all"><Plus size={10}/></button>
+                            </div>
+                            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1 pr-1">
+                              {daySchedules.map(s => (
+                                <div key={s.id} draggable onDragStart={(e)=>onScheduleDragStart(e, s.id)} onClick={()=>setSelectedSchedule(s)} className="bg-white border border-blue-100 text-slate-800 text-[9px] md:text-[10px] p-1.5 rounded-lg font-bold shadow-sm flex flex-col gap-0.5 truncate cursor-pointer hover:border-blue-400">
+                                  <div className="flex items-center gap-1 text-blue-600 hidden md:flex"><Clock size={9}/><span className="text-[8px] font-black">{s.start_time}</span></div>
+                                  <span>{s.title}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
+
               ) : (
-                <div className="min-w-[700px] md:min-w-0">
+                <div className="min-w-[700px] md:min-w-0 h-full pr-2 pb-10">
                   <div className="relative mb-10 group"><span className="absolute left-6 top-5 text-slate-300 font-black text-[10px] tracking-widest hidden md:block">SEARCH</span><input className="w-full bg-[#F8FAFC] border border-slate-100 p-4 md:p-5 md:pl-24 rounded-3xl text-sm font-bold text-slate-800 outline-none focus:bg-white focus:ring-4 focus:ring-blue-50 shadow-sm transition-all" placeholder="파일명 검색..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} /></div>
                   <table className="w-full text-left">
                     <thead className="sticky top-0 bg-white z-10 border-b border-slate-100">
@@ -354,7 +389,13 @@ export default function IntegratedPortal() {
         </div>
       )}
 
-      <style jsx global>{`.custom-scrollbar::-webkit-scrollbar { width: 6px; } .custom-scrollbar::-webkit-scrollbar-thumb { background: #CBD5E0; border-radius: 10px; }`}</style>
+      <style jsx global>{`
+        html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; } 
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #CBD5E0; border-radius: 10px; } 
+        .scrollbar-hide::-webkit-scrollbar { display: none; } 
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+      `}</style>
     </div>
   );
 }
