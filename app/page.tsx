@@ -23,7 +23,11 @@ export default function IntegratedPortal() {
   const [chatInput, setChatInput] = useState('');
   const [myId, setMyId] = useState<string | null>(null);
   const [isChatOpen, setIsChatOpen] = useState(false);
+  
+  // 알림 상태
   const [hasUnread, setHasUnread] = useState(false);
+  const [hasNewSchedule, setHasNewSchedule] = useState(false); 
+
   const [position, setPosition] = useState({ x: 0, y: 0 }); 
   const [isDraggingChat, setIsDraggingChat] = useState(false);
   const dragStartPos = useRef({ x: 0, y: 0 });
@@ -53,6 +57,46 @@ export default function IntegratedPortal() {
     if (localStorage.getItem('dept_auth_confirm') === 'true') setIsAuthenticated(true);
   }, []);
 
+  // =====================================================================
+  // [강력한 신규 기능] 채팅 및 달력 '개별 영구 읽음 처리' 로직
+  // =====================================================================
+  
+  // 1. 정보공유방(채팅) 영구 읽음 처리
+  useEffect(() => {
+    if (messages.length > 0) {
+      const maxId = Math.max(...messages.map(m => m.id)); // 가장 최신 메시지 번호
+      const lastSeenId = parseInt(localStorage.getItem('last_seen_chat_id') || '0', 10);
+      
+      if (isChatOpen) {
+        // 채팅방을 열고 있다면 무조건 최신 번호로 갱신하고 알림 끄기
+        localStorage.setItem('last_seen_chat_id', maxId.toString());
+        setHasUnread(false);
+      } else if (maxId > lastSeenId) {
+        // 닫혀 있는데 내가 본 번호보다 큰 새 메시지가 있다면 알림 켜기
+        setHasUnread(true);
+      }
+    }
+  }, [messages, isChatOpen]);
+
+  // 2. 부서 공유 달력 영구 읽음 처리
+  useEffect(() => {
+    if (schedules.length > 0) {
+      const maxId = Math.max(...schedules.map(s => s.id)); // 가장 최신 일정 번호
+      const lastSeenId = parseInt(localStorage.getItem('last_seen_schedule_id') || '0', 10);
+      
+      if (viewMode === 'calendar') {
+        // 달력을 보고 있다면 최신 번호로 갱신하고 알림 끄기
+        localStorage.setItem('last_seen_schedule_id', maxId.toString());
+        setHasNewSchedule(false);
+      } else if (maxId > lastSeenId) {
+        // 달력을 안 보고 있는데 새 일정이 있다면 알림 켜기
+        setHasNewSchedule(true);
+      }
+    }
+  }, [schedules, viewMode]);
+
+  // =====================================================================
+
   useEffect(() => {
     if (isAuthenticated) {
       let anonId = localStorage.getItem('chat_anon_id');
@@ -63,17 +107,20 @@ export default function IntegratedPortal() {
       setMyId(anonId);
       fetchMessages(); fetchFiles(); fetchCategories(); fetchSchedules();
 
+      // DB 감지 (알림 로직은 위 useEffect에서 자동으로 처리하므로 여기선 데이터만 갱신)
       const chatChannel = supabase.channel('chat_main').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
-        setMessages(prev => [...prev, payload.new]); if (!isChatOpen) setHasUnread(true);
+        setMessages(prev => [...prev, payload.new]); 
       }).on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, (payload) => {
         setMessages(prev => prev.filter(m => m.id !== payload.old.id));
       }).subscribe();
+      
       const fileChannel = supabase.channel('file_main').on('postgres_changes', { event: '*', schema: 'public', table: 'files' }, () => fetchFiles()).subscribe();
       const catChannel = supabase.channel('cat_main').on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, () => fetchCategories()).subscribe();
       const scheChannel = supabase.channel('sche_main').on('postgres_changes', { event: '*', schema: 'public', table: 'schedules' }, () => fetchSchedules()).subscribe();
+
       return () => { supabase.removeChannel(chatChannel); supabase.removeChannel(fileChannel); supabase.removeChannel(catChannel); supabase.removeChannel(scheChannel); };
     }
-  }, [isAuthenticated, isChatOpen]);
+  }, [isAuthenticated]);
 
   const onMouseDownChat = (e: React.MouseEvent) => { setIsDraggingChat(true); dragStartPos.current = { x: e.clientX - position.x, y: e.clientY - position.y }; };
   useEffect(() => {
@@ -104,7 +151,10 @@ export default function IntegratedPortal() {
   const fetchFiles = async () => { const { data } = await supabase.from('files').select('*').order('created_at', { ascending: false }); if (data) setFiles(data); };
   const fetchCategories = async () => { const { data } = await supabase.from('categories').select('*').order('order_index', { ascending: true }); if (data) setCategories(data); };
   const fetchSchedules = async () => { const { data } = await supabase.from('schedules').select('*').order('start_time', { ascending: true }); if (data) setSchedules(data); };
-  useEffect(() => { if (isChatOpen) { setHasUnread(false); const timer = setTimeout(() => { if (scrollRef.current) scrollRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, 100); return () => clearTimeout(timer); } }, [messages, isChatOpen]);
+  
+  // 채팅창 자동 스크롤
+  useEffect(() => { if (isChatOpen) { const timer = setTimeout(() => { if (scrollRef.current) scrollRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, 100); return () => clearTimeout(timer); } }, [messages, isChatOpen]);
+  
   const onSend = async (e: React.FormEvent) => { e.preventDefault(); if (!chatInput.trim()) return; await supabase.from('messages').insert([{ content: chatInput, sender_id: myId }]); setChatInput(''); };
   const handleDownloadCategoryZip = async () => {
     const targetFiles = files.filter(f => selectedCategory === '전체' || f.category === selectedCategory);
@@ -194,9 +244,10 @@ export default function IntegratedPortal() {
 
           <button 
             onClick={() => setViewMode(viewMode === 'calendar' ? 'files' : 'calendar')} 
-            className="flex items-center gap-1.5 md:gap-2 px-2.5 md:px-6 py-2 md:py-2.5 rounded-xl md:rounded-2xl font-black transition-all shadow-md active:scale-95 bg-white text-slate-900 text-xs md:text-sm shrink-0"
+            className="relative flex items-center gap-1.5 md:gap-2 px-2.5 md:px-6 py-2 md:py-2.5 rounded-xl md:rounded-2xl font-black transition-all shadow-md active:scale-95 bg-white text-slate-900 text-xs md:text-sm shrink-0"
           >
             <CalendarIcon size={16} className="md:w-[18px] md:h-[18px]"/> <span className="hidden md:inline">{viewMode === 'calendar' ? '문서함' : '중요일정공유'}</span>
+            {hasNewSchedule && viewMode !== 'calendar' && <span className="absolute -top-1 -right-1 w-3 h-3 md:w-4 md:h-4 bg-red-500 rounded-full border-2 border-[#1A1C1E] animate-bounce"></span>}
           </button>
 
           <button 
@@ -204,7 +255,7 @@ export default function IntegratedPortal() {
             className="relative bg-[#3498DB] hover:bg-[#2980B9] px-2.5 md:px-5 py-2 md:py-2.5 rounded-xl md:rounded-2xl font-black transition-all shadow-md active:scale-95 flex items-center gap-1.5 md:gap-2 text-xs md:text-sm text-white shrink-0"
           >
             <span>💬 <span className="hidden md:inline">정보공유방</span></span>
-            {hasUnread && <span className="absolute -top-1 -right-1 w-3 h-3 md:w-4 md:h-4 bg-red-500 rounded-full border-2 border-[#1A1C1E] animate-bounce"></span>}
+            {hasUnread && !isChatOpen && <span className="absolute -top-1 -right-1 w-3 h-3 md:w-4 md:h-4 bg-red-500 rounded-full border-2 border-[#1A1C1E] animate-bounce"></span>}
           </button>
 
           <button onClick={() => { localStorage.removeItem('dept_auth_confirm'); window.location.reload(); }} className="text-slate-500 hover:text-white p-1 md:p-2 transition-colors ml-0.5 md:ml-0 shrink-0"><X size={18} className="md:w-[20px] md:h-[20px]"/></button>
