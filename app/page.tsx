@@ -227,6 +227,14 @@ export default function IntegratedPortal() {
 
         <div className="flex items-center gap-1.5 md:gap-4 shrink-0 overflow-x-auto scrollbar-hide">
           <a 
+            href="https://docs.google.com/spreadsheets/d/1yz_fMbsVe0__VJWe6F0ObbrV2jvnRotqi03-mrnnZUc/edit?usp=sharing" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 md:gap-2 px-2.5 md:px-6 py-2 md:py-2.5 rounded-xl md:rounded-2xl font-black transition-all shadow-md active:scale-95 bg-emerald-500 hover:bg-emerald-600 text-white text-xs md:text-sm shrink-0"
+          >
+            <FileBox size={16} className="md:w-[18px] md:h-[18px]"/> <span className="hidden md:inline">홍보물품 반출대장</span>
+          </a>
+          <a 
             href="https://docs.google.com/spreadsheets/d/1lDD-otVP5s7h-94deku3hLRF4buztn0lO0MBqzNN17M/edit?usp=sharing" 
             target="_blank" 
             rel="noopener noreferrer"
