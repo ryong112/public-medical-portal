@@ -28,6 +28,10 @@ export default function IntegratedPortal() {
   const [hasUnread, setHasUnread] = useState(false);
   const [hasNewSchedule, setHasNewSchedule] = useState(false); 
 
+  // [신규 추가] 공지사항 관련 상태 관리
+  const [noticeIndex, setNoticeIndex] = useState(0);
+  const [isNoticeHovered, setIsNoticeHovered] = useState(false);
+
   const [position, setPosition] = useState({ x: 0, y: 0 }); 
   const [isDraggingChat, setIsDraggingChat] = useState(false);
   const dragStartPos = useRef({ x: 0, y: 0 });
@@ -57,22 +61,16 @@ export default function IntegratedPortal() {
     if (localStorage.getItem('dept_auth_confirm') === 'true') setIsAuthenticated(true);
   }, []);
 
-  // =====================================================================
-  // [강력한 신규 기능] 채팅 및 달력 '개별 영구 읽음 처리' 로직
-  // =====================================================================
-  
   // 1. 정보공유방(채팅) 영구 읽음 처리
   useEffect(() => {
     if (messages.length > 0) {
-      const maxId = Math.max(...messages.map(m => m.id)); // 가장 최신 메시지 번호
+      const maxId = Math.max(...messages.map(m => m.id));
       const lastSeenId = parseInt(localStorage.getItem('last_seen_chat_id') || '0', 10);
       
       if (isChatOpen) {
-        // 채팅방을 열고 있다면 무조건 최신 번호로 갱신하고 알림 끄기
         localStorage.setItem('last_seen_chat_id', maxId.toString());
         setHasUnread(false);
       } else if (maxId > lastSeenId) {
-        // 닫혀 있는데 내가 본 번호보다 큰 새 메시지가 있다면 알림 켜기
         setHasUnread(true);
       }
     }
@@ -81,21 +79,33 @@ export default function IntegratedPortal() {
   // 2. 부서 공유 달력 영구 읽음 처리
   useEffect(() => {
     if (schedules.length > 0) {
-      const maxId = Math.max(...schedules.map(s => s.id)); // 가장 최신 일정 번호
+      const maxId = Math.max(...schedules.map(s => s.id));
       const lastSeenId = parseInt(localStorage.getItem('last_seen_schedule_id') || '0', 10);
       
       if (viewMode === 'calendar') {
-        // 달력을 보고 있다면 최신 번호로 갱신하고 알림 끄기
         localStorage.setItem('last_seen_schedule_id', maxId.toString());
         setHasNewSchedule(false);
       } else if (maxId > lastSeenId) {
-        // 달력을 안 보고 있는데 새 일정이 있다면 알림 켜기
         setHasNewSchedule(true);
       }
     }
   }, [schedules, viewMode]);
 
-  // =====================================================================
+  // [신규 추가] 공지사항 실적 전광판 롤링 타이머 로직 (4초마다 회전)
+  useEffect(() => {
+    if (activeNotices.length <= 1 || isNoticeHovered) return;
+    const interval = setInterval(() => {
+      setNoticeIndex(prev => (prev + 1) % activeNotices.length);
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [schedules, isNoticeHovered]);
+
+  // [신규 추가] 데이터 삭제 등으로 인덱스 범위 초과 방지 롤백 방어
+  useEffect(() => {
+    if (activeNotices.length > 0 && noticeIndex >= activeNotices.length) {
+      setNoticeIndex(0);
+    }
+  }, [schedules]);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -107,7 +117,6 @@ export default function IntegratedPortal() {
       setMyId(anonId);
       fetchMessages(); fetchFiles(); fetchCategories(); fetchSchedules();
 
-      // DB 감지 (알림 로직은 위 useEffect에서 자동으로 처리하므로 여기선 데이터만 갱신)
       const chatChannel = supabase.channel('chat_main').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
         setMessages(prev => [...prev, payload.new]); 
       }).on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, (payload) => {
@@ -121,6 +130,22 @@ export default function IntegratedPortal() {
       return () => { supabase.removeChannel(chatChannel); supabase.removeChannel(fileChannel); supabase.removeChannel(catChannel); supabase.removeChannel(scheChannel); };
     }
   }, [isAuthenticated]);
+
+  // 데이터 필터링 계산 자동 처리 (오늘 날짜 기준 진행 중인 공지만 정렬 노출)
+  const todayStr = new Date().toISOString().split('T')[0];
+  const activeNotices = schedules
+    .filter(s => s.is_notice && s.date >= todayStr)
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  // [신규 추가] 정밀 디데이 계산기 함수
+  const getDDay = (dateStr: string) => {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const target = new Date(dateStr); target.setHours(0, 0, 0, 0);
+    const diffTime = target.getTime() - today.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    if (diffDays === 0) return 'D-Day';
+    return `D-${diffDays}`;
+  };
 
   const onMouseDownChat = (e: React.MouseEvent) => { setIsDraggingChat(true); dragStartPos.current = { x: e.clientX - position.x, y: e.clientY - position.y }; };
   useEffect(() => {
@@ -152,7 +177,6 @@ export default function IntegratedPortal() {
   const fetchCategories = async () => { const { data } = await supabase.from('categories').select('*').order('order_index', { ascending: true }); if (data) setCategories(data); };
   const fetchSchedules = async () => { const { data } = await supabase.from('schedules').select('*').order('start_time', { ascending: true }); if (data) setSchedules(data); };
   
-  // 채팅창 자동 스크롤
   useEffect(() => { if (isChatOpen) { const timer = setTimeout(() => { if (scrollRef.current) scrollRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, 100); return () => clearTimeout(timer); } }, [messages, isChatOpen]);
   
   const onSend = async (e: React.FormEvent) => { e.preventDefault(); if (!chatInput.trim()) return; await supabase.from('messages').insert([{ content: chatInput, sender_id: myId }]); setChatInput(''); };
@@ -194,7 +218,17 @@ export default function IntegratedPortal() {
     await supabase.from('categories').update({ name: editTitleValue.trim() }).eq('id', targetCat.id); 
     setSelectedCategory(editTitleValue.trim()); setIsEditingTitle(false); fetchCategories(); 
   };
-  const onAddSchedule = async (dateStr: string) => { const title = prompt(`${dateStr} 일정 제목:`); if (!title) return; const start = prompt(`시작:`, "10:00") || "10:00"; const end = prompt(`종료:`, "11:00") || "11:00"; await supabase.from('schedules').insert([{ title, date: dateStr, start_time: start, end_time: end }]); fetchSchedules(); };
+
+  // [수정] 일정 등록 시 상단 공지사항 등록 의사 묻는 confirm 분기 추가
+  const onAddSchedule = async (dateStr: string) => { 
+    const title = prompt(`${dateStr} 일정 제목:`); if (!title) return; 
+    const start = prompt(`시작:`, "10:00") || "10:00"; 
+    const end = prompt(`종료:`, "11:00") || "11:00"; 
+    const isNotice = confirm("이 일정을 포털 상단 공지 전광판에 노출할까요?");
+    await supabase.from('schedules').insert([{ title, date: dateStr, start_time: start, end_time: end, is_notice: isNotice }]); 
+    fetchSchedules(); 
+  };
+
   const onScheduleDragStart = (e: React.DragEvent, id: number) => { setDraggedScheduleId(id); e.dataTransfer.effectAllowed = "move"; };
   const onDayDrop = async (dateStr: string) => { if (draggedScheduleId === null) return; await supabase.from('schedules').update({ date: dateStr }).eq('id', draggedScheduleId); fetchSchedules(); setDraggedScheduleId(null); };
   const handleAuthSubmit = (e: React.FormEvent) => { e.preventDefault(); if (accessCode === DEPARTMENT_PASSWORD) { setIsAuthenticated(true); localStorage.setItem('dept_auth_confirm', 'true'); } else { setIsError(true); setAccessCode(''); } };
@@ -219,11 +253,54 @@ export default function IntegratedPortal() {
   return (
     <div className="flex flex-col h-screen bg-[#F0F2F5] text-[#2C3E50] overflow-hidden select-none font-sans">
       <header className="bg-[#1A1C1E] p-3 md:p-4 px-4 md:px-8 flex justify-between items-center z-[60] shadow-md text-white border-b border-white/5 gap-2">
-        <div className="flex items-center gap-2 md:gap-3 overflow-hidden">
+        <div className="flex items-center gap-2 md:gap-3 overflow-hidden shrink-0">
           <button onClick={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)} className="md:hidden p-1 hover:bg-white/10 rounded-lg transition-colors shrink-0"><Menu size={22}/></button>
           <span className="text-lg md:text-2xl hidden sm:inline shrink-0">📂</span>
           <h1 className="font-extrabold text-xs sm:text-sm md:text-lg tracking-tight uppercase truncate">공공의료지원과 문서함</h1>
         </div>
+
+        {/* ===================================================================== */}
+        {/* [신규 기능 연동] 빨간색 테두리 빈 영역 채우기 - 공지사항 롤링 전광판 플레이스 */}
+        {/* ===================================================================== */}
+        <div 
+          className="hidden lg:flex flex-1 max-w-sm xl:max-w-md mx-4 relative h-10 items-center bg-white/5 hover:bg-white/10 rounded-xl px-4 text-xs font-bold border border-white/10 cursor-pointer overflow-visible transition-colors"
+          onMouseEnter={() => setIsNoticeHovered(true)}
+          onMouseLeave={() => setIsNoticeHovered(false)}
+        >
+          {activeNotices.length > 0 ? (
+            <>
+              <div className="flex items-center justify-between w-full h-full gap-2 animate-in fade-in duration-300">
+                <span className="bg-red-500/20 text-red-400 px-2 py-0.5 rounded text-[10px] font-black shrink-0 animate-pulse">공지사항</span>
+                <span className="truncate flex-1 text-slate-200">{activeNotices[noticeIndex].title}</span>
+                <span className="text-yellow-400 font-black shrink-0 ml-2">{getDDay(activeNotices[noticeIndex].date)}</span>
+              </div>
+
+              {/* 마우스 호버 시 아래로 미끄러지듯 대형 전광판 팝업 펼쳐짐 */}
+              {isNoticeHovered && (
+                <div className="absolute top-11 left-0 w-full bg-[#25282A] border border-white/10 rounded-xl shadow-2xl p-3 flex flex-col gap-1.5 z-[100] animate-in slide-in-from-top-2 duration-200">
+                  <div className="text-[10px] text-slate-500 font-black border-b border-white/5 pb-1.5 mb-1 flex justify-between">
+                    <span>진행 중인 모든 부서 공지 ({activeNotices.length}건)</span>
+                    <span className="text-blue-400">마우스 이탈 시 자동 닫힘</span>
+                  </div>
+                  <div className="max-h-48 overflow-y-auto custom-scrollbar space-y-1.5 pr-1">
+                    {activeNotices.map((notice, idx) => (
+                      <div key={notice.id} className={`flex items-center justify-between p-2 rounded-lg transition-colors ${idx === noticeIndex ? 'bg-white/10 text-white ring-1 ring-white/10' : 'text-slate-300 hover:bg-white/5'}`}>
+                        <span className="truncate flex-1 mr-4">{notice.title}</span>
+                        <div className="flex items-center gap-3 shrink-0 text-[11px]">
+                          <span className="text-slate-500 font-medium text-[10px]">{notice.date}</span>
+                          <span className="text-yellow-400 font-black w-12 text-right">{getDDay(notice.date)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <span className="text-slate-500 font-medium italic mx-auto">진행 중인 주요 공지사항이 없습니다.</span>
+          )}
+        </div>
+        {/* ===================================================================== */}
 
         <div className="flex items-center gap-1.5 md:gap-4 shrink-0 overflow-x-auto scrollbar-hide">
           <a 
@@ -234,6 +311,7 @@ export default function IntegratedPortal() {
           >
             <FileBox size={16} className="md:w-[18px] md:h-[18px]"/> <span className="hidden md:inline">홍보물품 반출대장</span>
           </a>
+
           <a 
             href="https://docs.google.com/spreadsheets/d/1lDD-otVP5s7h-94deku3hLRF4buztn0lO0MBqzNN17M/edit?usp=sharing" 
             target="_blank" 
@@ -330,7 +408,7 @@ export default function IntegratedPortal() {
                   ) : (
                     <>
                       <h2 className={`font-black text-slate-800 tracking-tighter uppercase truncate ${viewMode === 'external_calendar' || viewMode === 'calendar' ? 'text-xl md:text-2xl' : 'text-2xl md:text-4xl'}`}>
-                        {viewMode === 'calendar' ? '부서 공유 달력' : viewMode === 'external_calendar' ? '손)일정확인' : selectedCategory}
+                        {viewMode === 'calendar' ? '중요일정공유 달력' : viewMode === 'external_calendar' ? '손)일정확인' : selectedCategory}
                       </h2>
                       {viewMode === 'files' && selectedCategory !== '전체' && <button onClick={() => { setEditTitleValue(selectedCategory); setIsEditingTitle(true); }} className="opacity-100 md:opacity-0 group-hover:opacity-100 bg-slate-100 text-slate-400 p-2 rounded-xl hover:text-blue-500 text-xs font-bold transition-all">✎ 수정</button>}
                       {viewMode === 'files' && <button onClick={handleDownloadCategoryZip} disabled={isDownloadingAll} className="flex items-center gap-2 bg-blue-50 text-blue-600 px-4 py-2 rounded-xl text-xs font-black hover:bg-blue-600 hover:text-white transition-all ml-2 shadow-sm"><Archive size={14} /> <span className="hidden sm:inline">전체 다운로드(ZIP)</span></button>}
@@ -386,14 +464,19 @@ export default function IntegratedPortal() {
                         return (
                           <div key={day} onDragOver={(e)=>e.preventDefault()} onDrop={()=>onDayDrop(dateStr)} className="bg-white flex flex-col min-h-0 p-1.5 md:p-3 transition-all hover:bg-blue-50/20 group relative border-r border-b border-slate-100">
                             <div className="flex justify-between items-start mb-1.5 shrink-0">
-                              <span className={`text-xs md:text-sm font-black ${ (new Date(dateStr).getDay() === 0) ? 'text-red-500' : (new Date(dateStr).getDay() === 6) ? 'text-blue-500' : 'text-slate-800' }`}>{day}</span>
+                              {/* 공지사항 지정 일정은 날짜 칸 내부에서도 눈에 띄게 테두리 가벼운 강조 효과 */}
+                              <span className={`text-xs md:text-sm font-black ${daySchedules.some(s => s.is_notice) ? 'bg-red-50 text-red-600 px-1 rounded' : (new Date(dateStr).getDay() === 0) ? 'text-red-500' : (new Date(dateStr).getDay() === 6) ? 'text-blue-500' : 'text-slate-800'}`}>{day}</span>
                               <button onClick={() => onAddSchedule(dateStr)} className="opacity-0 group-hover:opacity-100 bg-slate-900 text-white p-1 rounded-md transition-all"><Plus size={10}/></button>
                             </div>
                             <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1 pr-1">
                               {daySchedules.map(s => (
-                                <div key={s.id} draggable onDragStart={(e)=>onScheduleDragStart(e, s.id)} onClick={()=>setSelectedSchedule(s)} className="bg-white border border-blue-100 text-slate-800 text-[9px] md:text-[10px] p-1.5 rounded-lg font-bold shadow-sm flex flex-col gap-0.5 truncate cursor-pointer hover:border-blue-400">
-                                  <div className="flex items-center gap-1 text-blue-600 hidden md:flex"><Clock size={9}/><span className="text-[8px] font-black">{s.start_time}</span></div>
-                                  <span>{s.title}</span>
+                                <div key={s.id} draggable onDragStart={(e)=>onScheduleDragStart(e, s.id)} onClick={()=>setSelectedSchedule(s)} className={`border text-slate-800 text-[9px] md:text-[10px] p-1.5 rounded-lg font-bold shadow-sm flex flex-col gap-0.5 truncate cursor-pointer transition-all ${s.is_notice ? 'bg-red-50/70 border-red-200 hover:border-red-400' : 'bg-white border-blue-100 hover:border-blue-400'}`}>
+                                  <div className="flex items-center gap-1 text-blue-600 hidden md:flex">
+                                    <Clock size={9}/>
+                                    <span className={`text-[8px] font-black ${s.is_notice ? 'text-red-500' : 'text-blue-600'}`}>{s.start_time}</span>
+                                    {s.is_notice && <span className="bg-red-500 text-white px-1 rounded-[4px] text-[7px] scale-90">공지</span>}
+                                  </div>
+                                  <span className={s.is_notice ? 'text-red-900 font-extrabold' : ''}>{s.title}</span>
                                 </div>
                               ))}
                             </div>
