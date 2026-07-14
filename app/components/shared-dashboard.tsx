@@ -307,12 +307,12 @@ export default function SharedDashboard({
     onSelect: (filter: DailyScheduleFilter) => void,
     color: 'blue' | 'violet',
   ) => (
-    <div className="flex flex-wrap justify-end gap-1.5">
+    <div className="flex flex-wrap justify-start gap-1 sm:justify-end sm:gap-1.5">
       {dailyScheduleFilters.map((filter) => (
         <button
           key={filter.value}
           onClick={() => onSelect(filter.value)}
-          className={`rounded-lg px-2 py-1.5 text-[9px] font-black transition-colors ${selectedFilter === filter.value ? color === 'blue' ? 'bg-blue-600 text-white shadow-sm' : 'bg-violet-600 text-white shadow-sm' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+          className={`rounded-lg px-1.5 py-1.5 text-[8px] font-black transition-colors sm:px-2 sm:text-[9px] ${selectedFilter === filter.value ? color === 'blue' ? 'bg-blue-600 text-white shadow-sm' : 'bg-violet-600 text-white shadow-sm' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
         >
           {filter.label}
         </button>
@@ -323,7 +323,7 @@ export default function SharedDashboard({
   const renderDailySchedule = (schedule: Schedule, isTomorrow = false) => (
     <div
       key={schedule.id}
-      className={`group flex w-full items-center gap-3 rounded-2xl border p-3.5 text-left transition-all ${schedule.is_completed ? 'border-slate-100 bg-slate-50/70' : schedule.is_urgent ? 'border-red-200 bg-red-50/40 hover:border-red-300' : isTomorrow ? 'border-slate-100 hover:border-violet-200 hover:bg-violet-50/40' : 'border-slate-100 hover:border-blue-200 hover:bg-blue-50/50'}`}
+      className={`group flex w-full items-center gap-2 rounded-xl border p-3 text-left transition-all sm:gap-3 sm:rounded-2xl sm:p-3.5 ${schedule.is_completed ? 'border-slate-100 bg-slate-50/70' : schedule.is_urgent ? 'border-red-200 bg-red-50/40 hover:border-red-300' : isTomorrow ? 'border-slate-100 hover:border-violet-200 hover:bg-violet-50/40' : 'border-slate-100 hover:border-blue-200 hover:bg-blue-50/50'}`}
     >
       {schedule.is_todo ? (
         <button
@@ -336,30 +336,30 @@ export default function SharedDashboard({
       ) : (
         <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${isTomorrow ? 'bg-violet-50 text-violet-500' : 'bg-blue-50 text-blue-500'}`}><CalendarDays size={15} /></span>
       )}
-      <button onClick={() => onOpenSchedule(schedule)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
-        <div className={`w-16 shrink-0 text-xs font-black ${schedule.is_completed ? 'text-slate-400 line-through' : schedule.is_urgent ? 'text-red-600' : isTomorrow ? 'text-violet-600' : 'text-blue-600'}`}>{schedule.start_time ?? schedule.end_time ?? '미정'}</div>
+      <button onClick={() => onOpenSchedule(schedule)} className="flex min-w-0 flex-1 items-center gap-2 text-left sm:gap-3">
+        <div className={`w-11 shrink-0 text-[10px] font-black sm:w-16 sm:text-xs ${schedule.is_completed ? 'text-slate-400 line-through' : schedule.is_urgent ? 'text-red-600' : isTomorrow ? 'text-violet-600' : 'text-blue-600'}`}>{schedule.start_time ?? schedule.end_time ?? '미정'}</div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             {schedule.is_urgent && <Siren size={15} className="shrink-0 text-red-500" />}
-            <p className={`truncate text-sm font-black ${schedule.is_completed ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{formatScheduleTitle(schedule)}</p>
+            <p className={`truncate text-xs font-black sm:text-sm ${schedule.is_completed ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{formatScheduleTitle(schedule)}</p>
           </div>
           <p className={`mt-1 text-[11px] font-bold ${schedule.is_completed ? 'text-slate-300 line-through' : 'text-slate-400'}`}>{formatScheduleTime(schedule)}</p>
         </div>
-        {schedule.is_todo && <span className="rounded-lg bg-blue-50 px-2 py-1 text-[9px] font-black text-blue-600">TO DO</span>}
-        {schedule.is_notice && <span className="rounded-lg bg-red-50 px-2 py-1 text-[9px] font-black text-red-500">공지</span>}
-        <ArrowRight size={15} className="text-slate-300 transition-transform group-hover:translate-x-1" />
+        {schedule.is_todo && <span className="hidden rounded-lg bg-blue-50 px-2 py-1 text-[9px] font-black text-blue-600 2xl:inline-flex">TO DO</span>}
+        {schedule.is_notice && <span className="hidden rounded-lg bg-red-50 px-2 py-1 text-[9px] font-black text-red-500 2xl:inline-flex">공지</span>}
+        <ArrowRight size={15} className="hidden text-slate-300 transition-transform group-hover:translate-x-1 sm:block" />
       </button>
     </div>
   );
 
   return (
-    <div className="h-full overflow-y-auto custom-scrollbar pb-8">
-      <section className="relative overflow-hidden rounded-[28px] bg-slate-950 px-6 py-7 text-white shadow-xl md:px-9 md:py-8">
+    <div className="h-full overflow-y-auto pb-6 custom-scrollbar sm:pb-8">
+      <section className="relative overflow-hidden rounded-2xl bg-slate-950 px-5 py-6 text-white shadow-xl sm:rounded-[28px] sm:px-6 sm:py-7 lg:px-8 lg:py-8">
         <div className="absolute -right-20 -top-24 h-64 w-64 rounded-full bg-blue-500/20 blur-3xl" />
         <div className="absolute -bottom-24 left-1/3 h-56 w-56 rounded-full bg-violet-500/20 blur-3xl" />
-        <div className="relative flex flex-col justify-between gap-6 lg:flex-row lg:items-end">
+        <div className="relative flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
           <div>
-            <h2 className="text-2xl font-black tracking-tight md:text-4xl">
+            <h2 className="text-[clamp(1.55rem,3vw,2.5rem)] font-black tracking-tight">
               공공의료지원과 일정
             </h2>
             <p className="mt-2 text-sm font-medium text-slate-400">
@@ -371,22 +371,22 @@ export default function SharedDashboard({
               }).format(now)}
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-1.5 sm:gap-2">
             <button
               onClick={() => onChangeView('files')}
-              className="flex items-center gap-2 rounded-2xl bg-white/10 px-4 py-3 text-xs font-black transition-colors hover:bg-white/20"
+              className="flex items-center gap-2 rounded-xl bg-white/10 px-3 py-2.5 text-[11px] font-black transition-colors hover:bg-white/20 sm:rounded-2xl sm:px-4 sm:py-3 sm:text-xs"
             >
               <FolderOpen size={16} /> 문서함
             </button>
             <button
               onClick={() => onChangeView('calendar')}
-              className="flex items-center gap-2 rounded-2xl bg-white/10 px-4 py-3 text-xs font-black transition-colors hover:bg-white/20"
+              className="flex items-center gap-2 rounded-xl bg-white/10 px-3 py-2.5 text-[11px] font-black transition-colors hover:bg-white/20 sm:rounded-2xl sm:px-4 sm:py-3 sm:text-xs"
             >
               <CalendarDays size={16} /> 일정 보기
             </button>
             <button
               onClick={onOpenChat}
-              className="flex items-center gap-2 rounded-2xl bg-blue-500 px-4 py-3 text-xs font-black transition-colors hover:bg-blue-400"
+              className="flex items-center gap-2 rounded-xl bg-blue-500 px-3 py-2.5 text-[11px] font-black transition-colors hover:bg-blue-400 sm:rounded-2xl sm:px-4 sm:py-3 sm:text-xs"
             >
               <MessageCircle size={16} /> 공유방
             </button>
@@ -394,10 +394,10 @@ export default function SharedDashboard({
         </div>
       </section>
 
-      <section className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <section className="mt-3 grid grid-cols-2 gap-2.5 sm:mt-5 sm:gap-3 lg:grid-cols-4">
         {summaryCards.map((item, index) => (
-          <div key={item.label} tabIndex={0} className="group relative rounded-[22px] border border-slate-100 bg-white p-4 shadow-sm outline-none transition-all hover:z-30 hover:-translate-y-0.5 hover:border-slate-200 hover:shadow-lg focus:z-30 focus:border-blue-200 focus:ring-4 focus:ring-blue-50 md:p-5">
-            <div className={`mb-4 flex items-center gap-2 text-xs font-black ${item.color}`}>
+          <div key={item.label} tabIndex={0} className="group relative rounded-2xl border border-slate-100 bg-white p-3 shadow-sm outline-none transition-all hover:z-30 hover:-translate-y-0.5 hover:border-slate-200 hover:shadow-lg focus:z-30 focus:border-blue-200 focus:ring-4 focus:ring-blue-50 sm:rounded-[22px] sm:p-4 lg:p-5">
+            <div className={`mb-3 flex items-center gap-1.5 text-[10px] font-black sm:mb-4 sm:gap-2 sm:text-xs ${item.color}`}>
               {item.icon} {item.label}
             </div>
             {item.isTodoCard ? (
@@ -463,14 +463,14 @@ export default function SharedDashboard({
         ))}
       </section>
 
-      <section className="mt-5 grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
-        <div className="rounded-[28px] border border-slate-100 bg-white p-5 shadow-sm md:p-7">
+      <section className="mt-3 grid gap-3 sm:mt-5 sm:gap-5 lg:grid-cols-[1.1fr_0.9fr]">
+        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm sm:rounded-[28px] sm:p-5 lg:p-6 2xl:p-7">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.18em] text-blue-500">Today</p>
               <h3 className="mt-1 text-xl font-black text-slate-900">오늘 일정</h3>
             </div>
-            <div className="flex flex-col items-end gap-2">
+            <div className="flex w-full flex-col items-start gap-2 sm:w-auto sm:items-end">
               {renderDailyFilters(todayFilter, setTodayFilter, 'blue')}
               <button onClick={() => onChangeView('calendar')} className="flex items-center gap-1 text-[10px] font-black text-slate-400 hover:text-blue-600">전체 일정 보기 <ArrowRight size={13} /></button>
             </div>
@@ -506,7 +506,7 @@ export default function SharedDashboard({
           )}
         </div>
 
-        <div className="rounded-[28px] border border-slate-100 bg-white p-5 shadow-sm md:p-7">
+        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm sm:rounded-[28px] sm:p-5 lg:p-6 2xl:p-7">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.18em] text-violet-500">Tomorrow</p>
@@ -528,8 +528,8 @@ export default function SharedDashboard({
         </div>
       </section>
 
-      <section className="mt-5 grid gap-5 xl:grid-cols-[0.85fr_1.15fr]">
-        <div className="rounded-[28px] border border-slate-100 bg-white p-5 shadow-sm md:p-7">
+      <section className="mt-3 grid gap-3 sm:mt-5 sm:gap-5 lg:grid-cols-[0.85fr_1.15fr]">
+        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm sm:rounded-[28px] sm:p-5 lg:p-6 2xl:p-7">
           <div className="mb-5 flex items-center justify-between">
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-500">Documents</p>
@@ -553,7 +553,7 @@ export default function SharedDashboard({
           </div>
         </div>
 
-        <div className="rounded-[28px] border border-slate-100 bg-white p-5 shadow-sm md:p-7">
+        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm sm:rounded-[28px] sm:p-5 lg:p-6 2xl:p-7">
           <div className="mb-5">
             <p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-500">Live</p>
             <h3 className="mt-1 text-xl font-black text-slate-900">최근 활동</h3>

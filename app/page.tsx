@@ -445,10 +445,10 @@ export default function IntegratedPortal() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-[#F0F2F5] text-[#2C3E50] overflow-hidden select-none font-sans">
-      <header className="bg-[#1A1C1E] p-3 md:p-4 px-4 md:px-8 flex justify-between items-center z-[60] shadow-md text-white border-b border-white/5 gap-2">
+    <div className="flex h-dvh flex-col overflow-hidden bg-[#F0F2F5] font-sans text-[#2C3E50] select-none">
+      <header className="z-[60] flex items-center justify-between gap-2 border-b border-white/5 bg-[#1A1C1E] px-3 py-3 text-white shadow-md sm:px-4 lg:px-6 xl:px-8 xl:py-4">
         <div className="flex items-center gap-2 md:gap-3 overflow-hidden shrink-0">
-          <button onClick={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)} className="md:hidden p-1 hover:bg-white/10 rounded-lg transition-colors shrink-0"><Menu size={22}/></button>
+          <button onClick={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)} className="shrink-0 rounded-lg p-1 transition-colors hover:bg-white/10 xl:hidden"><Menu size={22}/></button>
           <span className="text-lg md:text-2xl hidden sm:inline shrink-0">📂</span>
           <h1 className="font-extrabold text-xs sm:text-sm md:text-lg tracking-tight uppercase truncate">공공의료지원과 문서함</h1>
         </div>
@@ -457,7 +457,7 @@ export default function IntegratedPortal() {
         {/* [신규 기능 연동] 빨간색 테두리 빈 영역 채우기 - 공지사항 롤링 전광판 플레이스 */}
         {/* ===================================================================== */}
         <div 
-          className="hidden lg:flex flex-1 max-w-sm xl:max-w-md mx-4 relative h-10 items-center bg-white/5 hover:bg-white/10 rounded-xl px-4 text-xs font-bold border border-white/10 cursor-pointer overflow-visible transition-colors"
+          className="relative mx-4 hidden h-10 max-w-md flex-1 cursor-pointer items-center overflow-visible rounded-xl border border-white/10 bg-white/5 px-4 text-xs font-bold transition-colors hover:bg-white/10 2xl:flex"
           onMouseEnter={() => setIsNoticeHovered(true)}
           onMouseLeave={() => setIsNoticeHovered(false)}
         >
@@ -495,45 +495,45 @@ export default function IntegratedPortal() {
         </div>
         {/* ===================================================================== */}
 
-        <div className="flex items-center gap-1.5 md:gap-4 shrink-0 overflow-x-auto scrollbar-hide">
+        <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto scrollbar-hide sm:gap-2 xl:gap-3">
           <a 
             href="https://docs.google.com/spreadsheets/d/1yz_fMbsVe0__VJWe6F0ObbrV2jvnRotqi03-mrnnZUc/edit?usp=sharing" 
             target="_blank" 
             rel="noopener noreferrer"
-            className="flex items-center gap-1.5 md:gap-2 px-2.5 md:px-6 py-2 md:py-2.5 rounded-xl md:rounded-2xl font-black transition-all shadow-md active:scale-95 bg-emerald-500 hover:bg-emerald-600 text-white text-xs md:text-sm shrink-0"
+            className="flex shrink-0 items-center gap-1.5 rounded-xl bg-emerald-500 px-2.5 py-2 text-xs font-black text-white shadow-md transition-all hover:bg-emerald-600 active:scale-95 sm:px-3 xl:gap-2 xl:rounded-2xl xl:px-5 xl:py-2.5 xl:text-sm"
           >
-            <FileBox size={16} className="md:w-[18px] md:h-[18px]"/> <span className="hidden md:inline">홍보물품 반출대장</span>
+            <FileBox size={16} className="xl:h-[18px] xl:w-[18px]"/> <span className="hidden xl:inline">홍보물품 반출대장</span>
           </a>
 
           <a 
             href="https://docs.google.com/spreadsheets/d/1lDD-otVP5s7h-94deku3hLRF4buztn0lO0MBqzNN17M/edit?usp=sharing" 
             target="_blank" 
             rel="noopener noreferrer"
-            className="flex items-center gap-1.5 md:gap-2 px-2.5 md:px-6 py-2 md:py-2.5 rounded-xl md:rounded-2xl font-black transition-all shadow-md active:scale-95 bg-emerald-500 hover:bg-emerald-600 text-white text-xs md:text-sm shrink-0"
+            className="flex shrink-0 items-center gap-1.5 rounded-xl bg-emerald-500 px-2.5 py-2 text-xs font-black text-white shadow-md transition-all hover:bg-emerald-600 active:scale-95 sm:px-3 xl:gap-2 xl:rounded-2xl xl:px-5 xl:py-2.5 xl:text-sm"
           >
-            <FileSpreadsheet size={16} className="md:w-[18px] md:h-[18px]"/> <span className="hidden md:inline">실적공유</span>
+            <FileSpreadsheet size={16} className="xl:h-[18px] xl:w-[18px]"/> <span className="hidden xl:inline">실적공유</span>
           </a>
 
           <button 
             onClick={() => setViewMode(viewMode === 'external_calendar' ? 'files' : 'external_calendar')} 
-            className="flex items-center gap-1.5 md:gap-2 px-2.5 md:px-6 py-2 md:py-2.5 rounded-xl md:rounded-2xl font-black transition-all shadow-md active:scale-95 bg-indigo-500 hover:bg-indigo-600 text-white text-xs md:text-sm shrink-0"
+            className="flex shrink-0 items-center gap-1.5 rounded-xl bg-indigo-500 px-2.5 py-2 text-xs font-black text-white shadow-md transition-all hover:bg-indigo-600 active:scale-95 sm:px-3 xl:gap-2 xl:rounded-2xl xl:px-5 xl:py-2.5 xl:text-sm"
           >
-            <CalendarDays size={16} className="md:w-[18px] md:h-[18px]"/> <span className="hidden md:inline">{viewMode === 'external_calendar' ? '문서함' : '손)일정확인'}</span>
+            <CalendarDays size={16} className="xl:h-[18px] xl:w-[18px]"/> <span className="hidden xl:inline">{viewMode === 'external_calendar' ? '문서함' : '손)일정확인'}</span>
           </button>
 
           <button 
             onClick={() => setViewMode(viewMode === 'calendar' ? 'files' : 'calendar')} 
-            className="relative flex items-center gap-1.5 md:gap-2 px-2.5 md:px-6 py-2 md:py-2.5 rounded-xl md:rounded-2xl font-black transition-all shadow-md active:scale-95 bg-white text-slate-900 text-xs md:text-sm shrink-0"
+            className="relative flex shrink-0 items-center gap-1.5 rounded-xl bg-white px-2.5 py-2 text-xs font-black text-slate-900 shadow-md transition-all active:scale-95 sm:px-3 xl:gap-2 xl:rounded-2xl xl:px-5 xl:py-2.5 xl:text-sm"
           >
-            <CalendarIcon size={16} className="md:w-[18px] md:h-[18px]"/> <span className="hidden md:inline">{viewMode === 'calendar' ? '문서함' : '일정 공유'}</span>
+            <CalendarIcon size={16} className="xl:h-[18px] xl:w-[18px]"/> <span className="hidden xl:inline">{viewMode === 'calendar' ? '문서함' : '일정 공유'}</span>
             {hasNewSchedule && viewMode !== 'calendar' && <span className="absolute -top-1 -right-1 w-3 h-3 md:w-4 md:h-4 bg-red-500 rounded-full border-2 border-[#1A1C1E] animate-bounce"></span>}
           </button>
 
           <button 
             onClick={() => setIsChatOpen(!isChatOpen)} 
-            className="relative bg-[#3498DB] hover:bg-[#2980B9] px-2.5 md:px-5 py-2 md:py-2.5 rounded-xl md:rounded-2xl font-black transition-all shadow-md active:scale-95 flex items-center gap-1.5 md:gap-2 text-xs md:text-sm text-white shrink-0"
+            className="relative flex shrink-0 items-center gap-1.5 rounded-xl bg-[#3498DB] px-2.5 py-2 text-xs font-black text-white shadow-md transition-all hover:bg-[#2980B9] active:scale-95 sm:px-3 xl:gap-2 xl:rounded-2xl xl:px-5 xl:py-2.5 xl:text-sm"
           >
-            <span>💬 <span className="hidden md:inline">정보공유방</span></span>
+            <span>💬 <span className="hidden xl:inline">정보공유방</span></span>
             {hasUnread && !isChatOpen && <span className="absolute -top-1 -right-1 w-3 h-3 md:w-4 md:h-4 bg-red-500 rounded-full border-2 border-[#1A1C1E] animate-bounce"></span>}
           </button>
 
@@ -543,12 +543,12 @@ export default function IntegratedPortal() {
 
       <main className="flex-1 flex overflow-hidden relative">
         <aside className={`
-          fixed md:relative inset-y-0 left-0 z-50 w-80 bg-[#EBEEF2] border-r border-slate-300 flex flex-col shadow-2xl md:shadow-none transition-transform duration-300 transform
-          ${isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+          fixed bottom-0 left-0 top-14 z-50 flex w-[min(20rem,88vw)] flex-col border-r border-slate-300 bg-[#EBEEF2] shadow-2xl transition-transform duration-300 transform xl:relative xl:inset-auto xl:w-72 xl:shrink-0 xl:shadow-none 2xl:w-80
+          ${isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full xl:translate-x-0'}
         `}>
           <div className="p-6 pb-2 text-slate-400 flex justify-between items-center">
             <p className="text-[10px] font-black uppercase tracking-[0.2em] px-2 italic">Classification</p>
-            <button onClick={() => setIsMobileSidebarOpen(false)} className="md:hidden text-slate-600"><X size={20}/></button>
+            <button onClick={() => setIsMobileSidebarOpen(false)} className="text-slate-600 xl:hidden"><X size={20}/></button>
           </div>
           <div className="flex-1 overflow-y-auto px-6 py-2 custom-scrollbar">
             <div className="space-y-1.5 mb-4">
@@ -574,7 +574,7 @@ export default function IntegratedPortal() {
           </div>
         </aside>
 
-        {isMobileSidebarOpen && <div onClick={() => setIsMobileSidebarOpen(false)} className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40 md:hidden animate-in fade-in" />}
+        {isMobileSidebarOpen && <div onClick={() => setIsMobileSidebarOpen(false)} className="fixed inset-0 z-40 bg-black/20 backdrop-blur-sm animate-in fade-in xl:hidden" />}
 
         <section 
           onDragOver={(e) => { e.preventDefault(); if(viewMode==='files') setIsDragOver(true); }} 
@@ -590,7 +590,7 @@ export default function IntegratedPortal() {
             </div>
           )}
 
-          <div className={`max-w-6xl w-full mx-auto flex flex-col flex-1 overflow-hidden min-h-0 ${viewMode === 'external_calendar' || viewMode === 'calendar' ? 'p-2 md:p-4' : viewMode === 'dashboard' ? 'p-3 md:p-6' : 'p-6 md:p-12'}`}>
+          <div className={`mx-auto flex w-full flex-1 flex-col overflow-hidden min-h-0 ${viewMode === 'dashboard' ? 'max-w-[1440px]' : 'max-w-6xl'} ${viewMode === 'external_calendar' || viewMode === 'calendar' ? 'p-2 sm:p-3 lg:p-4' : viewMode === 'dashboard' ? 'p-2.5 sm:p-4 lg:p-5 2xl:p-6' : 'p-4 sm:p-6 lg:p-10 2xl:p-12'}`}>
             
             {viewMode !== 'dashboard' && <div className={`flex flex-col md:flex-row justify-between items-start gap-4 shrink-0 ${viewMode === 'external_calendar' || viewMode === 'calendar' ? 'mb-2 md:mb-4' : 'mb-10'}`}>
               <div className="flex-1 w-full overflow-hidden">
