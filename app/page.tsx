@@ -5,12 +5,13 @@ import { supabase } from '@/lib/supabase';
 import SharedDashboard from '@/app/components/shared-dashboard';
 import UndoToast, { type UndoNotice } from '@/app/components/undo-toast';
 import ScheduleFormModal, { type NewScheduleInput } from '@/app/components/schedule-form-modal';
+import WhiteboardImportModal from '@/app/components/whiteboard-import-modal';
 import JSZip from 'jszip';
 import { 
   FileText, FilePlus,
   FileSpreadsheet, FileBox, File, Download, Trash2,
   GripVertical, Calendar as CalendarIcon, LayoutDashboard, Plus,
-  ChevronLeft, ChevronRight, X, Clock, CalendarDays, Lock, Archive, Menu, Siren, Pencil
+  ChevronLeft, ChevronRight, X, Clock, CalendarDays, Lock, Archive, Menu, Siren, Pencil, ScanLine
 } from 'lucide-react';
 
 export default function IntegratedPortal() {
@@ -60,6 +61,7 @@ export default function IntegratedPortal() {
   const [draggedScheduleId, setDraggedScheduleId] = useState<number | null>(null);
   const [scheduleFormDate, setScheduleFormDate] = useState<string | null>(null);
   const [editingSchedule, setEditingSchedule] = useState<any | null>(null);
+  const [isWhiteboardImportOpen, setIsWhiteboardImportOpen] = useState(false);
   const [undoNotices, setUndoNotices] = useState<UndoNotice[]>([]);
   const pendingDeleteKeysRef = useRef(new Set<string>());
   const undoTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
@@ -161,6 +163,12 @@ export default function IntegratedPortal() {
     if (schedule.start_time) return `${schedule.start_time}부터`;
     if (schedule.end_time) return `${schedule.end_time}까지`;
     return '시간 미정';
+  };
+
+  const formatScheduleTitle = (schedule: any) => {
+    const labels: Record<string, string> = { meeting: '회의)', business_trip: '출장)', internal: '내부일정)', leave: '휴가)' };
+    const prefix = labels[schedule.schedule_type];
+    return prefix ? `${prefix} ${schedule.title}` : schedule.title;
   };
 
   const onMouseDownChat = (e: React.MouseEvent) => { setIsDraggingChat(true); dragStartPos.current = { x: e.clientX - position.x, y: e.clientY - position.y }; };
@@ -288,7 +296,7 @@ export default function IntegratedPortal() {
     if (!target) return;
 
     queueUndoableDeletion({
-      label: `'${target.title}' 일정이 삭제 대기 중입니다.`,
+      label: `'${formatScheduleTitle(target)}' 일정이 삭제 대기 중입니다.`,
       keys: [`schedule:${id}`],
       hide: () => { setSchedules((current) => current.filter((schedule) => schedule.id !== id)); setSelectedSchedule(null); },
       restore: () => setSchedules((current) => current.some((schedule) => schedule.id === id) ? current : [...current, target]),
@@ -384,6 +392,12 @@ export default function IntegratedPortal() {
     setSelectedSchedule(null);
   };
 
+  const onImportWhiteboardSchedules = async (importedSchedules: NewScheduleInput[]) => {
+    const { error } = await supabase.from('schedules').insert(importedSchedules);
+    if (error) throw new Error(`일정을 등록하지 못했습니다: ${error.message}`);
+    await fetchSchedules();
+  };
+
   const onToggleScheduleComplete = async (schedule: any) => {
     const nextCompleted = !schedule.is_completed;
     setSchedules((current) => current.map((item) => item.id === schedule.id ? { ...item, is_completed: nextCompleted } : item));
@@ -436,7 +450,7 @@ export default function IntegratedPortal() {
             <>
               <div className="flex items-center justify-between w-full h-full gap-2 animate-in fade-in duration-300">
                 <span className="bg-red-500/20 text-red-400 px-2 py-0.5 rounded text-[10px] font-black shrink-0 animate-pulse">공지사항</span>
-                <span className="truncate flex-1 text-slate-200">{activeNotices[noticeIndex].title}</span>
+                <span className="truncate flex-1 text-slate-200">{formatScheduleTitle(activeNotices[noticeIndex])}</span>
                 <span className="text-yellow-400 font-black shrink-0 ml-2">{getDDay(activeNotices[noticeIndex].date)}</span>
               </div>
 
@@ -449,7 +463,7 @@ export default function IntegratedPortal() {
                   <div className="max-h-48 overflow-y-auto custom-scrollbar space-y-1.5 pr-1">
                     {activeNotices.map((notice, idx) => (
                       <div key={notice.id} className={`flex items-center justify-between p-2 rounded-lg transition-colors ${idx === noticeIndex ? 'bg-white/10 text-white ring-1 ring-white/10' : 'text-slate-300 hover:bg-white/5'}`}>
-                        <span className="truncate flex-1 mr-4">{notice.title}</span>
+                        <span className="truncate flex-1 mr-4">{formatScheduleTitle(notice)}</span>
                         <div className="flex items-center gap-3 shrink-0 text-[11px]">
                           <span className="text-slate-500 font-medium text-[10px]">{notice.date}</span>
                           <span className="text-yellow-400 font-black w-12 text-right">{getDDay(notice.date)}</span>
@@ -617,13 +631,14 @@ export default function IntegratedPortal() {
 
               ) : viewMode === 'calendar' ? (
                 <div className="flex-1 flex flex-col min-h-0 w-full">
-                  <div className="flex items-center gap-6 mb-4 shrink-0">
+                  <div className="flex items-center gap-2 md:gap-6 mb-4 shrink-0">
                     <h3 className="text-xl md:text-2xl font-black text-slate-700">{currentMonth.getFullYear()}년 {currentMonth.getMonth() + 1}월</h3>
                     <div className="flex gap-2">
                       <button onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() - 1)))} className="p-2 md:p-3 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"><ChevronLeft size={18}/></button>
                       <button onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() + 1)))} className="p-2 md:p-3 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"><ChevronRight size={18}/></button>
                       <button onClick={() => setCurrentMonth(new Date())} className="px-5 py-2 bg-slate-900 text-white text-xs font-bold rounded-xl shadow-md hidden sm:block">오늘</button>
                     </div>
+                    <button onClick={() => setIsWhiteboardImportOpen(true)} className="ml-auto flex items-center gap-2 rounded-xl bg-blue-600 px-3 py-2.5 text-[10px] font-black text-white shadow-md transition-colors hover:bg-blue-700 md:px-4 md:text-xs"><ScanLine size={16} /> <span className="hidden sm:inline">화이트보드 가져오기</span><span className="sm:hidden">사진 분석</span></button>
                   </div>
 
                   <div className="flex-1 flex flex-col min-h-0 bg-slate-200 border border-slate-200 rounded-[16px] md:rounded-[32px] overflow-hidden shadow-2xl">
@@ -653,7 +668,7 @@ export default function IntegratedPortal() {
                                     <span className={`text-[8px] font-black ${s.is_notice ? 'text-red-500' : 'text-blue-600'}`}>{formatScheduleTime(s)}</span>
                                     {s.is_notice && <span className="bg-red-500 text-white px-1 rounded-[4px] text-[7px] scale-90">공지</span>}
                                   </div>
-                                  <span className={`flex items-center gap-1 ${s.is_notice ? 'text-red-900 font-extrabold' : ''} ${s.is_completed ? 'text-slate-400 line-through opacity-60' : ''}`}>{s.is_urgent && <Siren size={10} className="shrink-0 text-red-500" />}{s.title}</span>
+                                  <span className={`flex items-center gap-1 ${s.is_notice ? 'text-red-900 font-extrabold' : ''} ${s.is_completed ? 'text-slate-400 line-through opacity-60' : ''}`}>{s.is_urgent && <Siren size={10} className="shrink-0 text-red-500" />}{formatScheduleTitle(s)}</span>
                                 </div>
                               ))}
                             </div>
@@ -698,6 +713,13 @@ export default function IntegratedPortal() {
         </section>
       </main>
 
+      {isWhiteboardImportOpen && (
+        <WhiteboardImportModal
+          onClose={() => setIsWhiteboardImportOpen(false)}
+          onImport={onImportWhiteboardSchedules}
+        />
+      )}
+
       {scheduleFormDate && (
         <ScheduleFormModal
           key={`${scheduleFormDate}-${editingSchedule?.id ?? 'new'}`}
@@ -715,7 +737,7 @@ export default function IntegratedPortal() {
               {selectedSchedule.is_urgent ? <Siren size={24} /> : <CalendarDays size={24} />}
             </div>
             {selectedSchedule.is_urgent && <span className="mb-3 rounded-lg bg-red-500 px-3 py-1 text-[10px] font-black text-white">긴급 일정</span>}
-            <h3 className={`mb-2 text-center text-2xl font-black leading-tight ${selectedSchedule.is_completed ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{selectedSchedule.title}</h3>
+            <h3 className={`mb-2 text-center text-2xl font-black leading-tight ${selectedSchedule.is_completed ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{formatScheduleTitle(selectedSchedule)}</h3>
             <p className="mb-8 text-center font-bold text-slate-400">{selectedSchedule.date} | {formatScheduleTime(selectedSchedule)}</p>
             <div className="grid w-full grid-cols-2 gap-3">
               <button onClick={() => onEditSchedule(selectedSchedule)} className="flex items-center justify-center gap-2 rounded-2xl bg-blue-50 py-4 font-black text-blue-600 transition-all hover:bg-blue-600 hover:text-white"><Pencil size={17}/> 일정 수정</button>

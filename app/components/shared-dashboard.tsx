@@ -29,6 +29,7 @@ interface Schedule {
   is_notice?: boolean;
   is_completed?: boolean;
   is_urgent?: boolean;
+  schedule_type?: 'meeting' | 'business_trip' | 'internal' | 'leave' | 'unclassified';
   created_at?: string;
 }
 
@@ -90,6 +91,19 @@ const formatScheduleTime = (schedule: Schedule) => {
 
 const getScheduleSortTime = (schedule: Schedule) => schedule.start_time ?? schedule.end_time ?? '99:99';
 
+const scheduleTypeLabels: Record<NonNullable<Schedule['schedule_type']>, string> = {
+  meeting: '회의)',
+  business_trip: '출장)',
+  internal: '내부일정)',
+  leave: '휴가)',
+  unclassified: '',
+};
+
+const formatScheduleTitle = (schedule: Schedule) => {
+  const prefix = scheduleTypeLabels[schedule.schedule_type ?? 'unclassified'];
+  return prefix ? `${prefix} ${schedule.title}` : schedule.title;
+};
+
 export default function SharedDashboard({
   files,
   schedules,
@@ -146,7 +160,7 @@ export default function SharedDashboard({
       .map((schedule) => ({
         id: `schedule-${schedule.id}`,
         type: 'schedule' as const,
-        title: schedule.title,
+        title: formatScheduleTitle(schedule),
         description: `${schedule.date} 일정이 등록되었습니다.`,
         createdAt: schedule.created_at as string,
         onClick: () => onOpenSchedule(schedule),
@@ -240,7 +254,7 @@ export default function SharedDashboard({
                           {schedule.is_urgent ? <Siren size={16} /> : schedule.is_completed ? <Check size={16} /> : <CalendarDays size={16} />}
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className={`truncate text-xs font-black ${schedule.is_completed ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{schedule.title}</p>
+                          <p className={`truncate text-xs font-black ${schedule.is_completed ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{formatScheduleTitle(schedule)}</p>
                           <p className="mt-1 text-[10px] font-bold text-slate-400">{schedule.date} · {formatScheduleTime(schedule)}</p>
                         </div>
                         {schedule.is_notice && <span className="shrink-0 rounded-md bg-red-50 px-1.5 py-1 text-[8px] font-black text-red-500">공지</span>}
@@ -287,7 +301,7 @@ export default function SharedDashboard({
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5">
                         {schedule.is_urgent && <Siren size={15} className="shrink-0 text-red-500" />}
-                        <p className={`truncate text-sm font-black ${schedule.is_completed ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{schedule.title}</p>
+                        <p className={`truncate text-sm font-black ${schedule.is_completed ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{formatScheduleTitle(schedule)}</p>
                       </div>
                       <p className={`mt-1 text-[11px] font-bold ${schedule.is_completed ? 'text-slate-300 line-through' : 'text-slate-400'}`}>{formatScheduleTime(schedule)}</p>
                     </div>
@@ -318,7 +332,7 @@ export default function SharedDashboard({
             {upcomingNotices.length > 0 ? upcomingNotices.map((notice) => (
               <button key={notice.id} onClick={() => onOpenSchedule(notice)} className="w-full rounded-2xl bg-slate-50 p-4 text-left transition-colors hover:bg-violet-50">
                 <div className="mb-2 flex items-center justify-between gap-3">
-                  <span className="flex min-w-0 items-center gap-1.5 truncate text-sm font-black text-slate-800">{notice.is_urgent && <Siren size={15} className="shrink-0 text-red-500" />}<span className="truncate">{notice.title}</span></span>
+                  <span className="flex min-w-0 items-center gap-1.5 truncate text-sm font-black text-slate-800">{notice.is_urgent && <Siren size={15} className="shrink-0 text-red-500" />}<span className="truncate">{formatScheduleTitle(notice)}</span></span>
                   <span className="shrink-0 rounded-lg bg-white px-2 py-1 text-[10px] font-black text-violet-600 shadow-sm">{notice.date}</span>
                 </div>
                 <p className="text-[11px] font-bold text-slate-400">{formatScheduleTime(notice)}</p>

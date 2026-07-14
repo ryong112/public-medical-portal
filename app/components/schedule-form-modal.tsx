@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import { BellRing, CalendarPlus, Clock3, Siren, X } from 'lucide-react';
 
+export type ScheduleType = 'meeting' | 'business_trip' | 'internal' | 'leave' | 'unclassified';
+
 export interface NewScheduleInput {
   title: string;
   date: string;
@@ -11,6 +13,7 @@ export interface NewScheduleInput {
   is_notice: boolean;
   is_urgent: boolean;
   is_completed: boolean;
+  schedule_type: ScheduleType;
 }
 
 interface ScheduleFormModalProps {
@@ -50,6 +53,7 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
   const [endTime, setEndTime] = useState(initialSchedule?.end_time ?? defaults.end);
   const [isNotice, setIsNotice] = useState(initialSchedule?.is_notice ?? false);
   const [isUrgent, setIsUrgent] = useState(initialSchedule?.is_urgent ?? false);
+  const [scheduleType, setScheduleType] = useState<ScheduleType>(initialSchedule?.schedule_type ?? 'unclassified');
   const [error, setError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
@@ -80,6 +84,7 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
         is_notice: isNotice,
         is_urgent: isUrgent,
         is_completed: initialSchedule?.is_completed ?? false,
+        schedule_type: scheduleType,
       });
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : '일정을 등록하지 못했습니다.');
@@ -114,6 +119,21 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
           <span className="mb-2 block text-xs font-black text-slate-600">일정 제목</span>
           <input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="일정 제목을 입력해 주십시오." className="w-full rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 py-3.5 text-sm font-bold text-slate-900 outline-none transition-all focus:border-blue-500 focus:bg-white" />
         </label>
+
+        <div className="mt-5">
+          <span className="mb-2 block text-xs font-black text-slate-600">일정 유형</span>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+            {[
+              { value: 'meeting' as const, label: '회의)' },
+              { value: 'business_trip' as const, label: '출장)' },
+              { value: 'internal' as const, label: '내부일정)' },
+              { value: 'leave' as const, label: '휴가)' },
+              { value: 'unclassified' as const, label: '미분류)' },
+            ].map((type) => (
+              <button key={type.value} type="button" onClick={() => setScheduleType(type.value)} className={`rounded-xl px-2 py-2.5 text-[10px] font-black transition-colors ${scheduleType === type.value ? 'bg-blue-600 text-white shadow-md' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>{type.label}</button>
+            ))}
+          </div>
+        </div>
 
         <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-4">
           <div className="mb-3 flex items-center gap-2 text-xs font-black text-slate-600"><Clock3 size={15} /> 일정 시간</div>
