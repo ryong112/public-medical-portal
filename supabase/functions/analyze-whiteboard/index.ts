@@ -18,6 +18,14 @@ const jsonResponse = (body: unknown, status = 200) => new Response(JSON.stringif
   headers: { ...corsHeaders, 'Content-Type': 'application/json' },
 });
 
+interface StoredCorrection {
+  source_text: string;
+  ai_title: string;
+  corrected_title: string;
+  ai_schedule_type: string;
+  corrected_schedule_type: string;
+}
+
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (request.method !== 'POST') return jsonResponse({ error: 'POST 요청만 지원합니다.' }, 405);
@@ -48,6 +56,20 @@ Deno.serve(async (request) => {
     if (claimError) return jsonResponse({ error: `분석 사용량을 확인하지 못했습니다: ${claimError.message}` }, 500);
     if (!claimed) return jsonResponse({ error: '오늘의 화이트보드 분석 한도에 도달했습니다. 내일 다시 시도해 주십시오.' }, 429);
 
+    const { data: correctionRows, error: correctionLoadError } = await supabaseAdmin
+      .from('whiteboard_corrections')
+      .select('source_text, ai_title, corrected_title, ai_schedule_type, corrected_schedule_type')
+      .order('occurrence_count', { ascending: false })
+      .order('updated_at', { ascending: false })
+      .limit(60);
+
+    if (correctionLoadError) console.warn('Correction memory is unavailable:', correctionLoadError.message);
+
+    const storedCorrections = (correctionRows ?? []) as StoredCorrection[];
+    const correctionGuide = storedCorrections.length > 0
+      ? `\n이전 사용자가 직접 확인한 교정 사례입니다. 비슷하거나 같은 필기는 교정된 표현을 우선 사용하십시오.\n${JSON.stringify(storedCorrections)}\n`
+      : '';
+
     const prompt = `
 당신은 한국어 화이트보드에서 부서 일정을 추출하는 도구입니다.
 기준 날짜는 ${typeof currentDate === 'string' ? currentDate : new Date().toISOString().slice(0, 10)}입니다.
@@ -70,6 +92,7 @@ Deno.serve(async (request) => {
 8. 색상과 글씨가 모호하면 confidence를 낮추고 warnings에 한국어로 이유를 적으십시오.
 9. 표 제목, 요일 이름, 장식 문구는 일정으로 만들지 마십시오.
 10. 출력은 지정된 JSON 스키마만 사용하십시오.
+${correctionGuide}
 `;
 
     const model = Deno.env.get('GEMINI_MODEL') || 'gemini-2.5-flash';
@@ -122,7 +145,25 @@ Deno.serve(async (request) => {
     const geminiResult = await geminiResponse.json();
     const rawText = geminiResult?.candidates?.[0]?.content?.parts?.map((part: { text?: string }) => part.text ?? '').join('') ?? '[]';
     const parsed = JSON.parse(rawText);
-    const schedules = Array.isArray(parsed) ? parsed.filter((item) => item && typeof item.title === 'string') : [];
+    const correctionMap = new Map<string, StoredCorrection>();
+    for (const correction of storedCorrections) {
+      const key = correction.ai_title.trim().toLocaleLowerCase('ko-KR');
+      if (key && !correctionMap.has(key)) correctionMap.set(key, correction);
+    }
+
+    const schedules = Array.isArray(parsed)
+      ? parsed
+        .filter((item) => item && typeof item.title === 'string')
+        .map((item) => {
+          const correction = correctionMap.get(item.title.trim().toLocaleLowerCase('ko-KR'));
+          if (!correction) return item;
+          return {
+            ...item,
+            title: correction.corrected_title,
+            schedule_type: correction.corrected_schedule_type,
+          };
+        })
+      : [];
 
     return jsonResponse({ schedules });
   } catch (error) {

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { BellRing, CalendarPlus, Clock3, Siren, X } from 'lucide-react';
+import { BellRing, CalendarPlus, CheckSquare2, Clock3, Siren, X } from 'lucide-react';
 
 export type ScheduleType = 'meeting' | 'business_trip' | 'internal' | 'leave' | 'unclassified';
 
@@ -13,6 +13,7 @@ export interface NewScheduleInput {
   is_notice: boolean;
   is_urgent: boolean;
   is_completed: boolean;
+  is_todo: boolean;
   schedule_type: ScheduleType;
 }
 
@@ -20,10 +21,46 @@ interface ScheduleFormModalProps {
   date: string;
   initialSchedule?: NewScheduleInput;
   onClose: () => void;
-  onSubmit: (schedule: NewScheduleInput) => Promise<void>;
+  onSubmit: (schedules: NewScheduleInput[]) => Promise<void>;
 }
 
 type TimeMode = 'both' | 'start' | 'end' | 'none';
+type RecurrenceMode = 'none' | 'weekly' | 'biweekly' | 'monthly_first';
+
+const weekdayNames = ['일', '월', '화', '수', '목', '금', '토'];
+
+const parseLocalDate = (date: string) => {
+  const [year, month, day] = date.split('-').map(Number);
+  return new Date(year, month - 1, day);
+};
+
+const formatLocalDate = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+const createRecurringDates = (startDate: string, mode: RecurrenceMode) => {
+  if (mode === 'none') return [startDate];
+
+  const start = parseLocalDate(startDate);
+  const yearEnd = new Date(start.getFullYear(), 11, 31);
+  const dates: string[] = [];
+
+  if (mode === 'weekly' || mode === 'biweekly') {
+    const cursor = new Date(start);
+    const interval = mode === 'weekly' ? 7 : 14;
+    while (cursor <= yearEnd) {
+      dates.push(formatLocalDate(cursor));
+      cursor.setDate(cursor.getDate() + interval);
+    }
+    return dates;
+  }
+
+  const weekday = start.getDay();
+  for (let month = start.getMonth(); month <= 11; month += 1) {
+    const firstDay = new Date(start.getFullYear(), month, 1);
+    const occurrence = new Date(start.getFullYear(), month, 1 + ((weekday - firstDay.getDay() + 7) % 7));
+    if (occurrence >= start && occurrence <= yearEnd) dates.push(formatLocalDate(occurrence));
+  }
+  return dates;
+};
 
 const addMinutes = (time: string, minutes: number) => {
   const [hour, minute] = time.split(':').map(Number);
@@ -52,8 +89,10 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
   const [startTime, setStartTime] = useState(initialSchedule?.start_time ?? defaults.start);
   const [endTime, setEndTime] = useState(initialSchedule?.end_time ?? defaults.end);
   const [isNotice, setIsNotice] = useState(initialSchedule?.is_notice ?? false);
+  const [isTodo, setIsTodo] = useState(initialSchedule?.is_todo ?? false);
   const [isUrgent, setIsUrgent] = useState(initialSchedule?.is_urgent ?? false);
   const [scheduleType, setScheduleType] = useState<ScheduleType>(initialSchedule?.schedule_type ?? 'unclassified');
+  const [recurrenceMode, setRecurrenceMode] = useState<RecurrenceMode>('none');
   const [error, setError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
@@ -76,7 +115,7 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
     setIsSaving(true);
     setError('');
     try {
-      await onSubmit({
+      const schedule: NewScheduleInput = {
         title: title.trim(),
         date: dateValue,
         start_time: timeMode === 'both' || timeMode === 'start' ? startTime : null,
@@ -84,8 +123,11 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
         is_notice: isNotice,
         is_urgent: isUrgent,
         is_completed: initialSchedule?.is_completed ?? false,
+        is_todo: isTodo,
         schedule_type: scheduleType,
-      });
+      };
+      const recurringDates = initialSchedule ? [dateValue] : createRecurringDates(dateValue, recurrenceMode);
+      await onSubmit(recurringDates.map((recurringDate) => ({ ...schedule, date: recurringDate })));
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : '일정을 등록하지 못했습니다.');
       setIsSaving(false);
@@ -165,11 +207,41 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
           </div>}
         </div>
 
+        {!initialSchedule && (
+          <div className="mt-5 rounded-2xl border border-blue-100 bg-blue-50/40 p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-black text-slate-700">정기 일정</p>
+                <p className="mt-1 text-[10px] font-bold text-slate-400">선택한 날짜부터 {parseLocalDate(dateValue).getFullYear()}년 12월 31일까지만 등록합니다.</p>
+              </div>
+              {recurrenceMode !== 'none' && <span className="shrink-0 rounded-lg bg-blue-600 px-2.5 py-1 text-[10px] font-black text-white">{createRecurringDates(dateValue, recurrenceMode).length}건</span>}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { value: 'none' as const, label: '반복 안 함' },
+                { value: 'weekly' as const, label: `매주 ${weekdayNames[parseLocalDate(dateValue).getDay()]}요일` },
+                { value: 'biweekly' as const, label: `2주마다 ${weekdayNames[parseLocalDate(dateValue).getDay()]}요일` },
+                { value: 'monthly_first' as const, label: `매월 첫째 ${weekdayNames[parseLocalDate(dateValue).getDay()]}요일` },
+              ].map((option) => (
+                <button key={option.value} type="button" onClick={() => setRecurrenceMode(option.value)} className={`rounded-xl px-3 py-2.5 text-[10px] font-black transition-all ${recurrenceMode === option.value ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-slate-500 hover:bg-blue-100'}`}>{option.label}</button>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="mt-5 rounded-2xl border border-slate-100 p-4">
           <div className="mb-3 flex items-center gap-2 text-xs font-black text-slate-700"><BellRing size={15} className="text-violet-500" /> 이 일정을 공지사항에 추가하시겠습니까?</div>
           <div className="grid grid-cols-2 gap-2">
             <button type="button" onClick={() => setIsNotice(true)} className={`rounded-xl py-2.5 text-xs font-black transition-all ${isNotice ? 'bg-violet-600 text-white shadow-md' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>네</button>
             <button type="button" onClick={() => setIsNotice(false)} className={`rounded-xl py-2.5 text-xs font-black transition-all ${!isNotice ? 'bg-slate-800 text-white shadow-md' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>아니오</button>
+          </div>
+        </div>
+
+        <div className="mt-3 rounded-2xl border border-slate-100 p-4">
+          <div className="mb-3 flex items-center gap-2 text-xs font-black text-slate-700"><CheckSquare2 size={15} className="text-blue-500" /> 이 일정을 TO DO LIST에 추가하시겠습니까?</div>
+          <div className="grid grid-cols-2 gap-2">
+            <button type="button" onClick={() => setIsTodo(true)} className={`rounded-xl py-2.5 text-xs font-black transition-all ${isTodo ? 'bg-blue-600 text-white shadow-md' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>네</button>
+            <button type="button" onClick={() => setIsTodo(false)} className={`rounded-xl py-2.5 text-xs font-black transition-all ${!isTodo ? 'bg-slate-800 text-white shadow-md' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>아니오</button>
           </div>
         </div>
 
@@ -186,7 +258,7 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
 
         <div className="mt-7 flex gap-3">
           <button type="button" onClick={onClose} className="flex-1 rounded-2xl bg-slate-100 py-3.5 text-sm font-black text-slate-600 transition-colors hover:bg-slate-200">취소</button>
-          <button disabled={isSaving} className="flex-1 rounded-2xl bg-blue-600 py-3.5 text-sm font-black text-white shadow-lg transition-all hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60">{isSaving ? '저장 중...' : initialSchedule ? '변경사항 저장' : '일정 추가'}</button>
+          <button disabled={isSaving} className="flex-1 rounded-2xl bg-blue-600 py-3.5 text-sm font-black text-white shadow-lg transition-all hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60">{isSaving ? '저장 중...' : initialSchedule ? '변경사항 저장' : recurrenceMode === 'none' ? '일정 추가' : `${createRecurringDates(dateValue, recurrenceMode).length}개 일정 추가`}</button>
         </div>
       </form>
     </div>

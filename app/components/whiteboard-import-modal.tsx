@@ -2,7 +2,7 @@
 
 import { useRef, useState } from 'react';
 import NextImage from 'next/image';
-import { AlertTriangle, Camera, Check, ImagePlus, LoaderCircle, ScanText, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Camera, Check, ImagePlus, LoaderCircle, Plus, ScanText, Trash2, X } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import type { NewScheduleInput } from '@/app/components/schedule-form-modal';
 
@@ -17,14 +17,26 @@ interface AnalyzedSchedule {
   end_time: string;
   schedule_type: ScheduleType;
   is_urgent: boolean;
+  is_todo: boolean;
   confidence: number;
   source_text: string;
   warnings: string[];
+  original_title: string;
+  original_schedule_type: ScheduleType;
+  is_manual: boolean;
+}
+
+export interface WhiteboardCorrectionInput {
+  source_text: string;
+  ai_title: string;
+  corrected_title: string;
+  ai_schedule_type: ScheduleType;
+  corrected_schedule_type: ScheduleType;
 }
 
 interface WhiteboardImportModalProps {
   onClose: () => void;
-  onImport: (schedules: NewScheduleInput[]) => Promise<void>;
+  onImport: (schedules: NewScheduleInput[], corrections: WhiteboardCorrectionInput[]) => Promise<void>;
 }
 
 const scheduleTypes: Array<{ value: ScheduleType; label: string }> = [
@@ -155,9 +167,13 @@ export default function WhiteboardImportModal({ onClose, onImport }: WhiteboardI
         end_time: schedule.end_time ?? '',
         schedule_type: scheduleTypes.some((type) => type.value === schedule.schedule_type) ? schedule.schedule_type as ScheduleType : 'unclassified',
         is_urgent: Boolean(schedule.is_urgent),
+        is_todo: false,
         confidence: typeof schedule.confidence === 'number' ? schedule.confidence : 0,
         source_text: schedule.source_text ?? '',
         warnings: Array.isArray(schedule.warnings) ? schedule.warnings : [],
+        original_title: schedule.title ?? '',
+        original_schedule_type: scheduleTypes.some((type) => type.value === schedule.schedule_type) ? schedule.schedule_type as ScheduleType : 'unclassified',
+        is_manual: false,
       })));
       if (schedules.length === 0) setError('사진에서 일정을 찾지 못했습니다. 다른 각도에서 다시 촬영해 주십시오.');
     } catch (analysisError) {
@@ -169,6 +185,27 @@ export default function WhiteboardImportModal({ onClose, onImport }: WhiteboardI
 
   const updateDraft = <K extends keyof AnalyzedSchedule>(id: string, key: K, value: AnalyzedSchedule[K]) => {
     setDrafts((current) => current.map((draft) => draft.id === id ? { ...draft, [key]: value } : draft));
+  };
+
+  const addManualDraft = () => {
+    setDrafts((current) => [...current, {
+      id: `manual-${Date.now()}`,
+      selected: true,
+      title: '',
+      date: '',
+      start_time: '',
+      end_time: '',
+      schedule_type: 'unclassified',
+      is_urgent: false,
+      is_todo: false,
+      confidence: 1,
+      source_text: '',
+      warnings: [],
+      original_title: '',
+      original_schedule_type: 'unclassified',
+      is_manual: true,
+    }]);
+    setError('');
   };
 
   const importSelected = async () => {
@@ -185,6 +222,19 @@ export default function WhiteboardImportModal({ onClose, onImport }: WhiteboardI
     setIsSaving(true);
     setError('');
     try {
+      const corrections = selected
+        .filter((draft) => !draft.is_manual && (
+          draft.title.trim() !== draft.original_title.trim()
+          || draft.schedule_type !== draft.original_schedule_type
+        ))
+        .map((draft) => ({
+          source_text: draft.source_text,
+          ai_title: draft.original_title.trim(),
+          corrected_title: draft.title.trim(),
+          ai_schedule_type: draft.original_schedule_type,
+          corrected_schedule_type: draft.schedule_type,
+        }));
+
       await onImport(selected.map((draft) => ({
         title: draft.title.trim(),
         date: draft.date,
@@ -194,7 +244,8 @@ export default function WhiteboardImportModal({ onClose, onImport }: WhiteboardI
         is_notice: false,
         is_urgent: draft.is_urgent,
         is_completed: false,
-      })));
+        is_todo: draft.is_todo,
+      })), corrections);
       onClose();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : '일정을 등록하지 못했습니다.');
@@ -269,7 +320,10 @@ export default function WhiteboardImportModal({ onClose, onImport }: WhiteboardI
                   <h3 className="text-lg font-black text-slate-900">추출된 일정 확인</h3>
                   <p className="mt-1 text-xs font-bold text-slate-400">틀린 내용과 일정 유형을 수정한 뒤 등록할 항목을 선택해 주십시오.</p>
                 </div>
-                <button onClick={removePhoto} className="text-left text-xs font-black text-blue-600 sm:text-right">다른 사진 분석</button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button onClick={addManualDraft} className="flex items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-2 text-xs font-black text-white hover:bg-black"><Plus size={14} /> 일정 직접 추가</button>
+                  <button onClick={removePhoto} className="px-2 py-2 text-left text-xs font-black text-blue-600 sm:text-right">다른 사진 분석</button>
+                </div>
               </div>
               <div className="space-y-3">
                 {drafts.map((draft) => (
@@ -290,8 +344,11 @@ export default function WhiteboardImportModal({ onClose, onImport }: WhiteboardI
                       <button onClick={() => setDrafts((current) => current.filter((item) => item.id !== draft.id))} className="mt-1 shrink-0 text-slate-300 hover:text-red-500"><X size={16} /></button>
                     </div>
                     <div className="mt-3 flex flex-wrap items-center gap-2 pl-9 text-[10px] font-bold">
-                      <span className={`rounded-lg px-2 py-1 ${draft.confidence >= 0.8 ? 'bg-emerald-50 text-emerald-600' : draft.confidence >= 0.55 ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600'}`}>인식 신뢰도 {Math.round(draft.confidence * 100)}%</span>
+                      {draft.is_manual
+                        ? <span className="rounded-lg bg-blue-50 px-2 py-1 text-blue-600">직접 추가</span>
+                        : <span className={`rounded-lg px-2 py-1 ${draft.confidence >= 0.8 ? 'bg-emerald-50 text-emerald-600' : draft.confidence >= 0.55 ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600'}`}>인식 신뢰도 {Math.round(draft.confidence * 100)}%</span>}
                       <button onClick={() => updateDraft(draft.id, 'is_urgent', !draft.is_urgent)} className={`rounded-lg px-2 py-1 ${draft.is_urgent ? 'bg-red-500 text-white' : 'bg-slate-100 text-slate-500'}`}>긴급 {draft.is_urgent ? '예' : '아니오'}</button>
+                      <button onClick={() => updateDraft(draft.id, 'is_todo', !draft.is_todo)} className={`rounded-lg px-2 py-1 ${draft.is_todo ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500'}`}>TO DO {draft.is_todo ? '예' : '아니오'}</button>
                       {(draft.warnings.length > 0 || !draft.date) && <span className="flex items-center gap-1 text-amber-600"><AlertTriangle size={11} /> {draft.warnings[0] || '날짜를 확인해 주십시오.'}</span>}
                     </div>
                   </div>

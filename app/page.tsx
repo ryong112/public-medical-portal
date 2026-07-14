@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase';
 import SharedDashboard from '@/app/components/shared-dashboard';
 import UndoToast, { type UndoNotice } from '@/app/components/undo-toast';
 import ScheduleFormModal, { type NewScheduleInput } from '@/app/components/schedule-form-modal';
-import WhiteboardImportModal from '@/app/components/whiteboard-import-modal';
+import WhiteboardImportModal, { type WhiteboardCorrectionInput } from '@/app/components/whiteboard-import-modal';
 import JSZip from 'jszip';
 import { 
   FileText, FilePlus,
@@ -143,7 +143,8 @@ export default function IntegratedPortal() {
   }, [isAuthenticated]);
 
   // 데이터 필터링 계산 자동 처리 (오늘 날짜 기준 진행 중인 공지만 정렬 노출)
-  const todayStr = new Date().toISOString().split('T')[0];
+  const localToday = new Date();
+  const todayStr = `${localToday.getFullYear()}-${String(localToday.getMonth() + 1).padStart(2, '0')}-${String(localToday.getDate()).padStart(2, '0')}`;
   const activeNotices = schedules
     .filter(s => s.is_notice && s.date >= todayStr)
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -376,10 +377,11 @@ export default function IntegratedPortal() {
     setScheduleFormDate(dateStr);
   };
 
-  const onSaveSchedule = async (schedule: NewScheduleInput) => {
+  const onSaveSchedule = async (scheduleEntries: NewScheduleInput[]) => {
+    const schedule = scheduleEntries[0];
     const { error } = editingSchedule
       ? await supabase.from('schedules').update(schedule).eq('id', editingSchedule.id)
-      : await supabase.from('schedules').insert([schedule]);
+      : await supabase.from('schedules').insert(scheduleEntries);
     if (error) throw new Error(`일정을 저장하지 못했습니다: ${error.message}`);
     await fetchSchedules();
     setScheduleFormDate(null);
@@ -392,9 +394,20 @@ export default function IntegratedPortal() {
     setSelectedSchedule(null);
   };
 
-  const onImportWhiteboardSchedules = async (importedSchedules: NewScheduleInput[]) => {
+  const onImportWhiteboardSchedules = async (
+    importedSchedules: NewScheduleInput[],
+    corrections: WhiteboardCorrectionInput[],
+  ) => {
     const { error } = await supabase.from('schedules').insert(importedSchedules);
     if (error) throw new Error(`일정을 등록하지 못했습니다: ${error.message}`);
+
+    if (corrections.length > 0) {
+      const { error: correctionError } = await supabase.rpc('save_whiteboard_corrections', {
+        p_corrections: corrections,
+      });
+      if (correctionError) console.error('화이트보드 교정 기록을 저장하지 못했습니다:', correctionError.message);
+    }
+
     await fetchSchedules();
   };
 
@@ -653,11 +666,15 @@ export default function IntegratedPortal() {
                       {Array.from({length: new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0).getDate()}).map((_, i) => {
                         const day = i + 1; const dateStr = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                         const daySchedules = schedules.filter(s => s.date === dateStr);
+                        const isToday = dateStr === todayStr;
                         return (
-                          <div key={day} onDragOver={(e)=>e.preventDefault()} onDrop={()=>onDayDrop(dateStr)} className="bg-white flex flex-col min-h-0 p-1.5 md:p-3 transition-all hover:bg-blue-50/20 group relative border-r border-b border-slate-100">
+                          <div key={day} onDragOver={(e)=>e.preventDefault()} onDrop={()=>onDayDrop(dateStr)} className={`flex min-h-0 flex-col border-r border-b border-slate-100 p-1.5 transition-all hover:bg-blue-50/40 group relative md:p-3 ${isToday ? 'z-10 bg-blue-50/70 ring-2 ring-inset ring-blue-500' : 'bg-white'}`}>
                             <div className="flex justify-between items-start mb-1.5 shrink-0">
                               {/* 공지사항 지정 일정은 날짜 칸 내부에서도 눈에 띄게 테두리 가벼운 강조 효과 */}
-                              <span className={`text-xs md:text-sm font-black ${daySchedules.some(s => s.is_notice) ? 'bg-red-50 text-red-600 px-1 rounded' : (new Date(dateStr).getDay() === 0) ? 'text-red-500' : (new Date(dateStr).getDay() === 6) ? 'text-blue-500' : 'text-slate-800'}`}>{day}</span>
+                              <div className="flex items-center gap-1.5">
+                                <span className={`flex h-6 min-w-6 items-center justify-center rounded-lg px-1 text-xs font-black md:h-7 md:min-w-7 md:text-sm ${isToday ? 'bg-blue-600 text-white shadow-md' : daySchedules.some(s => s.is_notice) ? 'bg-red-50 text-red-600' : (new Date(dateStr).getDay() === 0) ? 'text-red-500' : (new Date(dateStr).getDay() === 6) ? 'text-blue-500' : 'text-slate-800'}`}>{day}</span>
+                                {isToday && <span className="rounded-md bg-blue-100 px-1.5 py-0.5 text-[8px] font-black text-blue-700 md:text-[9px]">오늘</span>}
+                              </div>
                               <button onClick={() => onAddSchedule(dateStr)} className="opacity-0 group-hover:opacity-100 bg-slate-900 text-white p-1 rounded-md transition-all"><Plus size={10}/></button>
                             </div>
                             <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1 pr-1">

@@ -28,6 +28,7 @@ interface Schedule {
   end_time: string | null;
   is_notice?: boolean;
   is_completed?: boolean;
+  is_todo?: boolean;
   is_urgent?: boolean;
   schedule_type?: 'meeting' | 'business_trip' | 'internal' | 'leave' | 'unclassified';
   created_at?: string;
@@ -126,6 +127,7 @@ export default function SharedDashboard({
   const todaySchedules = schedules
     .filter((schedule) => schedule.date === todayKey)
     .sort((a, b) => Number(Boolean(a.is_completed)) - Number(Boolean(b.is_completed)) || getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
+  const todayTodoSchedules = todaySchedules.filter((schedule) => schedule.is_todo);
   const tomorrowSchedules = schedules.filter((schedule) => schedule.date === tomorrowKey);
   const weeklySchedules = schedules
     .filter((schedule) => schedule.date >= todayKey && schedule.date <= weekEndKey)
@@ -282,9 +284,9 @@ export default function SharedDashboard({
             </button>
           </div>
 
-          {todaySchedules.length > 0 ? (
+          {todayTodoSchedules.length > 0 ? (
             <div className="space-y-2">
-              {todaySchedules.map((schedule) => (
+              {todayTodoSchedules.map((schedule) => (
                 <div
                   key={schedule.id}
                   className={`group flex w-full items-center gap-3 rounded-2xl border p-3.5 text-left transition-all ${schedule.is_completed ? 'border-slate-100 bg-slate-50/70' : schedule.is_urgent ? 'border-red-200 bg-red-50/40 hover:border-red-300' : 'border-slate-100 hover:border-blue-200 hover:bg-blue-50/50'}`}
@@ -314,7 +316,7 @@ export default function SharedDashboard({
           ) : (
             <div className="flex min-h-48 flex-col items-center justify-center rounded-2xl bg-slate-50 text-center">
               <CalendarDays size={30} className="mb-3 text-slate-300" />
-              <p className="text-sm font-black text-slate-500">오늘 등록된 일정이 없습니다.</p>
+              <p className="text-sm font-black text-slate-500">오늘 등록된 할 일이 없습니다.</p>
               <button onClick={() => onChangeView('calendar')} className="mt-3 text-xs font-black text-blue-500">일정 추가</button>
             </div>
           )}
