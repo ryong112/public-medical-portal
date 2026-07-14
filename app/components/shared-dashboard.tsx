@@ -3,7 +3,6 @@ import {
   BellRing,
   CalendarDays,
   Check,
-  Clock3,
   FileText,
   FolderOpen,
   MessageCircle,
@@ -31,7 +30,16 @@ interface Schedule {
   is_todo?: boolean;
   is_urgent?: boolean;
   schedule_type?: 'meeting' | 'business_trip' | 'internal' | 'leave' | 'unclassified';
+  absence_type?: 'annual' | 'early_am' | 'early_pm';
   created_at?: string;
+}
+
+interface AbsenceGroup {
+  key: string;
+  title: string;
+  typeLabel: string;
+  dateLabel: string;
+  schedules: Schedule[];
 }
 
 interface Message {
@@ -101,8 +109,43 @@ const scheduleTypeLabels: Record<NonNullable<Schedule['schedule_type']>, string>
 };
 
 const formatScheduleTitle = (schedule: Schedule) => {
+  if (schedule.schedule_type === 'leave' && schedule.absence_type === 'early_am') return `오전 조퇴) ${schedule.title}`;
+  if (schedule.schedule_type === 'leave' && schedule.absence_type === 'early_pm') return `오후 조퇴) ${schedule.title}`;
   const prefix = scheduleTypeLabels[schedule.schedule_type ?? 'unclassified'];
   return prefix ? `${prefix} ${schedule.title}` : schedule.title;
+};
+
+const getAbsenceTypeLabel = (schedule: Schedule) => {
+  if (schedule.absence_type === 'early_am' || (schedule.title.includes('오전') && schedule.title.includes('조퇴'))) return '오전 조퇴';
+  if (schedule.absence_type === 'early_pm' || (schedule.title.includes('오후') && schedule.title.includes('조퇴'))) return '오후 조퇴';
+  return '연차';
+};
+
+const formatAbsenceDateRanges = (dateKeys: string[]) => {
+  const dates = [...new Set(dateKeys)].sort().map((key) => {
+    const [year, month, day] = key.split('-').map(Number);
+    return new Date(year, month - 1, day);
+  });
+  const ranges: Array<{ start: Date; end: Date }> = [];
+
+  for (const date of dates) {
+    const lastRange = ranges.at(-1);
+    if (!lastRange) {
+      ranges.push({ start: date, end: date });
+      continue;
+    }
+    const nextDay = new Date(lastRange.end);
+    nextDay.setDate(nextDay.getDate() + 1);
+    if (toLocalDateKey(nextDay) === toLocalDateKey(date)) lastRange.end = date;
+    else ranges.push({ start: date, end: date });
+  }
+
+  return ranges.map(({ start, end }) => {
+    const startLabel = `${start.getMonth() + 1}. ${start.getDate()}`;
+    if (toLocalDateKey(start) === toLocalDateKey(end)) return `${startLabel}.`;
+    if (start.getMonth() === end.getMonth()) return `${startLabel}~${end.getDate()}.`;
+    return `${startLabel}~${end.getMonth() + 1}. ${end.getDate()}.`;
+  }).join(', ');
 };
 
 export default function SharedDashboard({
@@ -123,27 +166,49 @@ export default function SharedDashboard({
   const weekEnd = new Date(now);
   weekEnd.setDate(now.getDate() + 6);
   const weekEndKey = toLocalDateKey(weekEnd);
+  const monthEndKey = toLocalDateKey(new Date(now.getFullYear(), now.getMonth() + 1, 0));
 
   const todaySchedules = schedules
     .filter((schedule) => schedule.date === todayKey)
+    .sort((a, b) => getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
+  const todayTodoSchedules = todaySchedules
+    .filter((schedule) => schedule.is_todo)
     .sort((a, b) => Number(Boolean(a.is_completed)) - Number(Boolean(b.is_completed)) || getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
-  const todayTodoSchedules = todaySchedules.filter((schedule) => schedule.is_todo);
-  const tomorrowSchedules = schedules.filter((schedule) => schedule.date === tomorrowKey);
+  const pendingTodoCount = todayTodoSchedules.filter((schedule) => !schedule.is_completed).length;
+  const completedTodoCount = todayTodoSchedules.filter((schedule) => schedule.is_completed).length;
+  const tomorrowSchedules = schedules
+    .filter((schedule) => schedule.date === tomorrowKey)
+    .sort((a, b) => getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
   const weeklySchedules = schedules
     .filter((schedule) => schedule.date >= todayKey && schedule.date <= weekEndKey)
     .sort((a, b) => a.date.localeCompare(b.date) || getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
   const allUpcomingNotices = schedules
     .filter((schedule) => schedule.is_notice && schedule.date >= todayKey)
     .sort((a, b) => a.date.localeCompare(b.date));
-  const upcomingNotices = allUpcomingNotices.slice(0, 3);
+  const monthlyAbsenceSchedules = schedules
+    .filter((schedule) => schedule.date >= todayKey && schedule.date <= monthEndKey)
+    .filter((schedule) => schedule.schedule_type === 'leave' || /휴가|조퇴/.test(schedule.title))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const absenceGroupMap = new Map<string, Schedule[]>();
+  for (const schedule of monthlyAbsenceSchedules) {
+    const key = `${schedule.title.trim()}::${getAbsenceTypeLabel(schedule)}`;
+    absenceGroupMap.set(key, [...(absenceGroupMap.get(key) ?? []), schedule]);
+  }
+  const monthlyAbsenceGroups: AbsenceGroup[] = [...absenceGroupMap.entries()].map(([key, groupedSchedules]) => ({
+    key,
+    title: groupedSchedules[0].title,
+    typeLabel: getAbsenceTypeLabel(groupedSchedules[0]),
+    dateLabel: formatAbsenceDateRanges(groupedSchedules.map((schedule) => schedule.date)),
+    schedules: groupedSchedules,
+  }));
   const recentFiles = [...files]
     .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
     .slice(0, 4);
   const summaryCards = [
-    { label: '오늘 일정', value: todaySchedules.length, unit: '건', color: 'text-blue-600', icon: <Clock3 size={18} />, items: todaySchedules },
-    { label: '내일 일정', value: tomorrowSchedules.length, unit: '건', color: 'text-violet-600', icon: <CalendarDays size={18} />, items: tomorrowSchedules },
-    { label: '진행 중인 공지사항', value: allUpcomingNotices.length, unit: '건', color: 'text-red-500', icon: <BellRing size={18} />, items: allUpcomingNotices },
-    { label: '주간 일정', value: weeklySchedules.length, unit: '건', color: 'text-amber-500', icon: <CalendarDays size={18} />, items: weeklySchedules },
+    { label: 'TO DO LIST', value: pendingTodoCount, unit: '개', color: 'text-blue-600', icon: <Check size={18} />, items: todayTodoSchedules, isTodoCard: true, completedValue: completedTodoCount, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[] },
+    { label: '진행 중인 공지사항', value: allUpcomingNotices.length, unit: '건', color: 'text-red-500', icon: <BellRing size={18} />, items: allUpcomingNotices, isTodoCard: false, completedValue: 0, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[] },
+    { label: '주간 일정', value: weeklySchedules.length, unit: '건', color: 'text-violet-600', icon: <CalendarDays size={18} />, items: weeklySchedules, isTodoCard: false, completedValue: 0, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[] },
+    { label: '이번 달 휴가', value: monthlyAbsenceGroups.length, unit: '건', color: 'text-amber-500', icon: <CalendarDays size={18} />, items: [] as Schedule[], isTodoCard: false, completedValue: 0, isAbsenceCard: true, absenceItems: monthlyAbsenceGroups },
   ];
 
   const activities: ActivityItem[] = [
@@ -190,6 +255,38 @@ export default function SharedDashboard({
     schedule: 'bg-violet-50 text-violet-600',
     message: 'bg-amber-50 text-amber-600',
   };
+
+  const renderDailySchedule = (schedule: Schedule, isTomorrow = false) => (
+    <div
+      key={schedule.id}
+      className={`group flex w-full items-center gap-3 rounded-2xl border p-3.5 text-left transition-all ${schedule.is_completed ? 'border-slate-100 bg-slate-50/70' : schedule.is_urgent ? 'border-red-200 bg-red-50/40 hover:border-red-300' : isTomorrow ? 'border-slate-100 hover:border-violet-200 hover:bg-violet-50/40' : 'border-slate-100 hover:border-blue-200 hover:bg-blue-50/50'}`}
+    >
+      {schedule.is_todo ? (
+        <button
+          onClick={() => onToggleScheduleComplete(schedule)}
+          aria-label={schedule.is_completed ? '완료 취소' : '완료 처리'}
+          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border-2 transition-all ${schedule.is_completed ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-slate-300 bg-white text-transparent hover:border-emerald-500'}`}
+        >
+          <Check size={15} strokeWidth={3} />
+        </button>
+      ) : (
+        <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${isTomorrow ? 'bg-violet-50 text-violet-500' : 'bg-blue-50 text-blue-500'}`}><CalendarDays size={15} /></span>
+      )}
+      <button onClick={() => onOpenSchedule(schedule)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+        <div className={`w-16 shrink-0 text-xs font-black ${schedule.is_completed ? 'text-slate-400 line-through' : schedule.is_urgent ? 'text-red-600' : isTomorrow ? 'text-violet-600' : 'text-blue-600'}`}>{schedule.start_time ?? schedule.end_time ?? '미정'}</div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            {schedule.is_urgent && <Siren size={15} className="shrink-0 text-red-500" />}
+            <p className={`truncate text-sm font-black ${schedule.is_completed ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{formatScheduleTitle(schedule)}</p>
+          </div>
+          <p className={`mt-1 text-[11px] font-bold ${schedule.is_completed ? 'text-slate-300 line-through' : 'text-slate-400'}`}>{formatScheduleTime(schedule)}</p>
+        </div>
+        {schedule.is_todo && <span className="rounded-lg bg-blue-50 px-2 py-1 text-[9px] font-black text-blue-600">TO DO</span>}
+        {schedule.is_notice && <span className="rounded-lg bg-red-50 px-2 py-1 text-[9px] font-black text-red-500">공지</span>}
+        <ArrowRight size={15} className="text-slate-300 transition-transform group-hover:translate-x-1" />
+      </button>
+    </div>
+  );
 
   return (
     <div className="h-full overflow-y-auto custom-scrollbar pb-8">
@@ -239,19 +336,48 @@ export default function SharedDashboard({
             <div className={`mb-4 flex items-center gap-2 text-xs font-black ${item.color}`}>
               {item.icon} {item.label}
             </div>
-            <strong className="text-2xl font-black text-slate-900 md:text-3xl">
-              {item.value}<span className="ml-1 text-xs text-slate-400">{item.unit}</span>
-            </strong>
+            {item.isTodoCard ? (
+              <div className="flex flex-wrap items-end gap-x-3 gap-y-1">
+                <strong className="text-xl font-black text-slate-900 md:text-2xl">미시행 {item.value}<span className="ml-0.5 text-xs text-slate-400">개</span></strong>
+                <span className="pb-0.5 text-xs font-black text-emerald-600">완료 {item.completedValue}개</span>
+              </div>
+            ) : (
+              <strong className="text-2xl font-black text-slate-900 md:text-3xl">
+                {item.value}<span className="ml-1 text-xs text-slate-400">{item.unit}</span>
+              </strong>
+            )}
             <div className={`pointer-events-none absolute top-full z-40 w-[min(310px,calc(100vw-2rem))] pt-2 opacity-0 transition-all duration-150 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-y-0 group-focus-within:opacity-100 ${index % 2 === 0 ? 'left-0' : 'right-0'}`}>
               <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white p-3 shadow-2xl">
                 <div className="mb-2 flex items-center justify-between border-b border-slate-100 px-1 pb-2">
                   <span className="text-xs font-black text-slate-700">{item.label} 상세</span>
                   <span className="text-[10px] font-black text-slate-400">{item.value}{item.unit}</span>
                 </div>
-                {item.items.length > 0 ? (
+                {item.isAbsenceCard && item.absenceItems.length > 0 ? (
+                  <div className="max-h-64 space-y-1 overflow-y-auto custom-scrollbar">
+                    {item.absenceItems.map((absence) => (
+                      <button key={absence.key} onClick={() => onOpenSchedule(absence.schedules[0])} className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left transition-colors hover:bg-amber-50 focus:bg-amber-50 focus:outline-none">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-500"><CalendarDays size={16} /></div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-xs font-black text-slate-800">{absence.title} <span className="text-amber-600">({absence.dateLabel})</span></p>
+                          <p className="mt-1 text-[10px] font-bold text-slate-400">{absence.typeLabel}</p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                ) : item.items.length > 0 ? (
                   <div className="max-h-64 space-y-1 overflow-y-auto custom-scrollbar">
                     {item.items.map((schedule) => (
-                      <button key={`${item.label}-${schedule.id}`} onClick={() => onOpenSchedule(schedule)} className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left transition-colors hover:bg-slate-50 focus:bg-slate-50 focus:outline-none">
+                      <div key={`${item.label}-${schedule.id}`} className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 transition-colors hover:bg-slate-50">
+                        {item.isTodoCard && (
+                          <button
+                            onClick={() => onToggleScheduleComplete(schedule)}
+                            aria-label={schedule.is_completed ? '완료 취소' : '완료 처리'}
+                            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border-2 transition-all ${schedule.is_completed ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-slate-300 bg-white text-transparent hover:border-emerald-500'}`}
+                          >
+                            <Check size={14} strokeWidth={3} />
+                          </button>
+                        )}
+                        <button onClick={() => onOpenSchedule(schedule)} className="flex min-w-0 flex-1 items-center gap-3 py-0.5 text-left focus:outline-none">
                         <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${schedule.is_urgent ? 'bg-red-50 text-red-500' : schedule.is_completed ? 'bg-emerald-50 text-emerald-500' : 'bg-blue-50 text-blue-500'}`}>
                           {schedule.is_urgent ? <Siren size={16} /> : schedule.is_completed ? <Check size={16} /> : <CalendarDays size={16} />}
                         </div>
@@ -260,7 +386,8 @@ export default function SharedDashboard({
                           <p className="mt-1 text-[10px] font-bold text-slate-400">{schedule.date} · {formatScheduleTime(schedule)}</p>
                         </div>
                         {schedule.is_notice && <span className="shrink-0 rounded-md bg-red-50 px-1.5 py-1 text-[8px] font-black text-red-500">공지</span>}
-                      </button>
+                        </button>
+                      </div>
                     ))}
                   </div>
                 ) : (
@@ -277,46 +404,21 @@ export default function SharedDashboard({
           <div className="mb-5 flex items-center justify-between">
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.18em] text-blue-500">Today</p>
-              <h3 className="mt-1 text-xl font-black text-slate-900">TO DO LIST</h3>
+              <h3 className="mt-1 text-xl font-black text-slate-900">오늘 일정</h3>
             </div>
             <button onClick={() => onChangeView('calendar')} className="flex items-center gap-1 text-xs font-black text-slate-400 hover:text-blue-600">
               전체 일정 <ArrowRight size={14} />
             </button>
           </div>
 
-          {todayTodoSchedules.length > 0 ? (
-            <div className="space-y-2">
-              {todayTodoSchedules.map((schedule) => (
-                <div
-                  key={schedule.id}
-                  className={`group flex w-full items-center gap-3 rounded-2xl border p-3.5 text-left transition-all ${schedule.is_completed ? 'border-slate-100 bg-slate-50/70' : schedule.is_urgent ? 'border-red-200 bg-red-50/40 hover:border-red-300' : 'border-slate-100 hover:border-blue-200 hover:bg-blue-50/50'}`}
-                >
-                  <button
-                    onClick={() => onToggleScheduleComplete(schedule)}
-                    aria-label={schedule.is_completed ? '완료 취소' : '완료 처리'}
-                    className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border-2 transition-all ${schedule.is_completed ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-slate-300 bg-white text-transparent hover:border-emerald-500'}`}
-                  >
-                    <Check size={15} strokeWidth={3} />
-                  </button>
-                  <button onClick={() => onOpenSchedule(schedule)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
-                    <div className={`w-16 shrink-0 text-xs font-black ${schedule.is_completed ? 'text-slate-400 line-through' : schedule.is_urgent ? 'text-red-600' : 'text-blue-600'}`}>{schedule.start_time ?? schedule.end_time ?? '미정'}</div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        {schedule.is_urgent && <Siren size={15} className="shrink-0 text-red-500" />}
-                        <p className={`truncate text-sm font-black ${schedule.is_completed ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{formatScheduleTitle(schedule)}</p>
-                      </div>
-                      <p className={`mt-1 text-[11px] font-bold ${schedule.is_completed ? 'text-slate-300 line-through' : 'text-slate-400'}`}>{formatScheduleTime(schedule)}</p>
-                    </div>
-                    {schedule.is_notice && <span className="rounded-lg bg-red-50 px-2 py-1 text-[9px] font-black text-red-500">공지</span>}
-                    <ArrowRight size={15} className="text-slate-300 transition-transform group-hover:translate-x-1" />
-                  </button>
-                </div>
-              ))}
+          {todaySchedules.length > 0 ? (
+            <div className="max-h-80 space-y-2 overflow-y-auto pr-1 custom-scrollbar">
+              {todaySchedules.map((schedule) => renderDailySchedule(schedule))}
             </div>
           ) : (
             <div className="flex min-h-48 flex-col items-center justify-center rounded-2xl bg-slate-50 text-center">
               <CalendarDays size={30} className="mb-3 text-slate-300" />
-              <p className="text-sm font-black text-slate-500">오늘 등록된 할 일이 없습니다.</p>
+              <p className="text-sm font-black text-slate-500">오늘 등록된 일정이 없습니다.</p>
               <button onClick={() => onChangeView('calendar')} className="mt-3 text-xs font-black text-blue-500">일정 추가</button>
             </div>
           )}
@@ -325,27 +427,22 @@ export default function SharedDashboard({
         <div className="rounded-[28px] border border-slate-100 bg-white p-5 shadow-sm md:p-7">
           <div className="mb-5 flex items-center justify-between">
             <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-violet-500">Notice</p>
-              <h3 className="mt-1 text-xl font-black text-slate-900">다가오는 공지</h3>
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-violet-500">Tomorrow</p>
+              <h3 className="mt-1 text-xl font-black text-slate-900">내일 일정</h3>
             </div>
-            <BellRing size={20} className="text-violet-400" />
+            <CalendarDays size={20} className="text-violet-400" />
           </div>
-          <div className="space-y-3">
-            {upcomingNotices.length > 0 ? upcomingNotices.map((notice) => (
-              <button key={notice.id} onClick={() => onOpenSchedule(notice)} className="w-full rounded-2xl bg-slate-50 p-4 text-left transition-colors hover:bg-violet-50">
-                <div className="mb-2 flex items-center justify-between gap-3">
-                  <span className="flex min-w-0 items-center gap-1.5 truncate text-sm font-black text-slate-800">{notice.is_urgent && <Siren size={15} className="shrink-0 text-red-500" />}<span className="truncate">{formatScheduleTitle(notice)}</span></span>
-                  <span className="shrink-0 rounded-lg bg-white px-2 py-1 text-[10px] font-black text-violet-600 shadow-sm">{notice.date}</span>
-                </div>
-                <p className="text-[11px] font-bold text-slate-400">{formatScheduleTime(notice)}</p>
-              </button>
-            )) : (
-              <div className="flex min-h-48 flex-col items-center justify-center rounded-2xl bg-slate-50 text-center">
-                <BellRing size={30} className="mb-3 text-slate-300" />
-                <p className="text-sm font-black text-slate-500">진행 중인 공지사항이 없습니다.</p>
-              </div>
-            )}
-          </div>
+          {tomorrowSchedules.length > 0 ? (
+            <div className="max-h-80 space-y-2 overflow-y-auto pr-1 custom-scrollbar">
+              {tomorrowSchedules.map((schedule) => renderDailySchedule(schedule, true))}
+            </div>
+          ) : (
+            <div className="flex min-h-48 flex-col items-center justify-center rounded-2xl bg-slate-50 text-center">
+              <CalendarDays size={30} className="mb-3 text-slate-300" />
+              <p className="text-sm font-black text-slate-500">내일 등록된 일정이 없습니다.</p>
+              <button onClick={() => onChangeView('calendar')} className="mt-3 text-xs font-black text-violet-500">일정 추가</button>
+            </div>
+          )}
         </div>
       </section>
 

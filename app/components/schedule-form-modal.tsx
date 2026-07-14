@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { BellRing, CalendarPlus, CheckSquare2, Clock3, Siren, X } from 'lucide-react';
 
 export type ScheduleType = 'meeting' | 'business_trip' | 'internal' | 'leave' | 'unclassified';
+export type AbsenceType = 'annual' | 'early_am' | 'early_pm';
 
 export interface NewScheduleInput {
   title: string;
@@ -15,6 +16,7 @@ export interface NewScheduleInput {
   is_completed: boolean;
   is_todo: boolean;
   schedule_type: ScheduleType;
+  absence_type: AbsenceType;
 }
 
 interface ScheduleFormModalProps {
@@ -92,6 +94,7 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
   const [isTodo, setIsTodo] = useState(initialSchedule?.is_todo ?? false);
   const [isUrgent, setIsUrgent] = useState(initialSchedule?.is_urgent ?? false);
   const [scheduleType, setScheduleType] = useState<ScheduleType>(initialSchedule?.schedule_type ?? 'unclassified');
+  const [absenceType, setAbsenceType] = useState<AbsenceType>(initialSchedule?.absence_type ?? 'annual');
   const [recurrenceMode, setRecurrenceMode] = useState<RecurrenceMode>('none');
   const [error, setError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -125,6 +128,7 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
         is_completed: initialSchedule?.is_completed ?? false,
         is_todo: isTodo,
         schedule_type: scheduleType,
+        absence_type: absenceType,
       };
       const recurringDates = initialSchedule ? [dateValue] : createRecurringDates(dateValue, recurrenceMode);
       await onSubmit(recurringDates.map((recurringDate) => ({ ...schedule, date: recurringDate })));
@@ -175,6 +179,20 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
               <button key={type.value} type="button" onClick={() => setScheduleType(type.value)} className={`rounded-xl px-2 py-2.5 text-[10px] font-black transition-colors ${scheduleType === type.value ? 'bg-blue-600 text-white shadow-md' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>{type.label}</button>
             ))}
           </div>
+          {scheduleType === 'leave' && (
+            <div className="mt-3 rounded-2xl bg-amber-50 p-3">
+              <span className="mb-2 block text-[10px] font-black text-amber-700">휴가 구분</span>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { value: 'annual' as const, label: '연차' },
+                  { value: 'early_am' as const, label: '오전 조퇴' },
+                  { value: 'early_pm' as const, label: '오후 조퇴' },
+                ].map((type) => (
+                  <button key={type.value} type="button" onClick={() => setAbsenceType(type.value)} className={`rounded-xl px-2 py-2.5 text-[10px] font-black transition-colors ${absenceType === type.value ? 'bg-amber-500 text-white shadow-md' : 'bg-white text-amber-700 hover:bg-amber-100'}`}>{type.label}</button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-4">

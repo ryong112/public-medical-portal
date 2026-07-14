@@ -4,7 +4,7 @@ import { useRef, useState } from 'react';
 import NextImage from 'next/image';
 import { AlertTriangle, Camera, Check, ImagePlus, LoaderCircle, Plus, ScanText, Trash2, X } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import type { NewScheduleInput } from '@/app/components/schedule-form-modal';
+import type { AbsenceType, NewScheduleInput } from '@/app/components/schedule-form-modal';
 
 type ScheduleType = 'meeting' | 'business_trip' | 'internal' | 'leave' | 'unclassified';
 
@@ -18,6 +18,7 @@ interface AnalyzedSchedule {
   schedule_type: ScheduleType;
   is_urgent: boolean;
   is_todo: boolean;
+  absence_type: AbsenceType;
   confidence: number;
   source_text: string;
   warnings: string[];
@@ -168,6 +169,7 @@ export default function WhiteboardImportModal({ onClose, onImport }: WhiteboardI
         schedule_type: scheduleTypes.some((type) => type.value === schedule.schedule_type) ? schedule.schedule_type as ScheduleType : 'unclassified',
         is_urgent: Boolean(schedule.is_urgent),
         is_todo: false,
+        absence_type: 'annual',
         confidence: typeof schedule.confidence === 'number' ? schedule.confidence : 0,
         source_text: schedule.source_text ?? '',
         warnings: Array.isArray(schedule.warnings) ? schedule.warnings : [],
@@ -198,6 +200,7 @@ export default function WhiteboardImportModal({ onClose, onImport }: WhiteboardI
       schedule_type: 'unclassified',
       is_urgent: false,
       is_todo: false,
+      absence_type: 'annual',
       confidence: 1,
       source_text: '',
       warnings: [],
@@ -245,6 +248,7 @@ export default function WhiteboardImportModal({ onClose, onImport }: WhiteboardI
         is_urgent: draft.is_urgent,
         is_completed: false,
         is_todo: draft.is_todo,
+        absence_type: draft.absence_type,
       })), corrections);
       onClose();
     } catch (saveError) {
@@ -335,6 +339,13 @@ export default function WhiteboardImportModal({ onClose, onImport }: WhiteboardI
                           {scheduleTypes.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
                         </select>
                         <input value={draft.title} onChange={(event) => updateDraft(draft.id, 'title', event.target.value)} placeholder="일정 제목" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-black text-slate-800 outline-none focus:border-blue-500" />
+                        {draft.schedule_type === 'leave' && (
+                          <select value={draft.absence_type} onChange={(event) => updateDraft(draft.id, 'absence_type', event.target.value as AbsenceType)} className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-black text-amber-800 outline-none focus:border-amber-500">
+                            <option value="annual">연차</option>
+                            <option value="early_am">오전 조퇴</option>
+                            <option value="early_pm">오후 조퇴</option>
+                          </select>
+                        )}
                         <input type="date" value={draft.date} onChange={(event) => updateDraft(draft.id, 'date', event.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-bold text-slate-700 outline-none focus:border-blue-500" />
                         <div className="grid grid-cols-2 gap-2">
                           <input type="time" value={draft.start_time} onChange={(event) => updateDraft(draft.id, 'start_time', event.target.value)} aria-label="시작 시간" className="min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-bold text-slate-700 outline-none focus:border-blue-500" />
