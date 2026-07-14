@@ -2,11 +2,12 @@ import {
   ArrowRight,
   BellRing,
   CalendarDays,
+  Check,
   Clock3,
   FileText,
   FolderOpen,
   MessageCircle,
-  Sparkles,
+  Siren,
 } from 'lucide-react';
 
 type DashboardView = 'files' | 'calendar' | 'external_calendar' | 'dashboard';
@@ -26,6 +27,8 @@ interface Schedule {
   start_time: string;
   end_time: string;
   is_notice?: boolean;
+  is_completed?: boolean;
+  is_urgent?: boolean;
   created_at?: string;
 }
 
@@ -43,6 +46,7 @@ interface SharedDashboardProps {
   onOpenChat: () => void;
   onOpenFile: (url: string, name: string) => void;
   onOpenSchedule: (schedule: Schedule) => void;
+  onToggleScheduleComplete: (schedule: Schedule) => void;
 }
 
 interface ActivityItem {
@@ -85,17 +89,24 @@ export default function SharedDashboard({
   onOpenChat,
   onOpenFile,
   onOpenSchedule,
+  onToggleScheduleComplete,
 }: SharedDashboardProps) {
   const now = new Date();
   const todayKey = toLocalDateKey(now);
   const tomorrow = new Date(now);
   tomorrow.setDate(now.getDate() + 1);
   const tomorrowKey = toLocalDateKey(tomorrow);
+  const weekEnd = new Date(now);
+  weekEnd.setDate(now.getDate() + 6);
+  const weekEndKey = toLocalDateKey(weekEnd);
 
   const todaySchedules = schedules
     .filter((schedule) => schedule.date === todayKey)
-    .sort((a, b) => a.start_time.localeCompare(b.start_time));
+    .sort((a, b) => Number(Boolean(a.is_completed)) - Number(Boolean(b.is_completed)) || a.start_time.localeCompare(b.start_time));
   const tomorrowSchedules = schedules.filter((schedule) => schedule.date === tomorrowKey);
+  const weeklySchedules = schedules
+    .filter((schedule) => schedule.date >= todayKey && schedule.date <= weekEndKey)
+    .sort((a, b) => a.date.localeCompare(b.date) || a.start_time.localeCompare(b.start_time));
   const allUpcomingNotices = schedules
     .filter((schedule) => schedule.is_notice && schedule.date >= todayKey)
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -103,9 +114,12 @@ export default function SharedDashboard({
   const recentFiles = [...files]
     .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
     .slice(0, 4);
-  const messagesToday = messages.filter(
-    (message) => toLocalDateKey(new Date(message.created_at)) === todayKey,
-  ).length;
+  const summaryCards = [
+    { label: '오늘 일정', value: todaySchedules.length, unit: '건', color: 'text-blue-600', icon: <Clock3 size={18} />, items: todaySchedules },
+    { label: '내일 일정', value: tomorrowSchedules.length, unit: '건', color: 'text-violet-600', icon: <CalendarDays size={18} />, items: tomorrowSchedules },
+    { label: '진행 중인 공지사항', value: allUpcomingNotices.length, unit: '건', color: 'text-red-500', icon: <BellRing size={18} />, items: allUpcomingNotices },
+    { label: '주간 일정', value: weeklySchedules.length, unit: '건', color: 'text-amber-500', icon: <CalendarDays size={18} />, items: weeklySchedules },
+  ];
 
   const activities: ActivityItem[] = [
     ...files
@@ -114,7 +128,7 @@ export default function SharedDashboard({
         id: `file-${file.id}`,
         type: 'file' as const,
         title: file.name,
-        description: `${file.category}에 새 문서가 올라왔어요`,
+        description: `${file.category}에 새 문서가 등록되었습니다.`,
         createdAt: file.created_at as string,
         onClick: () => onOpenFile(file.url, file.name),
       })),
@@ -124,7 +138,7 @@ export default function SharedDashboard({
         id: `schedule-${schedule.id}`,
         type: 'schedule' as const,
         title: schedule.title,
-        description: `${schedule.date} 일정이 등록됐어요`,
+        description: `${schedule.date} 일정이 등록되었습니다.`,
         createdAt: schedule.created_at as string,
         onClick: () => onOpenSchedule(schedule),
       })),
@@ -132,7 +146,7 @@ export default function SharedDashboard({
       id: `message-${message.id}`,
       type: 'message' as const,
       title: message.content,
-      description: '공유방에 새 메시지가 도착했어요',
+      description: '공유방에 새 메시지가 등록되었습니다.',
       createdAt: message.created_at,
       onClick: onOpenChat,
     })),
@@ -159,11 +173,8 @@ export default function SharedDashboard({
         <div className="absolute -bottom-24 left-1/3 h-56 w-56 rounded-full bg-violet-500/20 blur-3xl" />
         <div className="relative flex flex-col justify-between gap-6 lg:flex-row lg:items-end">
           <div>
-            <div className="mb-3 flex items-center gap-2 text-xs font-black text-blue-300">
-              <Sparkles size={15} /> TODAY BRIEFING
-            </div>
             <h2 className="text-2xl font-black tracking-tight md:text-4xl">
-              오늘의 브리핑
+              공공의료지원과 일정
             </h2>
             <p className="mt-2 text-sm font-medium text-slate-400">
               {new Intl.DateTimeFormat('ko-KR', {
@@ -198,19 +209,40 @@ export default function SharedDashboard({
       </section>
 
       <section className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {[
-          { label: '오늘 일정', value: todaySchedules.length, unit: '건', color: 'text-blue-600', icon: <Clock3 size={18} /> },
-          { label: '내일 일정', value: tomorrowSchedules.length, unit: '건', color: 'text-violet-600', icon: <CalendarDays size={18} /> },
-          { label: '진행 공지', value: allUpcomingNotices.length, unit: '건', color: 'text-red-500', icon: <BellRing size={18} /> },
-          { label: '오늘 대화', value: messagesToday, unit: '개', color: 'text-amber-500', icon: <MessageCircle size={18} /> },
-        ].map((item) => (
-          <div key={item.label} className="rounded-[22px] border border-slate-100 bg-white p-4 shadow-sm md:p-5">
+        {summaryCards.map((item, index) => (
+          <div key={item.label} tabIndex={0} className="group relative rounded-[22px] border border-slate-100 bg-white p-4 shadow-sm outline-none transition-all hover:z-30 hover:-translate-y-0.5 hover:border-slate-200 hover:shadow-lg focus:z-30 focus:border-blue-200 focus:ring-4 focus:ring-blue-50 md:p-5">
             <div className={`mb-4 flex items-center gap-2 text-xs font-black ${item.color}`}>
               {item.icon} {item.label}
             </div>
             <strong className="text-2xl font-black text-slate-900 md:text-3xl">
               {item.value}<span className="ml-1 text-xs text-slate-400">{item.unit}</span>
             </strong>
+            <div className={`pointer-events-none absolute top-full z-40 w-[min(310px,calc(100vw-2rem))] pt-2 opacity-0 transition-all duration-150 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-y-0 group-focus-within:opacity-100 ${index % 2 === 0 ? 'left-0' : 'right-0'}`}>
+              <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white p-3 shadow-2xl">
+                <div className="mb-2 flex items-center justify-between border-b border-slate-100 px-1 pb-2">
+                  <span className="text-xs font-black text-slate-700">{item.label} 상세</span>
+                  <span className="text-[10px] font-black text-slate-400">{item.value}{item.unit}</span>
+                </div>
+                {item.items.length > 0 ? (
+                  <div className="max-h-64 space-y-1 overflow-y-auto custom-scrollbar">
+                    {item.items.map((schedule) => (
+                      <button key={`${item.label}-${schedule.id}`} onClick={() => onOpenSchedule(schedule)} className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left transition-colors hover:bg-slate-50 focus:bg-slate-50 focus:outline-none">
+                        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${schedule.is_urgent ? 'bg-red-50 text-red-500' : schedule.is_completed ? 'bg-emerald-50 text-emerald-500' : 'bg-blue-50 text-blue-500'}`}>
+                          {schedule.is_urgent ? <Siren size={16} /> : schedule.is_completed ? <Check size={16} /> : <CalendarDays size={16} />}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className={`truncate text-xs font-black ${schedule.is_completed ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{schedule.title}</p>
+                          <p className="mt-1 text-[10px] font-bold text-slate-400">{schedule.date} · {schedule.start_time} - {schedule.end_time}</p>
+                        </div>
+                        {schedule.is_notice && <span className="shrink-0 rounded-md bg-red-50 px-1.5 py-1 text-[8px] font-black text-red-500">공지</span>}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="py-8 text-center text-xs font-bold text-slate-400">등록된 항목이 없습니다.</div>
+                )}
+              </div>
+            </div>
           </div>
         ))}
       </section>
@@ -220,7 +252,7 @@ export default function SharedDashboard({
           <div className="mb-5 flex items-center justify-between">
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.18em] text-blue-500">Today</p>
-              <h3 className="mt-1 text-xl font-black text-slate-900">오늘의 흐름</h3>
+              <h3 className="mt-1 text-xl font-black text-slate-900">TO DO LIST</h3>
             </div>
             <button onClick={() => onChangeView('calendar')} className="flex items-center gap-1 text-xs font-black text-slate-400 hover:text-blue-600">
               전체 일정 <ArrowRight size={14} />
@@ -230,26 +262,37 @@ export default function SharedDashboard({
           {todaySchedules.length > 0 ? (
             <div className="space-y-2">
               {todaySchedules.map((schedule) => (
-                <button
+                <div
                   key={schedule.id}
-                  onClick={() => onOpenSchedule(schedule)}
-                  className="group flex w-full items-center gap-4 rounded-2xl border border-slate-100 p-4 text-left transition-all hover:border-blue-200 hover:bg-blue-50/50"
+                  className={`group flex w-full items-center gap-3 rounded-2xl border p-3.5 text-left transition-all ${schedule.is_completed ? 'border-slate-100 bg-slate-50/70' : schedule.is_urgent ? 'border-red-200 bg-red-50/40 hover:border-red-300' : 'border-slate-100 hover:border-blue-200 hover:bg-blue-50/50'}`}
                 >
-                  <div className="w-14 shrink-0 text-sm font-black text-blue-600">{schedule.start_time}</div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-black text-slate-800">{schedule.title}</p>
-                    <p className="mt-1 text-[11px] font-bold text-slate-400">{schedule.start_time} - {schedule.end_time}</p>
-                  </div>
-                  {schedule.is_notice && <span className="rounded-lg bg-red-50 px-2 py-1 text-[9px] font-black text-red-500">공지</span>}
-                  <ArrowRight size={15} className="text-slate-300 transition-transform group-hover:translate-x-1" />
-                </button>
+                  <button
+                    onClick={() => onToggleScheduleComplete(schedule)}
+                    aria-label={schedule.is_completed ? '완료 취소' : '완료 처리'}
+                    className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border-2 transition-all ${schedule.is_completed ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-slate-300 bg-white text-transparent hover:border-emerald-500'}`}
+                  >
+                    <Check size={15} strokeWidth={3} />
+                  </button>
+                  <button onClick={() => onOpenSchedule(schedule)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+                    <div className={`w-12 shrink-0 text-sm font-black ${schedule.is_completed ? 'text-slate-400 line-through' : schedule.is_urgent ? 'text-red-600' : 'text-blue-600'}`}>{schedule.start_time}</div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        {schedule.is_urgent && <Siren size={15} className="shrink-0 text-red-500" />}
+                        <p className={`truncate text-sm font-black ${schedule.is_completed ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{schedule.title}</p>
+                      </div>
+                      <p className={`mt-1 text-[11px] font-bold ${schedule.is_completed ? 'text-slate-300 line-through' : 'text-slate-400'}`}>{schedule.start_time} - {schedule.end_time}</p>
+                    </div>
+                    {schedule.is_notice && <span className="rounded-lg bg-red-50 px-2 py-1 text-[9px] font-black text-red-500">공지</span>}
+                    <ArrowRight size={15} className="text-slate-300 transition-transform group-hover:translate-x-1" />
+                  </button>
+                </div>
               ))}
             </div>
           ) : (
             <div className="flex min-h-48 flex-col items-center justify-center rounded-2xl bg-slate-50 text-center">
               <CalendarDays size={30} className="mb-3 text-slate-300" />
-              <p className="text-sm font-black text-slate-500">오늘 등록된 일정이 없어요</p>
-              <button onClick={() => onChangeView('calendar')} className="mt-3 text-xs font-black text-blue-500">일정 추가하러 가기</button>
+              <p className="text-sm font-black text-slate-500">오늘 등록된 일정이 없습니다.</p>
+              <button onClick={() => onChangeView('calendar')} className="mt-3 text-xs font-black text-blue-500">일정 추가</button>
             </div>
           )}
         </div>
@@ -266,7 +309,7 @@ export default function SharedDashboard({
             {upcomingNotices.length > 0 ? upcomingNotices.map((notice) => (
               <button key={notice.id} onClick={() => onOpenSchedule(notice)} className="w-full rounded-2xl bg-slate-50 p-4 text-left transition-colors hover:bg-violet-50">
                 <div className="mb-2 flex items-center justify-between gap-3">
-                  <span className="truncate text-sm font-black text-slate-800">{notice.title}</span>
+                  <span className="flex min-w-0 items-center gap-1.5 truncate text-sm font-black text-slate-800">{notice.is_urgent && <Siren size={15} className="shrink-0 text-red-500" />}<span className="truncate">{notice.title}</span></span>
                   <span className="shrink-0 rounded-lg bg-white px-2 py-1 text-[10px] font-black text-violet-600 shadow-sm">{notice.date}</span>
                 </div>
                 <p className="text-[11px] font-bold text-slate-400">{notice.start_time} - {notice.end_time}</p>
@@ -274,7 +317,7 @@ export default function SharedDashboard({
             )) : (
               <div className="flex min-h-48 flex-col items-center justify-center rounded-2xl bg-slate-50 text-center">
                 <BellRing size={30} className="mb-3 text-slate-300" />
-                <p className="text-sm font-black text-slate-500">진행 중인 공지가 없어요</p>
+                <p className="text-sm font-black text-slate-500">진행 중인 공지사항이 없습니다.</p>
               </div>
             )}
           </div>
@@ -302,7 +345,7 @@ export default function SharedDashboard({
                 </div>
                 <ArrowRight size={14} className="text-slate-300 transition-transform group-hover:translate-x-1" />
               </button>
-            )) : <p className="py-12 text-center text-sm font-bold text-slate-400">아직 등록된 문서가 없어요</p>}
+            )) : <p className="py-12 text-center text-sm font-bold text-slate-400">등록된 문서가 없습니다.</p>}
           </div>
         </div>
 
@@ -323,7 +366,7 @@ export default function SharedDashboard({
                 </div>
                 <time className="shrink-0 text-[10px] font-black text-slate-300">{formatActivityTime(activity.createdAt)}</time>
               </button>
-            )) : <p className="py-12 text-center text-sm font-bold text-slate-400">활동이 쌓이면 여기에 보여드릴게요</p>}
+            )) : <p className="py-12 text-center text-sm font-bold text-slate-400">최근 활동이 없습니다.</p>}
           </div>
         </div>
       </section>

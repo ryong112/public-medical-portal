@@ -4,12 +4,13 @@ import { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import SharedDashboard from '@/app/components/shared-dashboard';
 import UndoToast, { type UndoNotice } from '@/app/components/undo-toast';
+import ScheduleFormModal, { type NewScheduleInput } from '@/app/components/schedule-form-modal';
 import JSZip from 'jszip';
 import { 
   FileText, FilePlus,
   FileSpreadsheet, FileBox, File, Download, Trash2,
   GripVertical, Calendar as CalendarIcon, LayoutDashboard, Plus,
-  ChevronLeft, ChevronRight, X, Clock, CalendarDays, Lock, Archive, Menu
+  ChevronLeft, ChevronRight, X, Clock, CalendarDays, Lock, Archive, Menu, Siren
 } from 'lucide-react';
 
 export default function IntegratedPortal() {
@@ -57,6 +58,7 @@ export default function IntegratedPortal() {
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedSchedule, setSelectedSchedule] = useState<any | null>(null);
   const [draggedScheduleId, setDraggedScheduleId] = useState<number | null>(null);
+  const [scheduleFormDate, setScheduleFormDate] = useState<string | null>(null);
   const [undoNotices, setUndoNotices] = useState<UndoNotice[]>([]);
   const pendingDeleteKeysRef = useRef(new Set<string>());
   const undoTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
@@ -222,7 +224,7 @@ export default function IntegratedPortal() {
     if (!target) return;
 
     queueUndoableDeletion({
-      label: '메시지를 삭제했어요',
+      label: '메시지가 삭제 대기 중입니다.',
       keys: [`message:${id}`],
       hide: () => setMessages((current) => current.filter((message) => message.id !== id)),
       restore: () => setMessages((current) => current.some((message) => message.id === id) ? current : [...current, target].sort((a, b) => a.id - b.id)),
@@ -241,7 +243,7 @@ export default function IntegratedPortal() {
     if (!confirm(confirmMsg)) return;
 
     queueUndoableDeletion({
-      label: `'${catName}' 분류를 삭제했어요`,
+      label: `'${catName}' 분류가 삭제 대기 중입니다.`,
       keys: [`category:${id}`, ...targetFiles.map((file) => `file:${file.id}`)],
       hide: () => {
         setCategories((current) => current.filter((category) => category.id !== id));
@@ -278,7 +280,7 @@ export default function IntegratedPortal() {
     if (!target) return;
 
     queueUndoableDeletion({
-      label: `'${target.title}' 일정을 삭제했어요`,
+      label: `'${target.title}' 일정이 삭제 대기 중입니다.`,
       keys: [`schedule:${id}`],
       hide: () => { setSchedules((current) => current.filter((schedule) => schedule.id !== id)); setSelectedSchedule(null); },
       restore: () => setSchedules((current) => current.some((schedule) => schedule.id === id) ? current : [...current, target]),
@@ -293,7 +295,7 @@ export default function IntegratedPortal() {
     if (!confirm('파일을 삭제하시겠습니까?')) return;
     const path = file.url.split('/').pop() || "";
     queueUndoableDeletion({
-      label: `'${file.name}' 파일을 삭제했어요`,
+      label: `'${file.name}' 파일이 삭제 대기 중입니다.`,
       keys: [`file:${file.id}`],
       hide: () => setFiles((current) => current.filter((item) => item.id !== file.id)),
       restore: () => setFiles((current) => current.some((item) => item.id === file.id) ? current : [file, ...current]),
@@ -353,14 +355,23 @@ export default function IntegratedPortal() {
     setSelectedCategory(editTitleValue.trim()); setIsEditingTitle(false); fetchCategories(); 
   };
 
-  // [수정] 일정 등록 시 상단 공지사항 등록 의사 묻는 confirm 분기 추가
-  const onAddSchedule = async (dateStr: string) => { 
-    const title = prompt(`${dateStr} 일정 제목:`); if (!title) return; 
-    const start = prompt(`시작:`, "10:00") || "10:00"; 
-    const end = prompt(`종료:`, "11:00") || "11:00"; 
-    const isNotice = confirm("이 일정을 포털 상단 공지 전광판에 노출할까요?");
-    await supabase.from('schedules').insert([{ title, date: dateStr, start_time: start, end_time: end, is_notice: isNotice }]); 
-    fetchSchedules(); 
+  const onAddSchedule = (dateStr: string) => setScheduleFormDate(dateStr);
+
+  const onCreateSchedule = async (schedule: NewScheduleInput) => {
+    const { error } = await supabase.from('schedules').insert([schedule]);
+    if (error) throw new Error(`일정을 등록하지 못했습니다: ${error.message}`);
+    await fetchSchedules();
+    setScheduleFormDate(null);
+  };
+
+  const onToggleScheduleComplete = async (schedule: any) => {
+    const nextCompleted = !schedule.is_completed;
+    setSchedules((current) => current.map((item) => item.id === schedule.id ? { ...item, is_completed: nextCompleted } : item));
+    const { error } = await supabase.from('schedules').update({ is_completed: nextCompleted }).eq('id', schedule.id);
+    if (error) {
+      setSchedules((current) => current.map((item) => item.id === schedule.id ? { ...item, is_completed: schedule.is_completed } : item));
+      alert(`완료 상태를 변경하지 못했습니다: ${error.message}`);
+    }
   };
 
   const onScheduleDragStart = (e: React.DragEvent, id: number) => { setDraggedScheduleId(id); e.dataTransfer.effectAllowed = "move"; };
@@ -414,7 +425,6 @@ export default function IntegratedPortal() {
                 <div className="absolute top-11 left-0 w-full bg-[#25282A] border border-white/10 rounded-xl shadow-2xl p-3 flex flex-col gap-1.5 z-[100] animate-in slide-in-from-top-2 duration-200">
                   <div className="text-[10px] text-slate-500 font-black border-b border-white/5 pb-1.5 mb-1 flex justify-between">
                     <span>진행 중인 모든 부서 공지 ({activeNotices.length}건)</span>
-                    <span className="text-blue-400">마우스 이탈 시 자동 닫힘</span>
                   </div>
                   <div className="max-h-48 overflow-y-auto custom-scrollbar space-y-1.5 pr-1">
                     {activeNotices.map((notice, idx) => (
@@ -466,7 +476,7 @@ export default function IntegratedPortal() {
             onClick={() => setViewMode(viewMode === 'calendar' ? 'files' : 'calendar')} 
             className="relative flex items-center gap-1.5 md:gap-2 px-2.5 md:px-6 py-2 md:py-2.5 rounded-xl md:rounded-2xl font-black transition-all shadow-md active:scale-95 bg-white text-slate-900 text-xs md:text-sm shrink-0"
           >
-            <CalendarIcon size={16} className="md:w-[18px] md:h-[18px]"/> <span className="hidden md:inline">{viewMode === 'calendar' ? '문서함' : '중요일정공유'}</span>
+            <CalendarIcon size={16} className="md:w-[18px] md:h-[18px]"/> <span className="hidden md:inline">{viewMode === 'calendar' ? '문서함' : '일정 공유'}</span>
             {hasNewSchedule && viewMode !== 'calendar' && <span className="absolute -top-1 -right-1 w-3 h-3 md:w-4 md:h-4 bg-red-500 rounded-full border-2 border-[#1A1C1E] animate-bounce"></span>}
           </button>
 
@@ -493,7 +503,7 @@ export default function IntegratedPortal() {
           </div>
           <div className="flex-1 overflow-y-auto px-6 py-2 custom-scrollbar">
             <div className="space-y-1.5 mb-4">
-              <button onClick={() => { setViewMode('dashboard'); setIsMobileSidebarOpen(false); }} className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-bold transition-all ${viewMode === 'dashboard' ? 'bg-slate-900 shadow-lg text-white' : 'text-slate-500 hover:bg-slate-200/60'}`}><LayoutDashboard size={17} /> 오늘의 브리핑</button>
+              <button onClick={() => { setViewMode('dashboard'); setIsMobileSidebarOpen(false); }} className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-bold transition-all ${viewMode === 'dashboard' ? 'bg-slate-900 shadow-lg text-white' : 'text-slate-500 hover:bg-slate-200/60'}`}><LayoutDashboard size={17} /> 공공의료지원과 일정</button>
               <div className="h-px bg-slate-300/70 my-3" />
               <button onClick={() => { setViewMode('files'); setSelectedCategory('전체'); setIsMobileSidebarOpen(false); }} className={`w-full text-left px-4 py-3.5 rounded-xl text-sm font-bold transition-all ${selectedCategory === '전체' && viewMode === 'files' ? 'bg-white shadow-md text-blue-600 ring-1 ring-slate-200' : 'text-slate-500 hover:bg-slate-200/60'}`}>🏠 전체 문서 보기</button>
               {categories.map((cat, idx) => (
@@ -526,7 +536,7 @@ export default function IntegratedPortal() {
           {isDragOver && (
             <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none animate-in fade-in duration-200">
               <div className="bg-blue-600/90 text-white px-10 py-6 rounded-[40px] shadow-2xl font-black flex flex-col items-center gap-4 animate-bounce">
-                <FilePlus size={48} /> <p className="text-xl">파일을 이곳에 놓으세요!</p>
+                <FilePlus size={48} /> <p className="text-xl">파일을 이곳에 놓아 주십시오.</p>
               </div>
             </div>
           )}
@@ -544,7 +554,7 @@ export default function IntegratedPortal() {
                   ) : (
                     <>
                       <h2 className={`font-black text-slate-800 tracking-tighter uppercase truncate ${viewMode === 'external_calendar' || viewMode === 'calendar' ? 'text-xl md:text-2xl' : 'text-2xl md:text-4xl'}`}>
-                        {viewMode === 'calendar' ? '중요일정공유 달력' : viewMode === 'external_calendar' ? '손)일정확인' : selectedCategory}
+                        {viewMode === 'calendar' ? '일정 공유 달력' : viewMode === 'external_calendar' ? '손)일정확인' : selectedCategory}
                       </h2>
                       {viewMode === 'files' && selectedCategory !== '전체' && <button onClick={() => { setEditTitleValue(selectedCategory); setIsEditingTitle(true); }} className="opacity-100 md:opacity-0 group-hover:opacity-100 bg-slate-100 text-slate-400 p-2 rounded-xl hover:text-blue-500 text-xs font-bold transition-all">✎ 수정</button>}
                       {viewMode === 'files' && <button onClick={handleDownloadCategoryZip} disabled={isDownloadingAll} className="flex items-center gap-2 bg-blue-50 text-blue-600 px-4 py-2 rounded-xl text-xs font-black hover:bg-blue-600 hover:text-white transition-all ml-2 shadow-sm"><Archive size={14} /> <span className="hidden sm:inline">전체 다운로드(ZIP)</span></button>}
@@ -552,7 +562,7 @@ export default function IntegratedPortal() {
                   )}
                 </div>
                 <p className="text-[10px] md:text-xs text-slate-400 font-medium tracking-tight italic truncate">
-                  {viewMode === 'calendar' ? '팀원들의 시간을 확인하고 일정을 공유하세요.' : viewMode === 'external_calendar' ? '연동된 외부 일정을 확인합니다.' : '본 서비스는 부서 전용 시스템입니다.'}
+                  {viewMode === 'calendar' ? '주요 일정을 확인하고 공유할 수 있습니다.' : viewMode === 'external_calendar' ? '연동된 외부 일정을 확인합니다.' : '부서 자료를 분류별로 확인할 수 있습니다.'}
                 </p>
               </div>
               {viewMode === 'files' && (
@@ -574,6 +584,7 @@ export default function IntegratedPortal() {
                   onOpenChat={() => setIsChatOpen(true)}
                   onOpenFile={handleDownload}
                   onOpenSchedule={setSelectedSchedule}
+                  onToggleScheduleComplete={onToggleScheduleComplete}
                 />
               ) : viewMode === 'external_calendar' ? (
                 <div className="w-full h-full relative rounded-[16px] md:rounded-[24px] overflow-hidden shadow-xl bg-slate-50">
@@ -622,7 +633,7 @@ export default function IntegratedPortal() {
                                     <span className={`text-[8px] font-black ${s.is_notice ? 'text-red-500' : 'text-blue-600'}`}>{s.start_time}</span>
                                     {s.is_notice && <span className="bg-red-500 text-white px-1 rounded-[4px] text-[7px] scale-90">공지</span>}
                                   </div>
-                                  <span className={s.is_notice ? 'text-red-900 font-extrabold' : ''}>{s.title}</span>
+                                  <span className={`flex items-center gap-1 ${s.is_notice ? 'text-red-900 font-extrabold' : ''} ${s.is_completed ? 'text-slate-400 line-through opacity-60' : ''}`}>{s.is_urgent && <Siren size={10} className="shrink-0 text-red-500" />}{s.title}</span>
                                 </div>
                               ))}
                             </div>
@@ -667,7 +678,31 @@ export default function IntegratedPortal() {
         </section>
       </main>
 
-      {selectedSchedule && (<div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in"><div className="bg-white w-full max-w-md rounded-[32px] shadow-2xl p-8 flex flex-col items-center"><div className="bg-blue-50 p-3 rounded-2xl text-blue-600 mb-6"><CalendarDays size={24}/></div><h3 className="text-2xl font-black text-slate-800 mb-2 leading-tight text-center">{selectedSchedule.title}</h3><p className="text-slate-400 font-bold mb-8 text-center">{selectedSchedule.date} | {selectedSchedule.start_time} - {selectedSchedule.end_time}</p><div className="flex gap-3 w-full"><button onClick={() => onDeleteSchedule(selectedSchedule.id)} className="flex-1 bg-red-50 text-red-500 py-4 rounded-2xl font-black flex items-center justify-center gap-2 hover:bg-red-500 hover:text-white transition-all"><Trash2 size={18}/> 삭제하시겠습니까?</button><button onClick={() => setSelectedSchedule(null)} className="flex-1 bg-slate-900 text-white py-4 rounded-2xl font-black transition-all hover:bg-black">닫기</button></div></div></div>)}
+      {scheduleFormDate && (
+        <ScheduleFormModal
+          key={scheduleFormDate}
+          date={scheduleFormDate}
+          onClose={() => setScheduleFormDate(null)}
+          onSubmit={onCreateSchedule}
+        />
+      )}
+
+      {selectedSchedule && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+          <div className="flex w-full max-w-md flex-col items-center rounded-[32px] bg-white p-8 shadow-2xl">
+            <div className={`mb-6 rounded-2xl p-3 ${selectedSchedule.is_urgent ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'}`}>
+              {selectedSchedule.is_urgent ? <Siren size={24} /> : <CalendarDays size={24} />}
+            </div>
+            {selectedSchedule.is_urgent && <span className="mb-3 rounded-lg bg-red-500 px-3 py-1 text-[10px] font-black text-white">긴급 일정</span>}
+            <h3 className={`mb-2 text-center text-2xl font-black leading-tight ${selectedSchedule.is_completed ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{selectedSchedule.title}</h3>
+            <p className="mb-8 text-center font-bold text-slate-400">{selectedSchedule.date} | {selectedSchedule.start_time} - {selectedSchedule.end_time}</p>
+            <div className="flex w-full gap-3">
+              <button onClick={() => onDeleteSchedule(selectedSchedule.id)} className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-red-50 py-4 font-black text-red-500 transition-all hover:bg-red-500 hover:text-white"><Trash2 size={18}/> 일정 삭제</button>
+              <button onClick={() => setSelectedSchedule(null)} className="flex-1 rounded-2xl bg-slate-900 py-4 font-black text-white transition-all hover:bg-black">닫기</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {isChatOpen && (
         <div ref={chatRef} style={typeof window !== 'undefined' && window.innerWidth > 768 ? { transform: `translate(${position.x}px, ${position.y}px)` } : {}} className="fixed bottom-0 md:bottom-10 right-0 md:right-10 w-full md:w-[420px] h-[80vh] md:h-[650px] bg-[#A9C7E3] rounded-t-[32px] md:rounded-[40px] shadow-2xl border-x-4 border-t-4 md:border-4 border-white flex flex-col z-[100]">
