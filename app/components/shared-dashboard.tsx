@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   ArrowRight,
   BellRing,
@@ -10,6 +11,7 @@ import {
 } from 'lucide-react';
 
 type DashboardView = 'files' | 'calendar' | 'external_calendar' | 'dashboard';
+type DailyScheduleFilter = 'all' | 'general' | 'internal' | 'business_trip' | 'meeting' | 'leave';
 
 interface PortalFile {
   id: number;
@@ -123,6 +125,25 @@ const getAbsenceTypeLabel = (schedule: Schedule) => {
 
 const isAbsenceSchedule = (schedule: Schedule) => schedule.schedule_type === 'leave' || /휴가|연차|조퇴/.test(schedule.title);
 
+const dailyScheduleFilters: Array<{ value: DailyScheduleFilter; label: string }> = [
+  { value: 'all', label: '전체' },
+  { value: 'general', label: '일반' },
+  { value: 'internal', label: '내부일정' },
+  { value: 'business_trip', label: '출장' },
+  { value: 'meeting', label: '회의' },
+  { value: 'leave', label: '휴가' },
+];
+
+const getDailyScheduleCategory = (schedule: Schedule): Exclude<DailyScheduleFilter, 'all'> => {
+  if (isAbsenceSchedule(schedule)) return 'leave';
+  if (schedule.schedule_type === 'internal') return 'internal';
+  if (schedule.schedule_type === 'business_trip') return 'business_trip';
+  if (schedule.schedule_type === 'meeting') return 'meeting';
+  return 'general';
+};
+
+const matchesDailyScheduleFilter = (schedule: Schedule, filter: DailyScheduleFilter) => filter === 'all' || getDailyScheduleCategory(schedule) === filter;
+
 const getAbsencePeople = (schedule: Schedule) => {
   const names = schedule.title
     .replace(/^(?:휴가|연차|오전\s*조퇴|오후\s*조퇴|조퇴)\s*[-:)]?\s*/u, '')
@@ -186,6 +207,8 @@ export default function SharedDashboard({
   onOpenSchedule,
   onToggleScheduleComplete,
 }: SharedDashboardProps) {
+  const [todayFilter, setTodayFilter] = useState<DailyScheduleFilter>('all');
+  const [tomorrowFilter, setTomorrowFilter] = useState<DailyScheduleFilter>('all');
   const now = new Date();
   const todayKey = toLocalDateKey(now);
   const tomorrow = new Date(now);
@@ -199,8 +222,9 @@ export default function SharedDashboard({
   const todaySchedules = schedules
     .filter((schedule) => schedule.date === todayKey)
     .sort((a, b) => getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
-  const todayWorkSchedules = todaySchedules.filter((schedule) => !isAbsenceSchedule(schedule));
-  const todayAbsenceGroups = groupAbsenceSchedules(todaySchedules.filter(isAbsenceSchedule));
+  const filteredTodaySchedules = todaySchedules.filter((schedule) => matchesDailyScheduleFilter(schedule, todayFilter));
+  const todayWorkSchedules = filteredTodaySchedules.filter((schedule) => !isAbsenceSchedule(schedule));
+  const todayAbsenceGroups = groupAbsenceSchedules(filteredTodaySchedules.filter(isAbsenceSchedule));
   const todayTodoSchedules = todaySchedules
     .filter((schedule) => schedule.is_todo)
     .sort((a, b) => Number(Boolean(a.is_completed)) - Number(Boolean(b.is_completed)) || getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
@@ -209,6 +233,9 @@ export default function SharedDashboard({
   const tomorrowSchedules = schedules
     .filter((schedule) => schedule.date === tomorrowKey)
     .sort((a, b) => getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
+  const filteredTomorrowSchedules = tomorrowSchedules.filter((schedule) => matchesDailyScheduleFilter(schedule, tomorrowFilter));
+  const todayFilterLabel = dailyScheduleFilters.find((filter) => filter.value === todayFilter)?.label ?? '전체';
+  const tomorrowFilterLabel = dailyScheduleFilters.find((filter) => filter.value === tomorrowFilter)?.label ?? '전체';
   const weeklySchedules = schedules
     .filter((schedule) => schedule.date >= todayKey && schedule.date <= weekEndKey)
     .sort((a, b) => a.date.localeCompare(b.date) || getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
@@ -274,6 +301,24 @@ export default function SharedDashboard({
     schedule: 'bg-violet-50 text-violet-600',
     message: 'bg-amber-50 text-amber-600',
   };
+
+  const renderDailyFilters = (
+    selectedFilter: DailyScheduleFilter,
+    onSelect: (filter: DailyScheduleFilter) => void,
+    color: 'blue' | 'violet',
+  ) => (
+    <div className="flex flex-wrap justify-end gap-1.5">
+      {dailyScheduleFilters.map((filter) => (
+        <button
+          key={filter.value}
+          onClick={() => onSelect(filter.value)}
+          className={`rounded-lg px-2 py-1.5 text-[9px] font-black transition-colors ${selectedFilter === filter.value ? color === 'blue' ? 'bg-blue-600 text-white shadow-sm' : 'bg-violet-600 text-white shadow-sm' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+        >
+          {filter.label}
+        </button>
+      ))}
+    </div>
+  );
 
   const renderDailySchedule = (schedule: Schedule, isTomorrow = false) => (
     <div
@@ -420,25 +465,26 @@ export default function SharedDashboard({
 
       <section className="mt-5 grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
         <div className="rounded-[28px] border border-slate-100 bg-white p-5 shadow-sm md:p-7">
-          <div className="mb-5 flex items-center justify-between">
+          <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.18em] text-blue-500">Today</p>
               <h3 className="mt-1 text-xl font-black text-slate-900">오늘 일정</h3>
             </div>
-            <button onClick={() => onChangeView('calendar')} className="flex items-center gap-1 text-xs font-black text-slate-400 hover:text-blue-600">
-              전체 일정 <ArrowRight size={14} />
-            </button>
+            <div className="flex flex-col items-end gap-2">
+              {renderDailyFilters(todayFilter, setTodayFilter, 'blue')}
+              <button onClick={() => onChangeView('calendar')} className="flex items-center gap-1 text-[10px] font-black text-slate-400 hover:text-blue-600">전체 일정 보기 <ArrowRight size={13} /></button>
+            </div>
           </div>
 
           {todayWorkSchedules.length > 0 || todayAbsenceGroups.length > 0 ? (
-            <div className="max-h-80 overflow-y-auto pr-1 custom-scrollbar">
+            <div className="flex max-h-80 flex-col">
               {todayWorkSchedules.length > 0 && (
-                <div className="space-y-2">
+                <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1 custom-scrollbar">
                   {todayWorkSchedules.map((schedule) => renderDailySchedule(schedule))}
                 </div>
               )}
               {todayAbsenceGroups.length > 0 && (
-                <div className={`${todayWorkSchedules.length > 0 ? 'mt-4 border-t border-slate-100 pt-4' : ''}`}>
+                <div className={`shrink-0 ${todayWorkSchedules.length > 0 ? 'mt-4 border-t border-slate-100 pt-4' : ''}`}>
                   <div className="mb-2 flex items-center gap-2 text-[10px] font-black text-amber-600"><CalendarDays size={13} /> 오늘 휴가·조퇴</div>
                   <div className="flex flex-wrap gap-2">
                     {todayAbsenceGroups.map((absence) => (
@@ -454,28 +500,28 @@ export default function SharedDashboard({
           ) : (
             <div className="flex min-h-48 flex-col items-center justify-center rounded-2xl bg-slate-50 text-center">
               <CalendarDays size={30} className="mb-3 text-slate-300" />
-              <p className="text-sm font-black text-slate-500">오늘 등록된 일정이 없습니다.</p>
+              <p className="text-sm font-black text-slate-500">{todayFilter === 'all' ? '오늘 등록된 일정이 없습니다.' : `오늘 ${todayFilterLabel} 일정이 없습니다.`}</p>
               <button onClick={() => onChangeView('calendar')} className="mt-3 text-xs font-black text-blue-500">일정 추가</button>
             </div>
           )}
         </div>
 
         <div className="rounded-[28px] border border-slate-100 bg-white p-5 shadow-sm md:p-7">
-          <div className="mb-5 flex items-center justify-between">
+          <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.18em] text-violet-500">Tomorrow</p>
               <h3 className="mt-1 text-xl font-black text-slate-900">내일 일정</h3>
             </div>
-            <CalendarDays size={20} className="text-violet-400" />
+            {renderDailyFilters(tomorrowFilter, setTomorrowFilter, 'violet')}
           </div>
-          {tomorrowSchedules.length > 0 ? (
+          {filteredTomorrowSchedules.length > 0 ? (
             <div className="max-h-80 space-y-2 overflow-y-auto pr-1 custom-scrollbar">
-              {tomorrowSchedules.map((schedule) => renderDailySchedule(schedule, true))}
+              {filteredTomorrowSchedules.map((schedule) => renderDailySchedule(schedule, true))}
             </div>
           ) : (
             <div className="flex min-h-48 flex-col items-center justify-center rounded-2xl bg-slate-50 text-center">
               <CalendarDays size={30} className="mb-3 text-slate-300" />
-              <p className="text-sm font-black text-slate-500">내일 등록된 일정이 없습니다.</p>
+              <p className="text-sm font-black text-slate-500">{tomorrowFilter === 'all' ? '내일 등록된 일정이 없습니다.' : `내일 ${tomorrowFilterLabel} 일정이 없습니다.`}</p>
               <button onClick={() => onChangeView('calendar')} className="mt-3 text-xs font-black text-violet-500">일정 추가</button>
             </div>
           )}
