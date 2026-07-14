@@ -132,7 +132,17 @@ export default function WhiteboardImportModal({ onClose, onImport }: WhiteboardI
       const { data, error: functionError } = await supabase.functions.invoke('analyze-whiteboard', {
         body: { imageBase64, mimeType: analysisFile.type, currentDate },
       });
-      if (functionError) throw new Error(functionError.message || '사진을 분석하지 못했습니다.');
+      if (functionError) {
+        let serverMessage = '';
+        const context = (functionError as { context?: Response }).context;
+
+        if (context) {
+          const responseBody = await context.clone().json().catch(() => null) as { error?: string } | null;
+          serverMessage = responseBody?.error ?? '';
+        }
+
+        throw new Error(serverMessage || functionError.message || '사진을 분석하지 못했습니다.');
+      }
       if (data?.error) throw new Error(data.error);
 
       const schedules = Array.isArray(data?.schedules) ? data.schedules : [];
