@@ -133,6 +133,7 @@ const dailyScheduleFilters: Array<{ value: DailyScheduleFilter; label: string }>
   { value: 'meeting', label: '회의' },
   { value: 'leave', label: '휴가' },
 ];
+const weeklyScheduleFilters = dailyScheduleFilters.filter((filter): filter is { value: Exclude<DailyScheduleFilter, 'all'>; label: string } => filter.value !== 'all');
 
 const getDailyScheduleCategory = (schedule: Schedule): Exclude<DailyScheduleFilter, 'all'> => {
   if (isAbsenceSchedule(schedule)) return 'leave';
@@ -209,6 +210,7 @@ export default function SharedDashboard({
 }: SharedDashboardProps) {
   const [todayFilter, setTodayFilter] = useState<DailyScheduleFilter>('all');
   const [tomorrowFilter, setTomorrowFilter] = useState<DailyScheduleFilter>('all');
+  const [weeklyFilter, setWeeklyFilter] = useState<Exclude<DailyScheduleFilter, 'all'>>('general');
   const now = new Date();
   const todayKey = toLocalDateKey(now);
   const tomorrow = new Date(now);
@@ -239,6 +241,7 @@ export default function SharedDashboard({
   const weeklySchedules = schedules
     .filter((schedule) => schedule.date >= todayKey && schedule.date <= weekEndKey)
     .sort((a, b) => a.date.localeCompare(b.date) || getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
+  const filteredWeeklySchedules = weeklySchedules.filter((schedule) => getDailyScheduleCategory(schedule) === weeklyFilter);
   const allUpcomingNotices = schedules
     .filter((schedule) => schedule.is_notice && schedule.date >= todayKey)
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -251,10 +254,10 @@ export default function SharedDashboard({
     .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
     .slice(0, 4);
   const summaryCards = [
-    { label: 'TO DO LIST', value: pendingTodoCount, unit: '개', color: 'text-blue-600', icon: <Check size={18} />, items: todayTodoSchedules, isTodoCard: true, completedValue: completedTodoCount, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[] },
-    { label: '진행 중인 공지사항', value: allUpcomingNotices.length, unit: '건', color: 'text-red-500', icon: <BellRing size={18} />, items: allUpcomingNotices, isTodoCard: false, completedValue: 0, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[] },
-    { label: '주간 일정', value: weeklySchedules.length, unit: '건', color: 'text-violet-600', icon: <CalendarDays size={18} />, items: weeklySchedules, isTodoCard: false, completedValue: 0, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[] },
-    { label: '이번 달 휴가', value: monthlyAbsenceGroups.length, unit: '명', color: 'text-amber-500', icon: <CalendarDays size={18} />, items: [] as Schedule[], isTodoCard: false, completedValue: 0, isAbsenceCard: true, absenceItems: monthlyAbsenceGroups },
+    { label: 'TO DO LIST', value: pendingTodoCount, unit: '개', color: 'text-blue-600', icon: <Check size={18} />, items: todayTodoSchedules, isTodoCard: true, completedValue: completedTodoCount, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[], isWeeklyCard: false },
+    { label: '진행 중인 공지사항', value: allUpcomingNotices.length, unit: '건', color: 'text-red-500', icon: <BellRing size={18} />, items: allUpcomingNotices, isTodoCard: false, completedValue: 0, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[], isWeeklyCard: false },
+    { label: '주간 일정', value: filteredWeeklySchedules.length, unit: '건', color: 'text-violet-600', icon: <CalendarDays size={18} />, items: filteredWeeklySchedules, isTodoCard: false, completedValue: 0, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[], isWeeklyCard: true },
+    { label: '이번 달 휴가', value: monthlyAbsenceGroups.length, unit: '명', color: 'text-amber-500', icon: <CalendarDays size={18} />, items: [] as Schedule[], isTodoCard: false, completedValue: 0, isAbsenceCard: true, absenceItems: monthlyAbsenceGroups, isWeeklyCard: false },
   ];
 
   const activities: ActivityItem[] = [
@@ -400,10 +403,32 @@ export default function SharedDashboard({
             <div className={`mb-3 flex items-center gap-1.5 text-[10px] font-black sm:mb-4 sm:gap-2 sm:text-xs ${item.color}`}>
               {item.icon} {item.label}
             </div>
+            {item.isWeeklyCard && (
+              <div className="mb-3 flex flex-wrap gap-1">
+                {weeklyScheduleFilters.map((filter) => (
+                  <button
+                    key={`weekly-${filter.value}`}
+                    onClick={() => setWeeklyFilter(filter.value)}
+                    className={`rounded-md px-1.5 py-1 text-[8px] font-black transition-colors ${weeklyFilter === filter.value ? 'bg-violet-600 text-white shadow-sm' : 'bg-violet-50 text-violet-500 hover:bg-violet-100'}`}
+                  >
+                    {filter.label}
+                  </button>
+                ))}
+              </div>
+            )}
             {item.isTodoCard ? (
               <div className="flex flex-wrap items-end gap-x-3 gap-y-1">
                 <strong className="text-xl font-black text-slate-900 md:text-2xl">미시행 {item.value}<span className="ml-0.5 text-xs text-slate-400">개</span></strong>
                 <span className="pb-0.5 text-xs font-black text-emerald-600">완료 {item.completedValue}개</span>
+              </div>
+            ) : item.isAbsenceCard ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <strong className="shrink-0 text-2xl font-black text-slate-900 md:text-3xl">{item.value}<span className="ml-1 text-xs text-slate-400">{item.unit}</span></strong>
+                <div className="flex max-h-14 min-w-0 flex-1 flex-wrap gap-1 overflow-y-auto custom-scrollbar">
+                  {item.absenceItems.map((absence) => (
+                    <button key={`absence-chip-${absence.key}`} onClick={() => onOpenSchedule(absence.schedules[0])} className="rounded-md bg-amber-50 px-1.5 py-1 text-[8px] font-black text-amber-700 transition-colors hover:bg-amber-100">{absence.person}</button>
+                  ))}
+                </div>
               </div>
             ) : (
               <strong className="text-2xl font-black text-slate-900 md:text-3xl">
@@ -413,7 +438,7 @@ export default function SharedDashboard({
             <div className={`pointer-events-none absolute top-full z-40 w-[min(310px,calc(100vw-2rem))] pt-2 opacity-0 transition-all duration-150 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-y-0 group-focus-within:opacity-100 ${index % 2 === 0 ? 'left-0' : 'right-0'}`}>
               <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white p-3 shadow-2xl">
                 <div className="mb-2 flex items-center justify-between border-b border-slate-100 px-1 pb-2">
-                  <span className="text-xs font-black text-slate-700">{item.label} 상세</span>
+                  <span className="text-xs font-black text-slate-700">{item.label} 상세{item.isWeeklyCard ? ` · ${weeklyScheduleFilters.find((filter) => filter.value === weeklyFilter)?.label}` : ''}</span>
                   <span className="text-[10px] font-black text-slate-400">{item.value}{item.unit}</span>
                 </div>
                 {item.isAbsenceCard && item.absenceItems.length > 0 ? (
