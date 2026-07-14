@@ -24,8 +24,8 @@ interface Schedule {
   id: number;
   title: string;
   date: string;
-  start_time: string;
-  end_time: string;
+  start_time: string | null;
+  end_time: string | null;
   is_notice?: boolean;
   is_completed?: boolean;
   is_urgent?: boolean;
@@ -81,6 +81,15 @@ const formatActivityTime = (value: string) => {
   }).format(date);
 };
 
+const formatScheduleTime = (schedule: Schedule) => {
+  if (schedule.start_time && schedule.end_time) return `${schedule.start_time} - ${schedule.end_time}`;
+  if (schedule.start_time) return `${schedule.start_time}부터`;
+  if (schedule.end_time) return `${schedule.end_time}까지`;
+  return '시간 미정';
+};
+
+const getScheduleSortTime = (schedule: Schedule) => schedule.start_time ?? schedule.end_time ?? '99:99';
+
 export default function SharedDashboard({
   files,
   schedules,
@@ -102,11 +111,11 @@ export default function SharedDashboard({
 
   const todaySchedules = schedules
     .filter((schedule) => schedule.date === todayKey)
-    .sort((a, b) => Number(Boolean(a.is_completed)) - Number(Boolean(b.is_completed)) || a.start_time.localeCompare(b.start_time));
+    .sort((a, b) => Number(Boolean(a.is_completed)) - Number(Boolean(b.is_completed)) || getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
   const tomorrowSchedules = schedules.filter((schedule) => schedule.date === tomorrowKey);
   const weeklySchedules = schedules
     .filter((schedule) => schedule.date >= todayKey && schedule.date <= weekEndKey)
-    .sort((a, b) => a.date.localeCompare(b.date) || a.start_time.localeCompare(b.start_time));
+    .sort((a, b) => a.date.localeCompare(b.date) || getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
   const allUpcomingNotices = schedules
     .filter((schedule) => schedule.is_notice && schedule.date >= todayKey)
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -232,7 +241,7 @@ export default function SharedDashboard({
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className={`truncate text-xs font-black ${schedule.is_completed ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{schedule.title}</p>
-                          <p className="mt-1 text-[10px] font-bold text-slate-400">{schedule.date} · {schedule.start_time} - {schedule.end_time}</p>
+                          <p className="mt-1 text-[10px] font-bold text-slate-400">{schedule.date} · {formatScheduleTime(schedule)}</p>
                         </div>
                         {schedule.is_notice && <span className="shrink-0 rounded-md bg-red-50 px-1.5 py-1 text-[8px] font-black text-red-500">공지</span>}
                       </button>
@@ -274,13 +283,13 @@ export default function SharedDashboard({
                     <Check size={15} strokeWidth={3} />
                   </button>
                   <button onClick={() => onOpenSchedule(schedule)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
-                    <div className={`w-12 shrink-0 text-sm font-black ${schedule.is_completed ? 'text-slate-400 line-through' : schedule.is_urgent ? 'text-red-600' : 'text-blue-600'}`}>{schedule.start_time}</div>
+                    <div className={`w-16 shrink-0 text-xs font-black ${schedule.is_completed ? 'text-slate-400 line-through' : schedule.is_urgent ? 'text-red-600' : 'text-blue-600'}`}>{schedule.start_time ?? schedule.end_time ?? '미정'}</div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5">
                         {schedule.is_urgent && <Siren size={15} className="shrink-0 text-red-500" />}
                         <p className={`truncate text-sm font-black ${schedule.is_completed ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{schedule.title}</p>
                       </div>
-                      <p className={`mt-1 text-[11px] font-bold ${schedule.is_completed ? 'text-slate-300 line-through' : 'text-slate-400'}`}>{schedule.start_time} - {schedule.end_time}</p>
+                      <p className={`mt-1 text-[11px] font-bold ${schedule.is_completed ? 'text-slate-300 line-through' : 'text-slate-400'}`}>{formatScheduleTime(schedule)}</p>
                     </div>
                     {schedule.is_notice && <span className="rounded-lg bg-red-50 px-2 py-1 text-[9px] font-black text-red-500">공지</span>}
                     <ArrowRight size={15} className="text-slate-300 transition-transform group-hover:translate-x-1" />
@@ -312,7 +321,7 @@ export default function SharedDashboard({
                   <span className="flex min-w-0 items-center gap-1.5 truncate text-sm font-black text-slate-800">{notice.is_urgent && <Siren size={15} className="shrink-0 text-red-500" />}<span className="truncate">{notice.title}</span></span>
                   <span className="shrink-0 rounded-lg bg-white px-2 py-1 text-[10px] font-black text-violet-600 shadow-sm">{notice.date}</span>
                 </div>
-                <p className="text-[11px] font-bold text-slate-400">{notice.start_time} - {notice.end_time}</p>
+                <p className="text-[11px] font-bold text-slate-400">{formatScheduleTime(notice)}</p>
               </button>
             )) : (
               <div className="flex min-h-48 flex-col items-center justify-center rounded-2xl bg-slate-50 text-center">

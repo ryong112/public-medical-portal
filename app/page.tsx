@@ -10,7 +10,7 @@ import {
   FileText, FilePlus,
   FileSpreadsheet, FileBox, File, Download, Trash2,
   GripVertical, Calendar as CalendarIcon, LayoutDashboard, Plus,
-  ChevronLeft, ChevronRight, X, Clock, CalendarDays, Lock, Archive, Menu, Siren
+  ChevronLeft, ChevronRight, X, Clock, CalendarDays, Lock, Archive, Menu, Siren, Pencil
 } from 'lucide-react';
 
 export default function IntegratedPortal() {
@@ -59,6 +59,7 @@ export default function IntegratedPortal() {
   const [selectedSchedule, setSelectedSchedule] = useState<any | null>(null);
   const [draggedScheduleId, setDraggedScheduleId] = useState<number | null>(null);
   const [scheduleFormDate, setScheduleFormDate] = useState<string | null>(null);
+  const [editingSchedule, setEditingSchedule] = useState<any | null>(null);
   const [undoNotices, setUndoNotices] = useState<UndoNotice[]>([]);
   const pendingDeleteKeysRef = useRef(new Set<string>());
   const undoTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
@@ -153,6 +154,13 @@ export default function IntegratedPortal() {
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     if (diffDays === 0) return 'D-Day';
     return `D-${diffDays}`;
+  };
+
+  const formatScheduleTime = (schedule: any) => {
+    if (schedule.start_time && schedule.end_time) return `${schedule.start_time} - ${schedule.end_time}`;
+    if (schedule.start_time) return `${schedule.start_time}부터`;
+    if (schedule.end_time) return `${schedule.end_time}까지`;
+    return '시간 미정';
   };
 
   const onMouseDownChat = (e: React.MouseEvent) => { setIsDraggingChat(true); dragStartPos.current = { x: e.clientX - position.x, y: e.clientY - position.y }; };
@@ -355,13 +363,25 @@ export default function IntegratedPortal() {
     setSelectedCategory(editTitleValue.trim()); setIsEditingTitle(false); fetchCategories(); 
   };
 
-  const onAddSchedule = (dateStr: string) => setScheduleFormDate(dateStr);
+  const onAddSchedule = (dateStr: string) => {
+    setEditingSchedule(null);
+    setScheduleFormDate(dateStr);
+  };
 
-  const onCreateSchedule = async (schedule: NewScheduleInput) => {
-    const { error } = await supabase.from('schedules').insert([schedule]);
-    if (error) throw new Error(`일정을 등록하지 못했습니다: ${error.message}`);
+  const onSaveSchedule = async (schedule: NewScheduleInput) => {
+    const { error } = editingSchedule
+      ? await supabase.from('schedules').update(schedule).eq('id', editingSchedule.id)
+      : await supabase.from('schedules').insert([schedule]);
+    if (error) throw new Error(`일정을 저장하지 못했습니다: ${error.message}`);
     await fetchSchedules();
     setScheduleFormDate(null);
+    setEditingSchedule(null);
+  };
+
+  const onEditSchedule = (schedule: any) => {
+    setEditingSchedule(schedule);
+    setScheduleFormDate(schedule.date);
+    setSelectedSchedule(null);
   };
 
   const onToggleScheduleComplete = async (schedule: any) => {
@@ -630,7 +650,7 @@ export default function IntegratedPortal() {
                                 <div key={s.id} draggable onDragStart={(e)=>onScheduleDragStart(e, s.id)} onClick={()=>setSelectedSchedule(s)} className={`border text-slate-800 text-[9px] md:text-[10px] p-1.5 rounded-lg font-bold shadow-sm flex flex-col gap-0.5 truncate cursor-pointer transition-all ${s.is_notice ? 'bg-red-50/70 border-red-200 hover:border-red-400' : 'bg-white border-blue-100 hover:border-blue-400'}`}>
                                   <div className="flex items-center gap-1 text-blue-600 hidden md:flex">
                                     <Clock size={9}/>
-                                    <span className={`text-[8px] font-black ${s.is_notice ? 'text-red-500' : 'text-blue-600'}`}>{s.start_time}</span>
+                                    <span className={`text-[8px] font-black ${s.is_notice ? 'text-red-500' : 'text-blue-600'}`}>{formatScheduleTime(s)}</span>
                                     {s.is_notice && <span className="bg-red-500 text-white px-1 rounded-[4px] text-[7px] scale-90">공지</span>}
                                   </div>
                                   <span className={`flex items-center gap-1 ${s.is_notice ? 'text-red-900 font-extrabold' : ''} ${s.is_completed ? 'text-slate-400 line-through opacity-60' : ''}`}>{s.is_urgent && <Siren size={10} className="shrink-0 text-red-500" />}{s.title}</span>
@@ -680,10 +700,11 @@ export default function IntegratedPortal() {
 
       {scheduleFormDate && (
         <ScheduleFormModal
-          key={scheduleFormDate}
+          key={`${scheduleFormDate}-${editingSchedule?.id ?? 'new'}`}
           date={scheduleFormDate}
-          onClose={() => setScheduleFormDate(null)}
-          onSubmit={onCreateSchedule}
+          initialSchedule={editingSchedule ?? undefined}
+          onClose={() => { setScheduleFormDate(null); setEditingSchedule(null); }}
+          onSubmit={onSaveSchedule}
         />
       )}
 
@@ -695,10 +716,11 @@ export default function IntegratedPortal() {
             </div>
             {selectedSchedule.is_urgent && <span className="mb-3 rounded-lg bg-red-500 px-3 py-1 text-[10px] font-black text-white">긴급 일정</span>}
             <h3 className={`mb-2 text-center text-2xl font-black leading-tight ${selectedSchedule.is_completed ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{selectedSchedule.title}</h3>
-            <p className="mb-8 text-center font-bold text-slate-400">{selectedSchedule.date} | {selectedSchedule.start_time} - {selectedSchedule.end_time}</p>
-            <div className="flex w-full gap-3">
-              <button onClick={() => onDeleteSchedule(selectedSchedule.id)} className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-red-50 py-4 font-black text-red-500 transition-all hover:bg-red-500 hover:text-white"><Trash2 size={18}/> 일정 삭제</button>
-              <button onClick={() => setSelectedSchedule(null)} className="flex-1 rounded-2xl bg-slate-900 py-4 font-black text-white transition-all hover:bg-black">닫기</button>
+            <p className="mb-8 text-center font-bold text-slate-400">{selectedSchedule.date} | {formatScheduleTime(selectedSchedule)}</p>
+            <div className="grid w-full grid-cols-2 gap-3">
+              <button onClick={() => onEditSchedule(selectedSchedule)} className="flex items-center justify-center gap-2 rounded-2xl bg-blue-50 py-4 font-black text-blue-600 transition-all hover:bg-blue-600 hover:text-white"><Pencil size={17}/> 일정 수정</button>
+              <button onClick={() => onDeleteSchedule(selectedSchedule.id)} className="flex items-center justify-center gap-2 rounded-2xl bg-red-50 py-4 font-black text-red-500 transition-all hover:bg-red-500 hover:text-white"><Trash2 size={18}/> 일정 삭제</button>
+              <button onClick={() => setSelectedSchedule(null)} className="col-span-2 rounded-2xl bg-slate-900 py-4 font-black text-white transition-all hover:bg-black">닫기</button>
             </div>
           </div>
         </div>
