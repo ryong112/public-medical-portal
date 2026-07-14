@@ -8,11 +8,11 @@ import {
   FolderOpen,
   MessageCircle,
   Siren,
-  X,
 } from 'lucide-react';
 
 type DashboardView = 'files' | 'calendar' | 'external_calendar' | 'dashboard';
 type DailyScheduleFilter = 'all' | 'general' | 'internal' | 'business_trip' | 'meeting' | 'leave';
+type WeeklyScheduleFilter = Exclude<DailyScheduleFilter, 'all' | 'leave'>;
 
 interface PortalFile {
   id: number;
@@ -134,7 +134,12 @@ const dailyScheduleFilters: Array<{ value: DailyScheduleFilter; label: string }>
   { value: 'meeting', label: '회의' },
   { value: 'leave', label: '휴가' },
 ];
-const weeklyScheduleFilters = dailyScheduleFilters.filter((filter): filter is { value: Exclude<DailyScheduleFilter, 'all'>; label: string } => filter.value !== 'all');
+const weeklyScheduleFilters: Array<{ value: WeeklyScheduleFilter; label: string }> = [
+  { value: 'general', label: '일반' },
+  { value: 'internal', label: '내부일정' },
+  { value: 'business_trip', label: '출장' },
+  { value: 'meeting', label: '회의' },
+];
 
 const getDailyScheduleCategory = (schedule: Schedule): Exclude<DailyScheduleFilter, 'all'> => {
   if (isAbsenceSchedule(schedule)) return 'leave';
@@ -199,18 +204,6 @@ const groupAbsenceSchedules = (schedules: Schedule[]): AbsenceGroup[] => {
   }));
 };
 
-const getAbsenceTypeDetails = (absence: AbsenceGroup) => {
-  const typeMap = new Map<string, Schedule[]>();
-  for (const schedule of absence.schedules) {
-    const type = getAbsenceTypeLabel(schedule);
-    typeMap.set(type, [...(typeMap.get(type) ?? []), schedule]);
-  }
-  return [...typeMap.entries()].map(([type, schedules]) => ({
-    type,
-    dateLabel: formatAbsenceDateRanges(schedules.map((schedule) => schedule.date)),
-  }));
-};
-
 export default function SharedDashboard({
   files,
   schedules,
@@ -223,7 +216,7 @@ export default function SharedDashboard({
 }: SharedDashboardProps) {
   const [todayFilter, setTodayFilter] = useState<DailyScheduleFilter>('all');
   const [tomorrowFilter, setTomorrowFilter] = useState<DailyScheduleFilter>('all');
-  const [weeklyFilter, setWeeklyFilter] = useState<Exclude<DailyScheduleFilter, 'all'>>('general');
+  const [weeklyFilter, setWeeklyFilter] = useState<WeeklyScheduleFilter>('general');
   const [selectedAbsence, setSelectedAbsence] = useState<AbsenceGroup | null>(null);
   const now = new Date();
   const todayKey = toLocalDateKey(now);
@@ -452,12 +445,12 @@ export default function SharedDashboard({
             <div className={`pointer-events-none absolute top-full z-40 w-[min(310px,calc(100vw-2rem))] pt-2 opacity-0 transition-all duration-150 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-y-0 group-focus-within:opacity-100 ${index % 2 === 0 ? 'left-0' : 'right-0'}`}>
               <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white p-3 shadow-2xl">
                 <div className="mb-2 flex items-center justify-between border-b border-slate-100 px-1 pb-2">
-                  <span className="text-xs font-black text-slate-700">{item.label} 상세{item.isWeeklyCard ? ` · ${weeklyScheduleFilters.find((filter) => filter.value === weeklyFilter)?.label}` : ''}</span>
-                  <span className="text-[10px] font-black text-slate-400">{item.value}{item.unit}</span>
+                  <span className="text-xs font-black text-slate-700">{item.isAbsenceCard && selectedAbsence ? `${selectedAbsence.person} 휴가 상세` : `${item.label} 상세${item.isWeeklyCard ? ` · ${weeklyScheduleFilters.find((filter) => filter.value === weeklyFilter)?.label}` : ''}`}</span>
+                  <span className="text-[10px] font-black text-slate-400">{item.isAbsenceCard && selectedAbsence ? '1명' : `${item.value}${item.unit}`}</span>
                 </div>
                 {item.isAbsenceCard && item.absenceItems.length > 0 ? (
                   <div className="max-h-64 space-y-1 overflow-y-auto custom-scrollbar">
-                    {item.absenceItems.map((absence) => (
+                    {(selectedAbsence ? [selectedAbsence] : item.absenceItems).map((absence) => (
                       <button key={absence.key} onClick={() => setSelectedAbsence(absence)} className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left transition-colors hover:bg-amber-50 focus:bg-amber-50 focus:outline-none">
                         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-500"><CalendarDays size={16} /></div>
                         <div className="min-w-0 flex-1">
@@ -527,7 +520,7 @@ export default function SharedDashboard({
                   <div className="mb-2 flex items-center gap-2 text-[10px] font-black text-amber-600"><CalendarDays size={13} /> 오늘 휴가·조퇴</div>
                   <div className="flex flex-wrap gap-2">
                     {todayAbsenceGroups.map((absence) => (
-                      <button key={`today-${absence.key}`} onClick={() => setSelectedAbsence(absence)} className="flex items-center gap-2 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-left transition-colors hover:border-amber-300 hover:bg-amber-100">
+                      <button key={`today-${absence.key}`} onClick={() => onOpenSchedule(absence.schedules[0])} className="flex items-center gap-2 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-left transition-colors hover:border-amber-300 hover:bg-amber-100">
                         <span className="text-xs font-black text-slate-800">{absence.person}</span>
                         <span className="text-[9px] font-black text-amber-600">{absence.typeLabel}</span>
                       </button>
@@ -614,34 +607,6 @@ export default function SharedDashboard({
         </div>
       </section>
 
-      {selectedAbsence && (
-        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm" onMouseDown={(event) => event.target === event.currentTarget && setSelectedAbsence(null)}>
-          <div className="w-full max-w-md rounded-[28px] bg-white p-5 shadow-2xl sm:p-7">
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex min-w-0 items-center gap-3">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-amber-50 text-amber-500"><CalendarDays size={21} /></div>
-                <div className="min-w-0">
-                  <p className="text-[10px] font-black uppercase tracking-[0.16em] text-amber-500">이번 달 휴가</p>
-                  <h3 className="mt-1 truncate text-xl font-black text-slate-900">{selectedAbsence.person} 휴가·조퇴 일정</h3>
-                </div>
-              </div>
-              <button onClick={() => setSelectedAbsence(null)} aria-label="닫기" className="rounded-xl bg-slate-100 p-2 text-slate-500 transition-colors hover:bg-slate-200"><X size={18} /></button>
-            </div>
-
-            <div className="mt-6 space-y-2">
-              {getAbsenceTypeDetails(selectedAbsence).map((detail) => (
-                <div key={`${selectedAbsence.key}-${detail.type}`} className="flex items-center justify-between gap-4 rounded-2xl border border-amber-100 bg-amber-50/60 px-4 py-3.5">
-                  <span className="shrink-0 rounded-lg bg-white px-2.5 py-1.5 text-xs font-black text-amber-700 shadow-sm">{detail.type}</span>
-                  <strong className="text-right text-sm font-black text-slate-800">{detail.dateLabel}</strong>
-                </div>
-              ))}
-            </div>
-
-            <p className="mt-4 text-center text-[10px] font-bold text-slate-400">오늘부터 이번 달 말일까지 등록된 일정입니다.</p>
-            <button onClick={() => setSelectedAbsence(null)} className="mt-5 w-full rounded-2xl bg-slate-900 py-3.5 text-sm font-black text-white transition-colors hover:bg-black">닫기</button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
