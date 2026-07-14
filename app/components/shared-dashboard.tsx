@@ -163,7 +163,7 @@ export default function SharedDashboard({
               <Sparkles size={15} /> TODAY BRIEFING
             </div>
             <h2 className="text-2xl font-black tracking-tight md:text-4xl">
-              오늘도 한눈에 시작해요
+              오늘의 브리핑
             </h2>
             <p className="mt-2 text-sm font-medium text-slate-400">
               {new Intl.DateTimeFormat('ko-KR', {
