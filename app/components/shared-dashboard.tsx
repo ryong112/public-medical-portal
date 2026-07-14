@@ -36,7 +36,7 @@ interface Schedule {
 
 interface AbsenceGroup {
   key: string;
-  title: string;
+  person: string;
   typeLabel: string;
   dateLabel: string;
   schedules: Schedule[];
@@ -121,6 +121,17 @@ const getAbsenceTypeLabel = (schedule: Schedule) => {
   return '연차';
 };
 
+const isAbsenceSchedule = (schedule: Schedule) => schedule.schedule_type === 'leave' || /휴가|연차|조퇴/.test(schedule.title);
+
+const getAbsencePeople = (schedule: Schedule) => {
+  const names = schedule.title
+    .replace(/^(?:휴가|연차|오전\s*조퇴|오후\s*조퇴|조퇴)\s*[-:)]?\s*/u, '')
+    .split(/[,，/·]+/u)
+    .map((name) => name.trim())
+    .filter(Boolean);
+  return [...new Set(names.length > 0 ? names : [schedule.title.trim()])];
+};
+
 const formatAbsenceDateRanges = (dateKeys: string[]) => {
   const dates = [...new Set(dateKeys)].sort().map((key) => {
     const [year, month, day] = key.split('-').map(Number);
@@ -148,6 +159,23 @@ const formatAbsenceDateRanges = (dateKeys: string[]) => {
   }).join(', ');
 };
 
+const groupAbsenceSchedules = (schedules: Schedule[]): AbsenceGroup[] => {
+  const groupMap = new Map<string, Schedule[]>();
+  for (const schedule of schedules) {
+    for (const person of getAbsencePeople(schedule)) {
+      groupMap.set(person, [...(groupMap.get(person) ?? []), schedule]);
+    }
+  }
+
+  return [...groupMap.entries()].map(([key, groupedSchedules]) => ({
+    key,
+    person: key,
+    typeLabel: [...new Set(groupedSchedules.map(getAbsenceTypeLabel))].join(' · '),
+    dateLabel: formatAbsenceDateRanges(groupedSchedules.map((schedule) => schedule.date)),
+    schedules: groupedSchedules,
+  }));
+};
+
 export default function SharedDashboard({
   files,
   schedules,
@@ -171,6 +199,8 @@ export default function SharedDashboard({
   const todaySchedules = schedules
     .filter((schedule) => schedule.date === todayKey)
     .sort((a, b) => getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
+  const todayWorkSchedules = todaySchedules.filter((schedule) => !isAbsenceSchedule(schedule));
+  const todayAbsenceGroups = groupAbsenceSchedules(todaySchedules.filter(isAbsenceSchedule));
   const todayTodoSchedules = todaySchedules
     .filter((schedule) => schedule.is_todo)
     .sort((a, b) => Number(Boolean(a.is_completed)) - Number(Boolean(b.is_completed)) || getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
@@ -187,20 +217,9 @@ export default function SharedDashboard({
     .sort((a, b) => a.date.localeCompare(b.date));
   const monthlyAbsenceSchedules = schedules
     .filter((schedule) => schedule.date >= todayKey && schedule.date <= monthEndKey)
-    .filter((schedule) => schedule.schedule_type === 'leave' || /휴가|조퇴/.test(schedule.title))
+    .filter(isAbsenceSchedule)
     .sort((a, b) => a.date.localeCompare(b.date));
-  const absenceGroupMap = new Map<string, Schedule[]>();
-  for (const schedule of monthlyAbsenceSchedules) {
-    const key = `${schedule.title.trim()}::${getAbsenceTypeLabel(schedule)}`;
-    absenceGroupMap.set(key, [...(absenceGroupMap.get(key) ?? []), schedule]);
-  }
-  const monthlyAbsenceGroups: AbsenceGroup[] = [...absenceGroupMap.entries()].map(([key, groupedSchedules]) => ({
-    key,
-    title: groupedSchedules[0].title,
-    typeLabel: getAbsenceTypeLabel(groupedSchedules[0]),
-    dateLabel: formatAbsenceDateRanges(groupedSchedules.map((schedule) => schedule.date)),
-    schedules: groupedSchedules,
-  }));
+  const monthlyAbsenceGroups = groupAbsenceSchedules(monthlyAbsenceSchedules);
   const recentFiles = [...files]
     .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
     .slice(0, 4);
@@ -208,7 +227,7 @@ export default function SharedDashboard({
     { label: 'TO DO LIST', value: pendingTodoCount, unit: '개', color: 'text-blue-600', icon: <Check size={18} />, items: todayTodoSchedules, isTodoCard: true, completedValue: completedTodoCount, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[] },
     { label: '진행 중인 공지사항', value: allUpcomingNotices.length, unit: '건', color: 'text-red-500', icon: <BellRing size={18} />, items: allUpcomingNotices, isTodoCard: false, completedValue: 0, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[] },
     { label: '주간 일정', value: weeklySchedules.length, unit: '건', color: 'text-violet-600', icon: <CalendarDays size={18} />, items: weeklySchedules, isTodoCard: false, completedValue: 0, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[] },
-    { label: '이번 달 휴가', value: monthlyAbsenceGroups.length, unit: '건', color: 'text-amber-500', icon: <CalendarDays size={18} />, items: [] as Schedule[], isTodoCard: false, completedValue: 0, isAbsenceCard: true, absenceItems: monthlyAbsenceGroups },
+    { label: '이번 달 휴가', value: monthlyAbsenceGroups.length, unit: '명', color: 'text-amber-500', icon: <CalendarDays size={18} />, items: [] as Schedule[], isTodoCard: false, completedValue: 0, isAbsenceCard: true, absenceItems: monthlyAbsenceGroups },
   ];
 
   const activities: ActivityItem[] = [
@@ -358,7 +377,7 @@ export default function SharedDashboard({
                       <button key={absence.key} onClick={() => onOpenSchedule(absence.schedules[0])} className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left transition-colors hover:bg-amber-50 focus:bg-amber-50 focus:outline-none">
                         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-500"><CalendarDays size={16} /></div>
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-xs font-black text-slate-800">{absence.title} <span className="text-amber-600">({absence.dateLabel})</span></p>
+                          <p className="truncate text-xs font-black text-slate-800">{absence.person} <span className="text-amber-600">({absence.dateLabel})</span></p>
                           <p className="mt-1 text-[10px] font-bold text-slate-400">{absence.typeLabel}</p>
                         </div>
                       </button>
@@ -411,9 +430,26 @@ export default function SharedDashboard({
             </button>
           </div>
 
-          {todaySchedules.length > 0 ? (
-            <div className="max-h-80 space-y-2 overflow-y-auto pr-1 custom-scrollbar">
-              {todaySchedules.map((schedule) => renderDailySchedule(schedule))}
+          {todayWorkSchedules.length > 0 || todayAbsenceGroups.length > 0 ? (
+            <div className="max-h-80 overflow-y-auto pr-1 custom-scrollbar">
+              {todayWorkSchedules.length > 0 && (
+                <div className="space-y-2">
+                  {todayWorkSchedules.map((schedule) => renderDailySchedule(schedule))}
+                </div>
+              )}
+              {todayAbsenceGroups.length > 0 && (
+                <div className={`${todayWorkSchedules.length > 0 ? 'mt-4 border-t border-slate-100 pt-4' : ''}`}>
+                  <div className="mb-2 flex items-center gap-2 text-[10px] font-black text-amber-600"><CalendarDays size={13} /> 오늘 휴가·조퇴</div>
+                  <div className="flex flex-wrap gap-2">
+                    {todayAbsenceGroups.map((absence) => (
+                      <button key={`today-${absence.key}`} onClick={() => onOpenSchedule(absence.schedules[0])} className="flex items-center gap-2 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-left transition-colors hover:border-amber-300 hover:bg-amber-100">
+                        <span className="text-xs font-black text-slate-800">{absence.person}</span>
+                        <span className="text-[9px] font-black text-amber-600">{absence.typeLabel}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <div className="flex min-h-48 flex-col items-center justify-center rounded-2xl bg-slate-50 text-center">

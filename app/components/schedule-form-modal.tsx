@@ -173,7 +173,7 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
               { value: 'meeting' as const, label: '회의)' },
               { value: 'business_trip' as const, label: '출장)' },
               { value: 'internal' as const, label: '내부일정)' },
-              { value: 'leave' as const, label: '휴가)' },
+              { value: 'leave' as const, label: '휴가·조퇴)' },
               { value: 'unclassified' as const, label: '미분류)' },
             ].map((type) => (
               <button key={type.value} type="button" onClick={() => setScheduleType(type.value)} className={`rounded-xl px-2 py-2.5 text-[10px] font-black transition-colors ${scheduleType === type.value ? 'bg-blue-600 text-white shadow-md' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>{type.label}</button>

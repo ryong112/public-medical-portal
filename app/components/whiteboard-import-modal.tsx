@@ -44,7 +44,7 @@ const scheduleTypes: Array<{ value: ScheduleType; label: string }> = [
   { value: 'meeting', label: '회의)' },
   { value: 'business_trip', label: '출장)' },
   { value: 'internal', label: '내부일정)' },
-  { value: 'leave', label: '휴가)' },
+  { value: 'leave', label: '휴가·조퇴)' },
   { value: 'unclassified', label: '미분류)' },
 ];
 
