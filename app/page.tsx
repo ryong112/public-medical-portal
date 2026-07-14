@@ -2,9 +2,11 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
+import SharedDashboard from '@/app/components/shared-dashboard';
+import UndoToast, { type UndoNotice } from '@/app/components/undo-toast';
 import JSZip from 'jszip';
 import { 
-  FileText, FilePlus, Image as ImageIcon, 
+  FileText, FilePlus,
   FileSpreadsheet, FileBox, File, Download, Trash2,
   GripVertical, Calendar as CalendarIcon, LayoutDashboard, Plus,
   ChevronLeft, ChevronRight, X, Clock, CalendarDays, Lock, Archive, Menu
@@ -17,7 +19,7 @@ export default function IntegratedPortal() {
   const [isError, setIsError] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
 
-  const [viewMode, setViewMode] = useState<'files' | 'calendar' | 'external_calendar'>('files');
+  const [viewMode, setViewMode] = useState<'files' | 'calendar' | 'external_calendar' | 'dashboard'>('dashboard');
   
   const [messages, setMessages] = useState<any[]>([]);
   const [chatInput, setChatInput] = useState('');
@@ -55,6 +57,10 @@ export default function IntegratedPortal() {
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedSchedule, setSelectedSchedule] = useState<any | null>(null);
   const [draggedScheduleId, setDraggedScheduleId] = useState<number | null>(null);
+  const [undoNotices, setUndoNotices] = useState<UndoNotice[]>([]);
+  const pendingDeleteKeysRef = useRef(new Set<string>());
+  const undoTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const undoActionsRef = useRef(new Map<string, { keys: string[]; restore: () => void }>());
 
   useEffect(() => {
     setIsMounted(true);
@@ -155,27 +161,155 @@ export default function IntegratedPortal() {
     return () => { window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('mouseup', onMouseUp); };
   }, [isDraggingChat, position]);
 
-  const onDeleteMessage = async (id: number) => { if (!confirm('삭제하시겠습니까?')) return; setMessages(prev => prev.filter(m => m.id !== id)); await supabase.from('messages').delete().eq('id', id); };
-  const onDeleteCategoryWithFiles = async (id: number, catName: string) => {
-    const targetFiles = files.filter(f => f.category === catName);
-    const confirmMsg = targetFiles.length > 0 ? `'${catName}' 분류를 삭제하시겠습니까?\n내부에 저장된 파일 ${targetFiles.length}개도 서버에서 완전히 삭제되어 용량이 확보됩니다.` : `'${catName}' 분류를 삭제하시겠습니까?`;
-    if (!confirm(confirmMsg)) return;
-    try {
-      if (targetFiles.length > 0) {
-        const filePaths = targetFiles.map(f => f.url.split('/').pop() || "");
-        await supabase.storage.from('files').remove(filePaths);
-        await supabase.from('files').delete().eq('category', catName);
+  const queueUndoableDeletion = ({
+    label,
+    keys,
+    hide,
+    restore,
+    commit,
+  }: {
+    label: string;
+    keys: string[];
+    hide: () => void;
+    restore: () => void;
+    commit: () => Promise<void>;
+  }) => {
+    if (keys.some((key) => pendingDeleteKeysRef.current.has(key))) return;
+
+    const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    keys.forEach((key) => pendingDeleteKeysRef.current.add(key));
+    undoActionsRef.current.set(token, { keys, restore });
+    hide();
+    setUndoNotices((current) => [...current, { token, label }]);
+
+    const timer = setTimeout(async () => {
+      setUndoNotices((current) => current.filter((notice) => notice.token !== token));
+      try {
+        await commit();
+      } catch (error) {
+        restore();
+        alert(error instanceof Error ? error.message : '삭제 중 오류가 발생했습니다.');
+      } finally {
+        keys.forEach((key) => pendingDeleteKeysRef.current.delete(key));
+        undoActionsRef.current.delete(token);
+        undoTimersRef.current.delete(token);
       }
-      await supabase.from('categories').delete().eq('id', id);
-      setSelectedCategory('전체'); fetchCategories(); fetchFiles();
-    } catch (e) { alert("삭제 중 오류"); }
+    }, 8000);
+
+    undoTimersRef.current.set(token, timer);
   };
-  const onDeleteSchedule = async (id: number) => { if (confirm('삭제하시겠습니까?')) { await supabase.from('schedules').delete().eq('id', id); setSelectedSchedule(null); fetchSchedules(); } };
-  const onDeleteFile = async (file: any) => { if (!confirm('삭제하시겠습니까?')) return; const path = file.url.split('/').pop() || ""; await supabase.storage.from('files').remove([path]); await supabase.from('files').delete().eq('id', file.id); fetchFiles(); };
-  const fetchMessages = async () => { const { data } = await supabase.from('messages').select('*').order('created_at', { ascending: true }); if (data) setMessages(data); };
-  const fetchFiles = async () => { const { data } = await supabase.from('files').select('*').order('created_at', { ascending: false }); if (data) setFiles(data); };
-  const fetchCategories = async () => { const { data } = await supabase.from('categories').select('*').order('order_index', { ascending: true }); if (data) setCategories(data); };
-  const fetchSchedules = async () => { const { data } = await supabase.from('schedules').select('*').order('start_time', { ascending: true }); if (data) setSchedules(data); };
+
+  const undoDeletion = (token: string) => {
+    const action = undoActionsRef.current.get(token);
+    const timer = undoTimersRef.current.get(token);
+    if (!action || !timer) return;
+
+    clearTimeout(timer);
+    action.restore();
+    action.keys.forEach((key) => pendingDeleteKeysRef.current.delete(key));
+    undoActionsRef.current.delete(token);
+    undoTimersRef.current.delete(token);
+    setUndoNotices((current) => current.filter((notice) => notice.token !== token));
+  };
+
+  const dismissUndoNotice = (token: string) => {
+    setUndoNotices((current) => current.filter((notice) => notice.token !== token));
+  };
+
+  const onDeleteMessage = (id: number) => {
+    if (!confirm('메시지를 삭제하시겠습니까?')) return;
+    const target = messages.find((message) => message.id === id);
+    if (!target) return;
+
+    queueUndoableDeletion({
+      label: '메시지를 삭제했어요',
+      keys: [`message:${id}`],
+      hide: () => setMessages((current) => current.filter((message) => message.id !== id)),
+      restore: () => setMessages((current) => current.some((message) => message.id === id) ? current : [...current, target].sort((a, b) => a.id - b.id)),
+      commit: async () => {
+        const { error } = await supabase.from('messages').delete().eq('id', id);
+        if (error) throw new Error(`메시지를 삭제하지 못했습니다: ${error.message}`);
+      },
+    });
+  };
+
+  const onDeleteCategoryWithFiles = (id: number, catName: string) => {
+    const targetFiles = files.filter(f => f.category === catName);
+    const targetCategory = categories.find((category) => category.id === id);
+    if (!targetCategory) return;
+    const confirmMsg = targetFiles.length > 0 ? `'${catName}' 분류와 파일 ${targetFiles.length}개를 삭제하시겠습니까?\n8초 동안 삭제를 되돌릴 수 있습니다.` : `'${catName}' 분류를 삭제하시겠습니까?`;
+    if (!confirm(confirmMsg)) return;
+
+    queueUndoableDeletion({
+      label: `'${catName}' 분류를 삭제했어요`,
+      keys: [`category:${id}`, ...targetFiles.map((file) => `file:${file.id}`)],
+      hide: () => {
+        setCategories((current) => current.filter((category) => category.id !== id));
+        setFiles((current) => current.filter((file) => file.category !== catName));
+        setSelectedCategory('전체');
+      },
+      restore: () => {
+        setCategories((current) => current.some((category) => category.id === id) ? current : [...current, targetCategory].sort((a, b) => a.order_index - b.order_index));
+        setFiles((current) => {
+          const existingIds = new Set(current.map((file) => file.id));
+          return [...current, ...targetFiles.filter((file) => !existingIds.has(file.id))].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+        });
+        setSelectedCategory(catName);
+      },
+      commit: async () => {
+        if (targetFiles.length > 0) {
+          const { error: fileError } = await supabase.from('files').delete().eq('category', catName);
+          if (fileError) throw new Error(`분류의 파일을 삭제하지 못했습니다: ${fileError.message}`);
+        }
+        const { error: categoryError } = await supabase.from('categories').delete().eq('id', id);
+        if (categoryError) throw new Error(`분류를 삭제하지 못했습니다: ${categoryError.message}`);
+        if (targetFiles.length > 0) {
+          const filePaths = targetFiles.map(f => f.url.split('/').pop() || "");
+          const { error: storageError } = await supabase.storage.from('files').remove(filePaths);
+          if (storageError) throw new Error(`파일 저장소를 정리하지 못했습니다: ${storageError.message}`);
+        }
+      },
+    });
+  };
+
+  const onDeleteSchedule = (id: number) => {
+    if (!confirm('일정을 삭제하시겠습니까?')) return;
+    const target = schedules.find((schedule) => schedule.id === id);
+    if (!target) return;
+
+    queueUndoableDeletion({
+      label: `'${target.title}' 일정을 삭제했어요`,
+      keys: [`schedule:${id}`],
+      hide: () => { setSchedules((current) => current.filter((schedule) => schedule.id !== id)); setSelectedSchedule(null); },
+      restore: () => setSchedules((current) => current.some((schedule) => schedule.id === id) ? current : [...current, target]),
+      commit: async () => {
+        const { error } = await supabase.from('schedules').delete().eq('id', id);
+        if (error) throw new Error(`일정을 삭제하지 못했습니다: ${error.message}`);
+      },
+    });
+  };
+
+  const onDeleteFile = (file: any) => {
+    if (!confirm('파일을 삭제하시겠습니까?')) return;
+    const path = file.url.split('/').pop() || "";
+    queueUndoableDeletion({
+      label: `'${file.name}' 파일을 삭제했어요`,
+      keys: [`file:${file.id}`],
+      hide: () => setFiles((current) => current.filter((item) => item.id !== file.id)),
+      restore: () => setFiles((current) => current.some((item) => item.id === file.id) ? current : [file, ...current]),
+      commit: async () => {
+        const { error: fileError } = await supabase.from('files').delete().eq('id', file.id);
+        if (fileError) throw new Error(`파일 정보를 삭제하지 못했습니다: ${fileError.message}`);
+        const { error: storageError } = await supabase.storage.from('files').remove([path]);
+        if (storageError) throw new Error(`파일 저장소를 정리하지 못했습니다: ${storageError.message}`);
+      },
+    });
+  };
+
+  const fetchMessages = async () => { const { data } = await supabase.from('messages').select('*').order('created_at', { ascending: true }); if (data) setMessages(data.filter((message) => !pendingDeleteKeysRef.current.has(`message:${message.id}`))); };
+  const fetchFiles = async () => { const { data } = await supabase.from('files').select('*').order('created_at', { ascending: false }); if (data) setFiles(data.filter((file) => !pendingDeleteKeysRef.current.has(`file:${file.id}`))); };
+  const fetchCategories = async () => { const { data } = await supabase.from('categories').select('*').order('order_index', { ascending: true }); if (data) setCategories(data.filter((category) => !pendingDeleteKeysRef.current.has(`category:${category.id}`))); };
+  const fetchSchedules = async () => { const { data } = await supabase.from('schedules').select('*').order('start_time', { ascending: true }); if (data) setSchedules(data.filter((schedule) => !pendingDeleteKeysRef.current.has(`schedule:${schedule.id}`))); };
   
   useEffect(() => { if (isChatOpen) { const timer = setTimeout(() => { if (scrollRef.current) scrollRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, 100); return () => clearTimeout(timer); } }, [messages, isChatOpen]);
   
@@ -359,6 +493,8 @@ export default function IntegratedPortal() {
           </div>
           <div className="flex-1 overflow-y-auto px-6 py-2 custom-scrollbar">
             <div className="space-y-1.5 mb-4">
+              <button onClick={() => { setViewMode('dashboard'); setIsMobileSidebarOpen(false); }} className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-bold transition-all ${viewMode === 'dashboard' ? 'bg-slate-900 shadow-lg text-white' : 'text-slate-500 hover:bg-slate-200/60'}`}><LayoutDashboard size={17} /> 오늘의 브리핑</button>
+              <div className="h-px bg-slate-300/70 my-3" />
               <button onClick={() => { setViewMode('files'); setSelectedCategory('전체'); setIsMobileSidebarOpen(false); }} className={`w-full text-left px-4 py-3.5 rounded-xl text-sm font-bold transition-all ${selectedCategory === '전체' && viewMode === 'files' ? 'bg-white shadow-md text-blue-600 ring-1 ring-slate-200' : 'text-slate-500 hover:bg-slate-200/60'}`}>🏠 전체 문서 보기</button>
               {categories.map((cat, idx) => (
                 <div key={cat.id} draggable onDragStart={() => setDraggedItemIndex(idx)} onDragOver={(e) => e.preventDefault()} onDrop={async() => {
@@ -395,9 +531,9 @@ export default function IntegratedPortal() {
             </div>
           )}
 
-          <div className={`max-w-6xl w-full mx-auto flex flex-col flex-1 overflow-hidden min-h-0 ${viewMode === 'external_calendar' || viewMode === 'calendar' ? 'p-2 md:p-4' : 'p-6 md:p-12'}`}>
+          <div className={`max-w-6xl w-full mx-auto flex flex-col flex-1 overflow-hidden min-h-0 ${viewMode === 'external_calendar' || viewMode === 'calendar' ? 'p-2 md:p-4' : viewMode === 'dashboard' ? 'p-3 md:p-6' : 'p-6 md:p-12'}`}>
             
-            <div className={`flex flex-col md:flex-row justify-between items-start gap-4 shrink-0 ${viewMode === 'external_calendar' || viewMode === 'calendar' ? 'mb-2 md:mb-4' : 'mb-10'}`}>
+            {viewMode !== 'dashboard' && <div className={`flex flex-col md:flex-row justify-between items-start gap-4 shrink-0 ${viewMode === 'external_calendar' || viewMode === 'calendar' ? 'mb-2 md:mb-4' : 'mb-10'}`}>
               <div className="flex-1 w-full overflow-hidden">
                 <div className="group flex items-center gap-4 mb-1">
                   {isEditingTitle && viewMode === 'files' ? (
@@ -425,11 +561,21 @@ export default function IntegratedPortal() {
                   <input type="file" className="hidden" multiple onChange={(e) => e.target.files && handleUpload(e.target.files)} />
                 </label>
               )}
-            </div>
+            </div>}
 
-            <div className={`flex-1 flex flex-col min-h-0 ${viewMode === 'external_calendar' || viewMode === 'calendar' ? 'overflow-hidden' : 'overflow-auto custom-scrollbar'}`}>
+            <div className={`flex-1 flex flex-col min-h-0 ${viewMode === 'external_calendar' || viewMode === 'calendar' || viewMode === 'dashboard' ? 'overflow-hidden' : 'overflow-auto custom-scrollbar'}`}>
               
-              {viewMode === 'external_calendar' ? (
+              {viewMode === 'dashboard' ? (
+                <SharedDashboard
+                  files={files}
+                  schedules={schedules}
+                  messages={messages}
+                  onChangeView={setViewMode}
+                  onOpenChat={() => setIsChatOpen(true)}
+                  onOpenFile={handleDownload}
+                  onOpenSchedule={setSelectedSchedule}
+                />
+              ) : viewMode === 'external_calendar' ? (
                 <div className="w-full h-full relative rounded-[16px] md:rounded-[24px] overflow-hidden shadow-xl bg-slate-50">
                   <iframe 
                     src="https://my-calendar-eta.vercel.app" 
@@ -530,6 +676,8 @@ export default function IntegratedPortal() {
           <form onSubmit={onSend} className="p-4 md:p-6 bg-white md:rounded-b-[36px] border-t-2 border-slate-50"><div className="flex gap-3"><input className="flex-1 bg-slate-100 p-4 rounded-2xl text-sm font-bold text-slate-900 outline-none focus:ring-4 focus:ring-yellow-400 transition-all" value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="메시지 입력..." /><button className="bg-[#FEE500] hover:bg-[#F9E000] px-6 py-4 rounded-2xl font-black text-sm shadow-lg active:scale-95 transition-all text-slate-900">전송</button></div></form>
         </div>
       )}
+
+      <UndoToast notices={undoNotices} onUndo={undoDeletion} onDismiss={dismissUndoNotice} />
 
       <style jsx global>{`
         html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
