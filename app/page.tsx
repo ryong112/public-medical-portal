@@ -14,6 +14,11 @@ import {
   ChevronLeft, ChevronRight, X, Clock, CalendarDays, Lock, Archive, Menu, Siren, Pencil, ScanLine
 } from 'lucide-react';
 
+interface KoreanHoliday {
+  date: string;
+  name: string;
+}
+
 export default function IntegratedPortal() {
   const DEPARTMENT_PASSWORD = process.env.NEXT_PUBLIC_ACCESS_CODE || "dphs"; 
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -57,6 +62,7 @@ export default function IntegratedPortal() {
 
   const [schedules, setSchedules] = useState<any[]>([]);
   const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [koreanHolidays, setKoreanHolidays] = useState<Record<string, string[]>>({});
   const [selectedSchedule, setSelectedSchedule] = useState<any | null>(null);
   const [draggedScheduleId, setDraggedScheduleId] = useState<number | null>(null);
   const [scheduleFormDate, setScheduleFormDate] = useState<string | null>(null);
@@ -71,6 +77,30 @@ export default function IntegratedPortal() {
     setIsMounted(true);
     if (localStorage.getItem('dept_auth_confirm') === 'true') setIsAuthenticated(true);
   }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const year = currentMonth.getFullYear();
+
+    fetch(`/api/korean-holidays?year=${year}`, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('대한민국 공휴일을 불러오지 못했습니다.');
+        return response.json() as Promise<{ holidays: KoreanHoliday[] }>;
+      })
+      .then(({ holidays }) => {
+        const byDate = holidays.reduce<Record<string, string[]>>((result, holiday) => {
+          result[holiday.date] = [...(result[holiday.date] ?? []), holiday.name];
+          return result;
+        }, {});
+        setKoreanHolidays(byDate);
+      })
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === 'AbortError') return;
+        console.error(error);
+      });
+
+    return () => controller.abort();
+  }, [currentMonth]);
 
   // 1. 정보공유방(채팅) 영구 읽음 처리
   useEffect(() => {
@@ -677,13 +707,16 @@ export default function IntegratedPortal() {
                         const day = i + 1; const dateStr = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                         const daySchedules = schedules.filter(s => s.date === dateStr);
                         const isToday = dateStr === todayStr;
+                        const holidayNames = koreanHolidays[dateStr] ?? [];
+                        const isHoliday = holidayNames.length > 0;
                         return (
-                          <div key={day} onDragOver={(e)=>e.preventDefault()} onDrop={()=>onDayDrop(dateStr)} className={`flex min-h-0 flex-col border-r border-b border-slate-100 p-1.5 transition-all hover:bg-blue-50/40 group relative md:p-3 ${isToday ? 'z-10 bg-blue-50/70 ring-2 ring-inset ring-blue-500' : 'bg-white'}`}>
+                          <div key={day} onDragOver={(e)=>e.preventDefault()} onDrop={()=>onDayDrop(dateStr)} className={`flex min-h-0 flex-col border-r border-b border-slate-100 p-1.5 transition-all hover:bg-blue-50/40 group relative md:p-3 ${isToday ? 'z-10 bg-blue-50/70 ring-2 ring-inset ring-blue-500' : isHoliday ? 'bg-red-50/25' : 'bg-white'}`}>
                             <div className="flex justify-between items-start mb-1.5 shrink-0">
                               {/* 공지사항 지정 일정은 날짜 칸 내부에서도 눈에 띄게 테두리 가벼운 강조 효과 */}
-                              <div className="flex items-center gap-1.5">
-                                <span className={`flex h-6 min-w-6 items-center justify-center rounded-lg px-1 text-xs font-black md:h-7 md:min-w-7 md:text-sm ${isToday ? 'bg-blue-600 text-white shadow-md' : daySchedules.some(s => s.is_notice) ? 'bg-red-50 text-red-600' : (new Date(dateStr).getDay() === 0) ? 'text-red-500' : (new Date(dateStr).getDay() === 6) ? 'text-blue-500' : 'text-slate-800'}`}>{day}</span>
+                              <div className="flex min-w-0 items-center gap-1.5">
+                                <span className={`flex h-6 min-w-6 items-center justify-center rounded-lg px-1 text-xs font-black md:h-7 md:min-w-7 md:text-sm ${isToday ? 'bg-blue-600 text-white shadow-md' : isHoliday || daySchedules.some(s => s.is_notice) ? 'bg-red-50 text-red-600' : (new Date(dateStr).getDay() === 0) ? 'text-red-500' : (new Date(dateStr).getDay() === 6) ? 'text-blue-500' : 'text-slate-800'}`}>{day}</span>
                                 {isToday && <span className="rounded-md bg-blue-100 px-1.5 py-0.5 text-[8px] font-black text-blue-700 md:text-[9px]">오늘</span>}
+                                {isHoliday && <span title={holidayNames.join(', ')} className="truncate text-[8px] font-extrabold text-red-500 md:text-[9px]">{holidayNames.join(' · ')}</span>}
                               </div>
                               <button onClick={() => onAddSchedule(dateStr)} className="opacity-0 group-hover:opacity-100 bg-slate-900 text-white p-1 rounded-md transition-all"><Plus size={10}/></button>
                             </div>
