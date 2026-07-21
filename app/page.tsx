@@ -592,7 +592,7 @@ export default function IntegratedPortal() {
 
           <div className={`mx-auto flex w-full flex-1 flex-col overflow-hidden min-h-0 ${viewMode === 'dashboard' ? 'max-w-[1440px]' : 'max-w-6xl'} ${viewMode === 'external_calendar' || viewMode === 'calendar' ? 'p-2 sm:p-3 lg:p-4' : viewMode === 'dashboard' ? 'p-2.5 sm:p-4 lg:p-5 2xl:p-6' : 'p-4 sm:p-6 lg:p-10 2xl:p-12'}`}>
             
-            {viewMode !== 'dashboard' && <div className={`flex flex-col md:flex-row justify-between items-start gap-4 shrink-0 ${viewMode === 'external_calendar' || viewMode === 'calendar' ? 'mb-2 md:mb-4' : 'mb-10'}`}>
+            {viewMode !== 'dashboard' && viewMode !== 'calendar' && <div className={`flex flex-col md:flex-row justify-between items-start gap-4 shrink-0 ${viewMode === 'external_calendar' ? 'mb-2 md:mb-4' : 'mb-10'}`}>
               <div className="flex-1 w-full overflow-hidden">
                 <div className="group flex items-center gap-4 mb-1">
                   {isEditingTitle && viewMode === 'files' ? (
@@ -602,8 +602,8 @@ export default function IntegratedPortal() {
                     </div>
                   ) : (
                     <>
-                      <h2 className={`font-black text-slate-800 tracking-tighter uppercase truncate ${viewMode === 'external_calendar' || viewMode === 'calendar' ? 'text-xl md:text-2xl' : 'text-2xl md:text-4xl'}`}>
-                        {viewMode === 'calendar' ? '일정 공유 달력' : viewMode === 'external_calendar' ? '손)일정확인' : selectedCategory}
+                      <h2 className={`font-black text-slate-800 tracking-tighter uppercase truncate ${viewMode === 'external_calendar' ? 'text-xl md:text-2xl' : 'text-2xl md:text-4xl'}`}>
+                        {viewMode === 'external_calendar' ? '손)일정확인' : selectedCategory}
                       </h2>
                       {viewMode === 'files' && selectedCategory !== '전체' && <button onClick={() => { setEditTitleValue(selectedCategory); setIsEditingTitle(true); }} className="opacity-100 md:opacity-0 group-hover:opacity-100 bg-slate-100 text-slate-400 p-2 rounded-xl hover:text-blue-500 text-xs font-bold transition-all">✎ 수정</button>}
                       {viewMode === 'files' && <button onClick={handleDownloadCategoryZip} disabled={isDownloadingAll} className="flex items-center gap-2 bg-blue-50 text-blue-600 px-4 py-2 rounded-xl text-xs font-black hover:bg-blue-600 hover:text-white transition-all ml-2 shadow-sm"><Archive size={14} /> <span className="hidden sm:inline">전체 다운로드(ZIP)</span></button>}
@@ -611,7 +611,7 @@ export default function IntegratedPortal() {
                   )}
                 </div>
                 <p className="text-[10px] md:text-xs text-slate-400 font-medium tracking-tight italic truncate">
-                  {viewMode === 'calendar' ? '주요 일정을 확인하고 공유할 수 있습니다.' : viewMode === 'external_calendar' ? '연동된 외부 일정을 확인합니다.' : '부서 자료를 분류별로 확인할 수 있습니다.'}
+                  {viewMode === 'external_calendar' ? '연동된 외부 일정을 확인합니다.' : '부서 자료를 분류별로 확인할 수 있습니다.'}
                 </p>
               </div>
               {viewMode === 'files' && (
@@ -645,10 +645,13 @@ export default function IntegratedPortal() {
                 </div>
 
               ) : viewMode === 'calendar' ? (
-                <div className="flex-1 flex flex-col min-h-0 w-full">
-                  <div className="flex items-center gap-2 md:gap-6 mb-4 shrink-0">
-                    <h3 className="text-xl md:text-2xl font-black text-slate-700">{currentMonth.getFullYear()}년 {currentMonth.getMonth() + 1}월</h3>
-                    <div className="flex gap-2">
+                <div className="flex min-h-0 w-full flex-1 flex-col pb-3 sm:pb-4 lg:pb-5">
+                  <div className="mb-2 flex shrink-0 flex-wrap items-center gap-2 sm:mb-3 sm:gap-4 md:gap-6">
+                    <div className="min-w-0">
+                      <p className="text-[9px] font-black uppercase tracking-[0.16em] text-blue-600 sm:text-[10px]">일정 공유 달력</p>
+                      <h3 className="mt-0.5 text-lg font-black tracking-tight text-slate-800 sm:text-xl md:text-2xl">{currentMonth.getFullYear()}년 {currentMonth.getMonth() + 1}월</h3>
+                    </div>
+                    <div className="flex gap-1.5 sm:gap-2">
                       <button onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() - 1)))} className="p-2 md:p-3 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"><ChevronLeft size={18}/></button>
                       <button onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() + 1)))} className="p-2 md:p-3 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"><ChevronRight size={18}/></button>
                       <button onClick={() => setCurrentMonth(new Date())} className="px-5 py-2 bg-slate-900 text-white text-xs font-bold rounded-xl shadow-md hidden sm:block">오늘</button>
