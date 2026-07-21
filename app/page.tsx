@@ -661,8 +661,13 @@ export default function IntegratedPortal() {
 
                   <div className="flex-1 flex flex-col min-h-0 bg-slate-200 border border-slate-200 rounded-[16px] md:rounded-[32px] overflow-hidden shadow-2xl">
                     <div className="grid grid-cols-7 bg-slate-50 border-b border-slate-200 shrink-0">
-                      {['일', '월', '화', '수', '목', '금', '토'].map(d => (
-                        <div key={d} className="p-2 md:p-3 text-center text-[10px] md:text-xs font-black text-slate-400 uppercase tracking-widest">{d}</div>
+                      {['일', '월', '화', '수', '목', '금', '토'].map((d, index) => (
+                        <div
+                          key={d}
+                          className={`p-2 text-center text-[10px] font-black uppercase tracking-widest md:p-3 md:text-xs ${index === 0 ? 'text-red-500' : index === 6 ? 'text-blue-500' : 'text-slate-800'}`}
+                        >
+                          {d}
+                        </div>
                       ))}
                     </div>
                     
