@@ -26,6 +26,7 @@ interface Schedule {
   id: number;
   title: string;
   date: string;
+  end_date?: string | null;
   start_time: string | null;
   end_time: string | null;
   is_notice?: boolean;
@@ -102,6 +103,33 @@ const formatScheduleTime = (schedule: Schedule) => {
 };
 
 const getScheduleSortTime = (schedule: Schedule) => schedule.start_time ?? schedule.end_time ?? '99:99';
+
+const getScheduleEndDate = (schedule: Schedule) => schedule.end_date && schedule.end_date >= schedule.date ? schedule.end_date : schedule.date;
+
+const scheduleOccursOn = (schedule: Schedule, dateKey: string) => schedule.date <= dateKey && getScheduleEndDate(schedule) >= dateKey;
+
+const scheduleOverlaps = (schedule: Schedule, startDate: string, endDate: string) => schedule.date <= endDate && getScheduleEndDate(schedule) >= startDate;
+
+const formatScheduleDateRange = (schedule: Schedule) => {
+  const endDate = getScheduleEndDate(schedule);
+  return endDate === schedule.date ? schedule.date : `${schedule.date} ~ ${endDate}`;
+};
+
+const expandScheduleDateKeys = (schedule: Schedule, minimumDate?: string, maximumDate?: string) => {
+  const startKey = minimumDate && schedule.date < minimumDate ? minimumDate : schedule.date;
+  const scheduleEnd = getScheduleEndDate(schedule);
+  const endKey = maximumDate && scheduleEnd > maximumDate ? maximumDate : scheduleEnd;
+  if (startKey > endKey) return [];
+
+  const dates: string[] = [];
+  const cursor = new Date(`${startKey}T00:00:00`);
+  const end = new Date(`${endKey}T00:00:00`);
+  while (cursor <= end) {
+    dates.push(toLocalDateKey(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return dates;
+};
 
 const scheduleTypeLabels: Record<NonNullable<Schedule['schedule_type']>, string> = {
   meeting: '회의)',
@@ -187,7 +215,7 @@ const formatAbsenceDateRanges = (dateKeys: string[]) => {
   }).join(', ');
 };
 
-const groupAbsenceSchedules = (schedules: Schedule[]): AbsenceGroup[] => {
+const groupAbsenceSchedules = (schedules: Schedule[], minimumDate?: string, maximumDate?: string): AbsenceGroup[] => {
   const groupMap = new Map<string, Schedule[]>();
   for (const schedule of schedules) {
     for (const person of getAbsencePeople(schedule)) {
@@ -199,7 +227,7 @@ const groupAbsenceSchedules = (schedules: Schedule[]): AbsenceGroup[] => {
     key,
     person: key,
     typeLabel: [...new Set(groupedSchedules.map(getAbsenceTypeLabel))].join(' · '),
-    dateLabel: formatAbsenceDateRanges(groupedSchedules.map((schedule) => schedule.date)),
+    dateLabel: formatAbsenceDateRanges(groupedSchedules.flatMap((schedule) => expandScheduleDateKeys(schedule, minimumDate, maximumDate))),
     schedules: groupedSchedules,
   }));
 };
@@ -229,7 +257,7 @@ export default function SharedDashboard({
   const monthEndKey = toLocalDateKey(new Date(now.getFullYear(), now.getMonth() + 1, 0));
 
   const todaySchedules = schedules
-    .filter((schedule) => schedule.date === todayKey)
+    .filter((schedule) => scheduleOccursOn(schedule, todayKey))
     .sort((a, b) => getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
   const filteredTodaySchedules = todaySchedules.filter((schedule) => matchesDailyScheduleFilter(schedule, todayFilter));
   const todayWorkSchedules = filteredTodaySchedules.filter((schedule) => !isAbsenceSchedule(schedule));
@@ -240,23 +268,23 @@ export default function SharedDashboard({
   const pendingTodoCount = todayTodoSchedules.filter((schedule) => !schedule.is_completed).length;
   const completedTodoCount = todayTodoSchedules.filter((schedule) => schedule.is_completed).length;
   const tomorrowSchedules = schedules
-    .filter((schedule) => schedule.date === tomorrowKey)
+    .filter((schedule) => scheduleOccursOn(schedule, tomorrowKey))
     .sort((a, b) => getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
   const filteredTomorrowSchedules = tomorrowSchedules.filter((schedule) => matchesDailyScheduleFilter(schedule, tomorrowFilter));
   const todayFilterLabel = dailyScheduleFilters.find((filter) => filter.value === todayFilter)?.label ?? '전체';
   const tomorrowFilterLabel = dailyScheduleFilters.find((filter) => filter.value === tomorrowFilter)?.label ?? '전체';
   const weeklySchedules = schedules
-    .filter((schedule) => schedule.date >= todayKey && schedule.date <= weekEndKey)
+    .filter((schedule) => scheduleOverlaps(schedule, todayKey, weekEndKey))
     .sort((a, b) => a.date.localeCompare(b.date) || getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
   const filteredWeeklySchedules = weeklySchedules.filter((schedule) => getDailyScheduleCategory(schedule) === weeklyFilter);
   const allUpcomingNotices = schedules
-    .filter((schedule) => schedule.is_notice && schedule.date >= todayKey)
+    .filter((schedule) => schedule.is_notice && getScheduleEndDate(schedule) >= todayKey)
     .sort((a, b) => a.date.localeCompare(b.date));
   const monthlyAbsenceSchedules = schedules
-    .filter((schedule) => schedule.date >= todayKey && schedule.date <= monthEndKey)
+    .filter((schedule) => scheduleOverlaps(schedule, todayKey, monthEndKey))
     .filter(isAbsenceSchedule)
     .sort((a, b) => a.date.localeCompare(b.date));
-  const monthlyAbsenceGroups = groupAbsenceSchedules(monthlyAbsenceSchedules);
+  const monthlyAbsenceGroups = groupAbsenceSchedules(monthlyAbsenceSchedules, todayKey, monthEndKey);
   const recentFiles = [...files]
     .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
     .slice(0, 4);
@@ -284,7 +312,7 @@ export default function SharedDashboard({
         id: `schedule-${schedule.id}`,
         type: 'schedule' as const,
         title: formatScheduleTitle(schedule),
-        description: `${schedule.date} 일정이 등록되었습니다.`,
+        description: `${formatScheduleDateRange(schedule)} 일정이 등록되었습니다.`,
         createdAt: schedule.created_at as string,
         onClick: () => onOpenSchedule(schedule),
       })),
@@ -353,7 +381,7 @@ export default function SharedDashboard({
             {schedule.is_urgent && <Siren size={15} className="shrink-0 text-red-500" />}
             <p className={`truncate text-xs font-black sm:text-sm ${schedule.is_completed ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{formatScheduleTitle(schedule)}</p>
           </div>
-          <p className={`mt-1 text-[11px] font-bold ${schedule.is_completed ? 'text-slate-300 line-through' : 'text-slate-400'}`}>{formatScheduleTime(schedule)}</p>
+          <p className={`mt-1 text-[11px] font-bold ${schedule.is_completed ? 'text-slate-300 line-through' : 'text-slate-400'}`}>{schedule.end_date && schedule.end_date > schedule.date ? `${formatScheduleDateRange(schedule)} · ` : ''}{formatScheduleTime(schedule)}</p>
         </div>
         {schedule.is_todo && <span className="hidden rounded-lg bg-blue-50 px-2 py-1 text-[9px] font-black text-blue-600 2xl:inline-flex">TO DO</span>}
         {schedule.is_notice && <span className="hidden rounded-lg bg-red-50 px-2 py-1 text-[9px] font-black text-red-500 2xl:inline-flex">공지</span>}
@@ -479,7 +507,7 @@ export default function SharedDashboard({
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className={`truncate text-xs font-black ${schedule.is_completed ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{formatScheduleTitle(schedule)}</p>
-                          <p className="mt-1 text-[10px] font-bold text-slate-400">{schedule.date} · {formatScheduleTime(schedule)}</p>
+                          <p className="mt-1 text-[10px] font-bold text-slate-400">{formatScheduleDateRange(schedule)} · {formatScheduleTime(schedule)}</p>
                         </div>
                         {schedule.is_notice && <span className="shrink-0 rounded-md bg-red-50 px-1.5 py-1 text-[8px] font-black text-red-500">공지</span>}
                         </button>

@@ -241,6 +241,7 @@ export default function WhiteboardImportModal({ onClose, onImport }: WhiteboardI
       await onImport(selected.map((draft) => ({
         title: draft.title.trim(),
         date: draft.date,
+        end_date: null,
         start_time: draft.start_time || null,
         end_time: draft.end_time || null,
         schedule_type: draft.schedule_type,

@@ -176,7 +176,7 @@ export default function IntegratedPortal() {
   const localToday = new Date();
   const todayStr = `${localToday.getFullYear()}-${String(localToday.getMonth() + 1).padStart(2, '0')}-${String(localToday.getDate()).padStart(2, '0')}`;
   const activeNotices = schedules
-    .filter(s => s.is_notice && s.date >= todayStr)
+    .filter(s => s.is_notice && (s.end_date && s.end_date >= s.date ? s.end_date : s.date) >= todayStr)
     .sort((a, b) => a.date.localeCompare(b.date));
 
   // [신규 추가] 정밀 디데이 계산기 함수
@@ -189,11 +189,45 @@ export default function IntegratedPortal() {
     return `D-${diffDays}`;
   };
 
+  const getScheduleDDay = (schedule: any) => {
+    const endDate = schedule.end_date && schedule.end_date >= schedule.date ? schedule.end_date : schedule.date;
+    if (schedule.date <= todayStr && endDate >= todayStr) return schedule.date === todayStr ? 'D-Day' : '진행 중';
+    return getDDay(schedule.date);
+  };
+
   const formatScheduleTime = (schedule: any) => {
     if (schedule.start_time && schedule.end_time) return `${schedule.start_time} - ${schedule.end_time}`;
     if (schedule.start_time) return `${schedule.start_time}부터`;
     if (schedule.end_time) return `${schedule.end_time}까지`;
     return '시간 미정';
+  };
+
+  const getScheduleEndDate = (schedule: any) => schedule.end_date && schedule.end_date >= schedule.date ? schedule.end_date : schedule.date;
+
+  const formatScheduleDateRange = (schedule: any) => {
+    const endDate = getScheduleEndDate(schedule);
+    return endDate === schedule.date ? schedule.date : `${schedule.date} ~ ${endDate}`;
+  };
+
+  const formatCalendarScheduleTime = (schedule: any, dateStr: string) => {
+    const endDate = getScheduleEndDate(schedule);
+    if (endDate === schedule.date) return formatScheduleTime(schedule);
+    if (dateStr === schedule.date) return schedule.start_time ? `${schedule.start_time}부터` : '일정 시작';
+    if (dateStr === endDate) return schedule.end_time ? `${schedule.end_time}까지` : '일정 종료';
+    return '기간 일정';
+  };
+
+  const addDaysToDateKey = (dateKey: string, days: number) => {
+    const [year, month, day] = dateKey.split('-').map(Number);
+    const date = new Date(year, month - 1, day);
+    date.setDate(date.getDate() + days);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  };
+
+  const getDateDifference = (startDate: string, endDate: string) => {
+    const [startYear, startMonth, startDay] = startDate.split('-').map(Number);
+    const [endYear, endMonth, endDay] = endDate.split('-').map(Number);
+    return Math.round((Date.UTC(endYear, endMonth - 1, endDay) - Date.UTC(startYear, startMonth - 1, startDay)) / 86_400_000);
   };
 
   const formatScheduleTitle = (schedule: any) => {
@@ -454,7 +488,19 @@ export default function IntegratedPortal() {
   };
 
   const onScheduleDragStart = (e: React.DragEvent, id: number) => { setDraggedScheduleId(id); e.dataTransfer.effectAllowed = "move"; };
-  const onDayDrop = async (dateStr: string) => { if (draggedScheduleId === null) return; await supabase.from('schedules').update({ date: dateStr }).eq('id', draggedScheduleId); fetchSchedules(); setDraggedScheduleId(null); };
+  const onDayDrop = async (dateStr: string) => {
+    if (draggedScheduleId === null) return;
+    const draggedSchedule = schedules.find((schedule) => schedule.id === draggedScheduleId);
+    if (!draggedSchedule) return;
+    const endDate = getScheduleEndDate(draggedSchedule);
+    const duration = getDateDifference(draggedSchedule.date, endDate);
+    const update = duration > 0
+      ? { date: dateStr, end_date: addDaysToDateKey(dateStr, duration) }
+      : { date: dateStr, end_date: null };
+    await supabase.from('schedules').update(update).eq('id', draggedScheduleId);
+    fetchSchedules();
+    setDraggedScheduleId(null);
+  };
   const handleAuthSubmit = (e: React.FormEvent) => { e.preventDefault(); if (accessCode === DEPARTMENT_PASSWORD) { setIsAuthenticated(true); localStorage.setItem('dept_auth_confirm', 'true'); } else { setIsError(true); setAccessCode(''); } };
 
   if (!isMounted) return null;
@@ -496,7 +542,7 @@ export default function IntegratedPortal() {
               <div className="flex items-center justify-between w-full h-full gap-2 animate-in fade-in duration-300">
                 <span className="bg-red-500/20 text-red-400 px-2 py-0.5 rounded text-[10px] font-black shrink-0 animate-pulse">공지사항</span>
                 <span className="truncate flex-1 text-slate-200">{formatScheduleTitle(activeNotices[noticeIndex])}</span>
-                <span className="text-yellow-400 font-black shrink-0 ml-2">{getDDay(activeNotices[noticeIndex].date)}</span>
+                <span className="text-yellow-400 font-black shrink-0 ml-2">{getScheduleDDay(activeNotices[noticeIndex])}</span>
               </div>
 
               {/* 마우스 호버 시 아래로 미끄러지듯 대형 전광판 팝업 펼쳐짐 */}
@@ -511,7 +557,7 @@ export default function IntegratedPortal() {
                         <span className="truncate flex-1 mr-4">{formatScheduleTitle(notice)}</span>
                         <div className="flex items-center gap-3 shrink-0 text-[11px]">
                           <span className="text-slate-500 font-medium text-[10px]">{notice.date}</span>
-                          <span className="text-yellow-400 font-black w-12 text-right">{getDDay(notice.date)}</span>
+                          <span className="text-yellow-400 font-black min-w-12 text-right">{getScheduleDDay(notice)}</span>
                         </div>
                       </div>
                     ))}
@@ -705,7 +751,7 @@ export default function IntegratedPortal() {
                       {Array.from({length: new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1).getDay()}).map((_, i) => <div key={`empty-${i}`} className="bg-slate-50/40" />)}
                       {Array.from({length: new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0).getDate()}).map((_, i) => {
                         const day = i + 1; const dateStr = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                        const daySchedules = schedules.filter(s => s.date === dateStr);
+                        const daySchedules = schedules.filter(s => s.date <= dateStr && getScheduleEndDate(s) >= dateStr);
                         const isToday = dateStr === todayStr;
                         const holidayNames = koreanHolidays[dateStr] ?? [];
                         const isHoliday = holidayNames.length > 0;
@@ -720,17 +766,27 @@ export default function IntegratedPortal() {
                               </div>
                               <button onClick={() => onAddSchedule(dateStr)} className="opacity-0 group-hover:opacity-100 bg-slate-900 text-white p-1 rounded-md transition-all"><Plus size={10}/></button>
                             </div>
-                            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1 pr-1">
-                              {daySchedules.map(s => (
-                                <div key={s.id} draggable onDragStart={(e)=>onScheduleDragStart(e, s.id)} onClick={()=>setSelectedSchedule(s)} className={`border text-slate-800 text-[9px] md:text-[10px] p-1.5 rounded-lg font-bold shadow-sm flex flex-col gap-0.5 truncate cursor-pointer transition-all ${s.is_notice ? 'bg-red-50/70 border-red-200 hover:border-red-400' : 'bg-white border-blue-100 hover:border-blue-400'}`}>
+                            <div className="-mx-1.5 flex-1 space-y-1 overflow-y-auto custom-scrollbar md:-mx-3">
+                              {daySchedules.map(s => {
+                                const endDate = getScheduleEndDate(s);
+                                const isRange = endDate > s.date;
+                                const weekday = new Date(`${dateStr}T00:00:00`).getDay();
+                                const segmentStartsHere = dateStr === s.date || weekday === 0;
+                                const segmentEndsHere = dateStr === endDate || weekday === 6;
+                                const rangeEdges = isRange
+                                  ? `${segmentStartsHere ? 'ml-1.5 rounded-l-lg border-l md:ml-3' : 'rounded-l-none border-l-0'} ${segmentEndsHere ? 'mr-1.5 rounded-r-lg border-r md:mr-3' : 'rounded-r-none border-r-0'}`
+                                  : 'mx-1.5 rounded-lg md:mx-3';
+                                return (
+                                <div key={s.id} draggable onDragStart={(e)=>onScheduleDragStart(e, s.id)} onClick={()=>setSelectedSchedule(s)} className={`relative z-[1] flex cursor-pointer flex-col gap-0.5 truncate border p-1.5 text-[9px] font-bold text-slate-800 shadow-sm transition-all md:text-[10px] ${rangeEdges} ${s.is_notice ? 'border-red-200 bg-red-50/90 hover:border-red-400' : isRange ? 'border-indigo-200 bg-indigo-50/95 hover:bg-indigo-100' : 'border-blue-100 bg-white hover:border-blue-400'}`}>
                                   <div className="flex items-center gap-1 text-blue-600 hidden md:flex">
                                     <Clock size={9}/>
-                                    <span className={`text-[8px] font-black ${s.is_notice ? 'text-red-500' : 'text-blue-600'}`}>{formatScheduleTime(s)}</span>
+                                    <span className={`text-[8px] font-black ${s.is_notice ? 'text-red-500' : isRange ? 'text-indigo-600' : 'text-blue-600'}`}>{formatCalendarScheduleTime(s, dateStr)}</span>
                                     {s.is_notice && <span className="bg-red-500 text-white px-1 rounded-[4px] text-[7px] scale-90">공지</span>}
                                   </div>
                                   <span className={`flex items-center gap-1 ${s.is_notice ? 'text-red-900 font-extrabold' : ''} ${s.is_completed ? 'text-slate-400 line-through opacity-60' : ''}`}>{s.is_urgent && <Siren size={10} className="shrink-0 text-red-500" />}{formatScheduleTitle(s)}</span>
                                 </div>
-                              ))}
+                                );
+                              })}
                             </div>
                           </div>
                         );
@@ -798,7 +854,7 @@ export default function IntegratedPortal() {
             </div>
             {selectedSchedule.is_urgent && <span className="mb-3 rounded-lg bg-red-500 px-3 py-1 text-[10px] font-black text-white">긴급 일정</span>}
             <h3 className={`mb-2 text-center text-2xl font-black leading-tight ${selectedSchedule.is_completed ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{formatScheduleTitle(selectedSchedule)}</h3>
-            <p className="mb-8 text-center font-bold text-slate-400">{selectedSchedule.date} | {formatScheduleTime(selectedSchedule)}</p>
+            <p className="mb-8 text-center font-bold text-slate-400">{formatScheduleDateRange(selectedSchedule)} | {formatScheduleTime(selectedSchedule)}</p>
             <div className="grid w-full grid-cols-2 gap-3">
               <button onClick={() => onEditSchedule(selectedSchedule)} className="flex items-center justify-center gap-2 rounded-2xl bg-blue-50 py-4 font-black text-blue-600 transition-all hover:bg-blue-600 hover:text-white"><Pencil size={17}/> 일정 수정</button>
               <button onClick={() => onDeleteSchedule(selectedSchedule.id)} className="flex items-center justify-center gap-2 rounded-2xl bg-red-50 py-4 font-black text-red-500 transition-all hover:bg-red-500 hover:text-white"><Trash2 size={18}/> 일정 삭제</button>

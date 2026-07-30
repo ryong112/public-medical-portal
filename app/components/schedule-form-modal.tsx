@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { BellRing, CalendarPlus, CheckSquare2, Clock3, Siren, X } from 'lucide-react';
+import { BellRing, CalendarPlus, CalendarRange, CheckSquare2, Clock3, Siren, X } from 'lucide-react';
 
 export type ScheduleType = 'meeting' | 'business_trip' | 'internal' | 'leave' | 'unclassified';
 export type AbsenceType = 'annual' | 'early_am' | 'early_pm';
@@ -9,6 +9,7 @@ export type AbsenceType = 'annual' | 'early_am' | 'early_pm';
 export interface NewScheduleInput {
   title: string;
   date: string;
+  end_date: string | null;
   start_time: string | null;
   end_time: string | null;
   is_notice: boolean;
@@ -28,6 +29,7 @@ interface ScheduleFormModalProps {
 
 type TimeMode = 'both' | 'start' | 'end' | 'none';
 type RecurrenceMode = 'none' | 'weekly' | 'biweekly' | 'monthly_first';
+type DateMode = 'single' | 'range';
 
 const weekdayNames = ['일', '월', '화', '수', '목', '금', '토'];
 
@@ -37,6 +39,13 @@ const parseLocalDate = (date: string) => {
 };
 
 const formatLocalDate = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+const getRangeDayCount = (startDate: string, endDate: string) => {
+  const [startYear, startMonth, startDay] = startDate.split('-').map(Number);
+  const [endYear, endMonth, endDay] = endDate.split('-').map(Number);
+  const difference = Date.UTC(endYear, endMonth - 1, endDay) - Date.UTC(startYear, startMonth - 1, startDay);
+  return Math.floor(difference / 86_400_000) + 1;
+};
 
 const createRecurringDates = (startDate: string, mode: RecurrenceMode) => {
   if (mode === 'none') return [startDate];
@@ -85,7 +94,10 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
   const initialTimeMode: TimeMode = initialSchedule
     ? initialSchedule.start_time && initialSchedule.end_time ? 'both' : initialSchedule.start_time ? 'start' : initialSchedule.end_time ? 'end' : 'none'
     : 'both';
+  const initialDateMode: DateMode = initialSchedule?.end_date && initialSchedule.end_date > initialSchedule.date ? 'range' : 'single';
+  const [dateMode, setDateMode] = useState<DateMode>(initialDateMode);
   const [dateValue, setDateValue] = useState(initialSchedule?.date ?? date);
+  const [endDateValue, setEndDateValue] = useState(initialSchedule?.end_date ?? initialSchedule?.date ?? date);
   const [title, setTitle] = useState(initialSchedule?.title ?? '');
   const [timeMode, setTimeMode] = useState<TimeMode>(initialTimeMode);
   const [startTime, setStartTime] = useState(initialSchedule?.start_time ?? defaults.start);
@@ -110,7 +122,11 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
       setError('일정 제목을 입력해 주십시오.');
       return;
     }
-    if (timeMode === 'both' && endTime <= startTime) {
+    if (dateMode === 'range' && endDateValue <= dateValue) {
+      setError('기간 일정의 종료일은 시작일보다 늦어야 합니다.');
+      return;
+    }
+    if (dateMode === 'single' && timeMode === 'both' && endTime <= startTime) {
       setError('종료 시간은 시작 시간보다 늦어야 합니다.');
       return;
     }
@@ -121,6 +137,7 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
       const schedule: NewScheduleInput = {
         title: title.trim(),
         date: dateValue,
+        end_date: dateMode === 'range' ? endDateValue : null,
         start_time: timeMode === 'both' || timeMode === 'start' ? startTime : null,
         end_time: timeMode === 'both' || timeMode === 'end' ? endTime : null,
         is_notice: isNotice,
@@ -130,8 +147,8 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
         schedule_type: scheduleType,
         absence_type: absenceType,
       };
-      const recurringDates = initialSchedule ? [dateValue] : createRecurringDates(dateValue, recurrenceMode);
-      await onSubmit(recurringDates.map((recurringDate) => ({ ...schedule, date: recurringDate })));
+      const recurringDates = initialSchedule || dateMode === 'range' ? [dateValue] : createRecurringDates(dateValue, recurrenceMode);
+      await onSubmit(recurringDates.map((recurringDate) => ({ ...schedule, date: recurringDate, end_date: dateMode === 'range' ? endDateValue : null })));
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : '일정을 등록하지 못했습니다.');
       setIsSaving(false);
@@ -156,10 +173,36 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
           </button>
         </div>
 
-        <label className="mb-5 block">
-          <span className="mb-2 block text-xs font-black text-slate-600">날짜</span>
-          <input type="date" value={dateValue} onChange={(event) => setDateValue(event.target.value)} className="w-full rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 py-3.5 text-sm font-bold text-slate-900 outline-none transition-all focus:border-blue-500 focus:bg-white" />
-        </label>
+        <div className="mb-5">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <span className="text-xs font-black text-slate-600">날짜</span>
+            {dateMode === 'range' && endDateValue > dateValue && (
+              <span className="rounded-lg bg-blue-50 px-2.5 py-1 text-[10px] font-black text-blue-600">
+                {getRangeDayCount(dateValue, endDateValue) - 1}박 {getRangeDayCount(dateValue, endDateValue)}일
+              </span>
+            )}
+          </div>
+          <div className="mb-2 grid grid-cols-2 gap-2 rounded-2xl bg-slate-100 p-1.5">
+            <button type="button" onClick={() => { setDateMode('single'); setEndDateValue(dateValue); setRecurrenceMode('none'); setError(''); }} className={`rounded-xl py-2.5 text-xs font-black transition-all ${dateMode === 'single' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>하루 일정</button>
+            <button type="button" onClick={() => { setDateMode('range'); if (endDateValue <= dateValue) { const nextDate = parseLocalDate(dateValue); nextDate.setDate(nextDate.getDate() + 1); setEndDateValue(formatLocalDate(nextDate)); } setRecurrenceMode('none'); setError(''); }} className={`flex items-center justify-center gap-1.5 rounded-xl py-2.5 text-xs font-black transition-all ${dateMode === 'range' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}><CalendarRange size={14} /> 기간 일정</button>
+          </div>
+          {dateMode === 'single' ? (
+            <input type="date" value={dateValue} onChange={(event) => { setDateValue(event.target.value); setEndDateValue(event.target.value); setError(''); }} className="w-full rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 py-3.5 text-sm font-bold text-slate-900 outline-none transition-all focus:border-blue-500 focus:bg-white" />
+          ) : (
+            <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2 rounded-2xl border-2 border-blue-100 bg-blue-50/40 p-3">
+              <label className="min-w-0">
+                <span className="mb-1.5 block text-[10px] font-black text-blue-600">시작일</span>
+                <input type="date" value={dateValue} max={endDateValue} onChange={(event) => { const nextStart = event.target.value; setDateValue(nextStart); if (endDateValue <= nextStart) { const nextDate = parseLocalDate(nextStart); nextDate.setDate(nextDate.getDate() + 1); setEndDateValue(formatLocalDate(nextDate)); } setError(''); }} className="w-full min-w-0 rounded-xl border border-blue-100 bg-white px-2 py-3 text-xs font-black text-slate-800 outline-none focus:border-blue-500 sm:px-3 sm:text-sm" />
+              </label>
+              <span className="pb-3 text-sm font-black text-blue-300">→</span>
+              <label className="min-w-0">
+                <span className="mb-1.5 block text-[10px] font-black text-blue-600">종료일</span>
+                <input type="date" value={endDateValue} min={dateValue} onChange={(event) => { setEndDateValue(event.target.value); setError(''); }} className="w-full min-w-0 rounded-xl border border-blue-100 bg-white px-2 py-3 text-xs font-black text-slate-800 outline-none focus:border-blue-500 sm:px-3 sm:text-sm" />
+              </label>
+            </div>
+          )}
+          <p className="mt-2 text-[10px] font-bold text-slate-400">{dateMode === 'range' ? '시작일과 종료일을 선택하면 하나의 일정으로 이어서 등록합니다.' : '하루만 선택하면 해당 날짜에만 등록합니다.'}</p>
+        </div>
 
         <label className="block">
           <span className="mb-2 block text-xs font-black text-slate-600">일정 제목</span>
@@ -225,7 +268,7 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
           </div>}
         </div>
 
-        {!initialSchedule && (
+        {!initialSchedule && dateMode === 'single' && (
           <div className="mt-5 rounded-2xl border border-blue-100 bg-blue-50/40 p-4">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
@@ -276,7 +319,7 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
 
         <div className="mt-7 flex gap-3">
           <button type="button" onClick={onClose} className="flex-1 rounded-2xl bg-slate-100 py-3.5 text-sm font-black text-slate-600 transition-colors hover:bg-slate-200">취소</button>
-          <button disabled={isSaving} className="flex-1 rounded-2xl bg-blue-600 py-3.5 text-sm font-black text-white shadow-lg transition-all hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60">{isSaving ? '저장 중...' : initialSchedule ? '변경사항 저장' : recurrenceMode === 'none' ? '일정 추가' : `${createRecurringDates(dateValue, recurrenceMode).length}개 일정 추가`}</button>
+          <button disabled={isSaving} className="flex-1 rounded-2xl bg-blue-600 py-3.5 text-sm font-black text-white shadow-lg transition-all hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60">{isSaving ? '저장 중...' : initialSchedule ? '변경사항 저장' : dateMode === 'range' ? `${getRangeDayCount(dateValue, endDateValue) - 1}박 ${getRangeDayCount(dateValue, endDateValue)}일 일정 추가` : recurrenceMode === 'none' ? '일정 추가' : `${createRecurringDates(dateValue, recurrenceMode).length}개 일정 추가`}</button>
         </div>
       </form>
     </div>
