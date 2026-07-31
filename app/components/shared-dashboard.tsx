@@ -12,7 +12,7 @@ import {
 
 type DashboardView = 'files' | 'calendar' | 'external_calendar' | 'dashboard';
 type DailyScheduleFilter = 'all' | 'general' | 'internal' | 'business_trip' | 'meeting' | 'leave';
-type WeeklyScheduleFilter = Exclude<DailyScheduleFilter, 'all' | 'leave'>;
+type WeeklyScheduleFilter = Exclude<DailyScheduleFilter, 'leave'>;
 
 interface PortalFile {
   id: number;
@@ -163,6 +163,7 @@ const dailyScheduleFilters: Array<{ value: DailyScheduleFilter; label: string }>
   { value: 'leave', label: '휴가' },
 ];
 const weeklyScheduleFilters: Array<{ value: WeeklyScheduleFilter; label: string }> = [
+  { value: 'all', label: '전체' },
   { value: 'general', label: '일반' },
   { value: 'internal', label: '내부일정' },
   { value: 'business_trip', label: '출장' },
@@ -244,7 +245,7 @@ export default function SharedDashboard({
 }: SharedDashboardProps) {
   const [todayFilter, setTodayFilter] = useState<DailyScheduleFilter>('all');
   const [tomorrowFilter, setTomorrowFilter] = useState<DailyScheduleFilter>('all');
-  const [weeklyFilter, setWeeklyFilter] = useState<WeeklyScheduleFilter>('general');
+  const [weeklyFilter, setWeeklyFilter] = useState<WeeklyScheduleFilter>('all');
   const [selectedAbsence, setSelectedAbsence] = useState<AbsenceGroup | null>(null);
   const now = new Date();
   const todayKey = toLocalDateKey(now);
@@ -276,7 +277,9 @@ export default function SharedDashboard({
   const weeklySchedules = schedules
     .filter((schedule) => scheduleOverlaps(schedule, todayKey, weekEndKey))
     .sort((a, b) => a.date.localeCompare(b.date) || getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
-  const filteredWeeklySchedules = weeklySchedules.filter((schedule) => getDailyScheduleCategory(schedule) === weeklyFilter);
+  const filteredWeeklySchedules = weeklySchedules.filter((schedule) => weeklyFilter === 'all'
+    ? !isAbsenceSchedule(schedule)
+    : getDailyScheduleCategory(schedule) === weeklyFilter);
   const allUpcomingNotices = schedules
     .filter((schedule) => schedule.is_notice && getScheduleEndDate(schedule) >= todayKey)
     .sort((a, b) => a.date.localeCompare(b.date));
