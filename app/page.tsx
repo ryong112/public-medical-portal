@@ -1,8 +1,10 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import SharedDashboard from '@/app/components/shared-dashboard';
+import DeviceAccessGate from '@/app/components/device-access-gate';
+import DeviceManagerModal from '@/app/components/device-manager-modal';
 import UndoToast, { type UndoNotice } from '@/app/components/undo-toast';
 import ScheduleFormModal, { type NewScheduleInput } from '@/app/components/schedule-form-modal';
 import WhiteboardImportModal, { type WhiteboardCorrectionInput } from '@/app/components/whiteboard-import-modal';
@@ -11,7 +13,7 @@ import {
   FileText, FilePlus,
   FileSpreadsheet, FileBox, File, Download, Trash2,
   GripVertical, Calendar as CalendarIcon, LayoutDashboard, Plus,
-  ChevronLeft, ChevronRight, X, Clock, CalendarDays, Lock, Archive, Menu, Siren, Pencil, ScanLine
+  ChevronLeft, ChevronRight, X, Clock, CalendarDays, Archive, Menu, Siren, Pencil, ScanLine, ShieldCheck
 } from 'lucide-react';
 
 interface KoreanHoliday {
@@ -20,10 +22,9 @@ interface KoreanHoliday {
 }
 
 export default function IntegratedPortal() {
-  const DEPARTMENT_PASSWORD = process.env.NEXT_PUBLIC_ACCESS_CODE || "dphs"; 
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [accessCode, setAccessCode] = useState('');
-  const [isError, setIsError] = useState(false);
+  const [isDeviceAdmin, setIsDeviceAdmin] = useState(false);
+  const [isDeviceManagerOpen, setIsDeviceManagerOpen] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
 
   const [viewMode, setViewMode] = useState<'files' | 'calendar' | 'external_calendar' | 'dashboard'>('dashboard');
@@ -75,8 +76,29 @@ export default function IntegratedPortal() {
 
   useEffect(() => {
     setIsMounted(true);
-    if (localStorage.getItem('dept_auth_confirm') === 'true') setIsAuthenticated(true);
   }, []);
+
+  const handleDeviceApproved = useCallback((access: { userId: string; isAdmin: boolean }) => {
+    setIsAuthenticated(true);
+    setIsDeviceAdmin(access.isAdmin);
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const verifyAccess = async () => {
+      const { data, error } = await supabase.rpc('get_device_access_status');
+      if (error || data?.status !== 'approved') {
+        await supabase.auth.signOut();
+        setIsAuthenticated(false);
+        setIsDeviceAdmin(false);
+        setIsDeviceManagerOpen(false);
+        return;
+      }
+      setIsDeviceAdmin(Boolean(data.is_admin));
+    };
+    const interval = window.setInterval(() => void verifyAccess(), 30000);
+    return () => window.clearInterval(interval);
+  }, [isAuthenticated]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -501,23 +523,19 @@ export default function IntegratedPortal() {
     fetchSchedules();
     setDraggedScheduleId(null);
   };
-  const handleAuthSubmit = (e: React.FormEvent) => { e.preventDefault(); if (accessCode === DEPARTMENT_PASSWORD) { setIsAuthenticated(true); localStorage.setItem('dept_auth_confirm', 'true'); } else { setIsError(true); setAccessCode(''); } };
+  const handleDeviceSignOut = async () => {
+    const shouldDisconnect = window.confirm('이 브라우저의 기기 연결을 해제하시겠습니까? 다시 접속하려면 새 승인이 필요합니다.');
+    if (!shouldDisconnect) return;
+    await supabase.auth.signOut();
+    setIsAuthenticated(false);
+    setIsDeviceAdmin(false);
+    setIsDeviceManagerOpen(false);
+  };
 
   if (!isMounted) return null;
 
   if (!isAuthenticated) {
-    return (
-      <div className="h-screen bg-[#1A1C1E] flex items-center justify-center p-6 font-sans">
-        <div className="bg-white w-full max-w-md rounded-[40px] shadow-2xl p-12 flex flex-col items-center">
-          <div className="bg-blue-50 p-6 rounded-[32px] mb-8 text-blue-600 shadow-inner"><Lock size={48} strokeWidth={2.5} /></div>
-          <h1 className="text-2xl font-black text-slate-800 mb-2 tracking-tight text-center leading-tight">공공의료지원과 전용</h1>
-          <form onSubmit={handleAuthSubmit} className="w-full space-y-4">
-            <input type="password" className={`w-full bg-white border-2 ${isError ? 'border-red-400' : 'border-slate-100'} p-5 rounded-[24px] font-black text-center outline-none focus:border-blue-500 transition-all text-xl text-slate-900 shadow-sm`} placeholder="코드 입력" value={accessCode} onChange={(e) => { setAccessCode(e.target.value); setIsError(false); }} autoFocus />
-            <button className="w-full bg-slate-900 hover:bg-black text-white py-5 rounded-[24px] font-black shadow-xl transition-all hover:-translate-y-1 active:scale-95 text-lg">인증 및 입장</button>
-          </form>
-        </div>
-      </div>
-    );
+    return <DeviceAccessGate onApproved={handleDeviceApproved} />;
   }
 
   return (
@@ -613,7 +631,8 @@ export default function IntegratedPortal() {
             {hasUnread && !isChatOpen && <span className="absolute -top-1 -right-1 w-3 h-3 md:w-4 md:h-4 bg-red-500 rounded-full border-2 border-[#1A1C1E] animate-bounce"></span>}
           </button>
 
-          <button onClick={() => { localStorage.removeItem('dept_auth_confirm'); window.location.reload(); }} className="text-slate-500 hover:text-white p-1 md:p-2 transition-colors ml-0.5 md:ml-0 shrink-0"><X size={18} className="md:w-[20px] md:h-[20px]"/></button>
+          {isDeviceAdmin && <button onClick={() => setIsDeviceManagerOpen(true)} aria-label="승인 기기 관리" className="shrink-0 rounded-xl p-2 text-blue-300 transition-colors hover:bg-white/10 hover:text-white"><ShieldCheck size={18} /></button>}
+          <button onClick={() => void handleDeviceSignOut()} aria-label="이 기기 연결 해제" className="text-slate-500 hover:text-white p-1 md:p-2 transition-colors ml-0.5 md:ml-0 shrink-0"><X size={18} className="md:w-[20px] md:h-[20px]"/></button>
         </div>
       </header>
 
@@ -835,6 +854,8 @@ export default function IntegratedPortal() {
           onImport={onImportWhiteboardSchedules}
         />
       )}
+
+      {isDeviceManagerOpen && <DeviceManagerModal onClose={() => setIsDeviceManagerOpen(false)} />}
 
       {scheduleFormDate && (
         <ScheduleFormModal
