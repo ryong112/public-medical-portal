@@ -256,8 +256,8 @@ export default function IntegratedPortal() {
   };
 
   const formatScheduleTitle = (schedule: any) => {
-    if (schedule.schedule_type === 'leave' && schedule.absence_type === 'early_am') return `오전 조퇴) ${schedule.title}`;
-    if (schedule.schedule_type === 'leave' && schedule.absence_type === 'early_pm') return `오후 조퇴) ${schedule.title}`;
+    if (schedule.schedule_type === 'leave' && ['early', 'early_am', 'early_pm'].includes(schedule.absence_type)) return `조퇴) ${schedule.title}`;
+    if (schedule.schedule_type === 'leave' && schedule.absence_type === 'outing') return `외출) ${schedule.title}`;
     const labels: Record<string, string> = { meeting: '회의)', business_trip: '출장)', internal: '내부일정)', leave: '휴가)' };
     const prefix = labels[schedule.schedule_type];
     return prefix ? `${prefix} ${schedule.title}` : schedule.title;

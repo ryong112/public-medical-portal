@@ -343,8 +343,8 @@ export default function WhiteboardImportModal({ onClose, onImport }: WhiteboardI
                         {draft.schedule_type === 'leave' && (
                           <select value={draft.absence_type} onChange={(event) => updateDraft(draft.id, 'absence_type', event.target.value as AbsenceType)} className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-black text-amber-800 outline-none focus:border-amber-500">
                             <option value="annual">연차</option>
-                            <option value="early_am">오전 조퇴</option>
-                            <option value="early_pm">오후 조퇴</option>
+                            <option value="early">조퇴</option>
+                            <option value="outing">외출</option>
                           </select>
                         )}
                         <input type="date" value={draft.date} onChange={(event) => updateDraft(draft.id, 'date', event.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-bold text-slate-700 outline-none focus:border-blue-500" />

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { BellRing, CalendarPlus, CalendarRange, CheckSquare2, Clock3, Siren, X } from 'lucide-react';
 
 export type ScheduleType = 'meeting' | 'business_trip' | 'internal' | 'leave' | 'unclassified';
-export type AbsenceType = 'annual' | 'early_am' | 'early_pm';
+export type AbsenceType = 'annual' | 'early' | 'outing';
 
 export interface NewScheduleInput {
   title: string;
@@ -89,6 +89,12 @@ const getDefaultTimes = (date: string) => {
   return { start, end: addMinutes(start, 60) };
 };
 
+const normalizeAbsenceType = (value?: string): AbsenceType => {
+  if (value === 'early' || value === 'early_am' || value === 'early_pm') return 'early';
+  if (value === 'outing') return 'outing';
+  return 'annual';
+};
+
 export default function ScheduleFormModal({ date, initialSchedule, onClose, onSubmit }: ScheduleFormModalProps) {
   const defaults = getDefaultTimes(date);
   const initialTimeMode: TimeMode = initialSchedule
@@ -106,7 +112,7 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
   const [isTodo, setIsTodo] = useState(initialSchedule?.is_todo ?? false);
   const [isUrgent, setIsUrgent] = useState(initialSchedule?.is_urgent ?? false);
   const [scheduleType, setScheduleType] = useState<ScheduleType>(initialSchedule?.schedule_type ?? 'unclassified');
-  const [absenceType, setAbsenceType] = useState<AbsenceType>(initialSchedule?.absence_type ?? 'annual');
+  const [absenceType, setAbsenceType] = useState<AbsenceType>(normalizeAbsenceType(initialSchedule?.absence_type));
   const [recurrenceMode, setRecurrenceMode] = useState<RecurrenceMode>('none');
   const [error, setError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -216,7 +222,7 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
               { value: 'meeting' as const, label: '회의)' },
               { value: 'business_trip' as const, label: '출장)' },
               { value: 'internal' as const, label: '내부일정)' },
-              { value: 'leave' as const, label: '휴가·조퇴)' },
+              { value: 'leave' as const, label: '연차·조퇴·외출)' },
               { value: 'unclassified' as const, label: '미분류)' },
             ].map((type) => (
               <button key={type.value} type="button" onClick={() => setScheduleType(type.value)} className={`rounded-xl px-2 py-2.5 text-[10px] font-black transition-colors ${scheduleType === type.value ? 'bg-blue-600 text-white shadow-md' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>{type.label}</button>
@@ -228,8 +234,8 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
               <div className="grid grid-cols-3 gap-2">
                 {[
                   { value: 'annual' as const, label: '연차' },
-                  { value: 'early_am' as const, label: '오전 조퇴' },
-                  { value: 'early_pm' as const, label: '오후 조퇴' },
+                  { value: 'early' as const, label: '조퇴' },
+                  { value: 'outing' as const, label: '외출' },
                 ].map((type) => (
                   <button key={type.value} type="button" onClick={() => setAbsenceType(type.value)} className={`rounded-xl px-2 py-2.5 text-[10px] font-black transition-colors ${absenceType === type.value ? 'bg-amber-500 text-white shadow-md' : 'bg-white text-amber-700 hover:bg-amber-100'}`}>{type.label}</button>
                 ))}

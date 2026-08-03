@@ -34,7 +34,7 @@ interface Schedule {
   is_todo?: boolean;
   is_urgent?: boolean;
   schedule_type?: 'meeting' | 'business_trip' | 'internal' | 'leave' | 'unclassified';
-  absence_type?: 'annual' | 'early_am' | 'early_pm';
+  absence_type?: 'annual' | 'early' | 'outing' | 'early_am' | 'early_pm';
   created_at?: string;
 }
 
@@ -140,19 +140,19 @@ const scheduleTypeLabels: Record<NonNullable<Schedule['schedule_type']>, string>
 };
 
 const formatScheduleTitle = (schedule: Schedule) => {
-  if (schedule.schedule_type === 'leave' && schedule.absence_type === 'early_am') return `오전 조퇴) ${schedule.title}`;
-  if (schedule.schedule_type === 'leave' && schedule.absence_type === 'early_pm') return `오후 조퇴) ${schedule.title}`;
+  if (schedule.schedule_type === 'leave' && ['early', 'early_am', 'early_pm'].includes(schedule.absence_type ?? '')) return `조퇴) ${schedule.title}`;
+  if (schedule.schedule_type === 'leave' && schedule.absence_type === 'outing') return `외출) ${schedule.title}`;
   const prefix = scheduleTypeLabels[schedule.schedule_type ?? 'unclassified'];
   return prefix ? `${prefix} ${schedule.title}` : schedule.title;
 };
 
 const getAbsenceTypeLabel = (schedule: Schedule) => {
-  if (schedule.absence_type === 'early_am' || (schedule.title.includes('오전') && schedule.title.includes('조퇴'))) return '오전 조퇴';
-  if (schedule.absence_type === 'early_pm' || (schedule.title.includes('오후') && schedule.title.includes('조퇴'))) return '오후 조퇴';
+  if (schedule.absence_type === 'early' || schedule.absence_type === 'early_am' || schedule.absence_type === 'early_pm' || schedule.title.includes('조퇴')) return '조퇴';
+  if (schedule.absence_type === 'outing' || schedule.title.includes('외출')) return '외출';
   return '연차';
 };
 
-const isAbsenceSchedule = (schedule: Schedule) => schedule.schedule_type === 'leave' || /휴가|연차|조퇴/.test(schedule.title);
+const isAbsenceSchedule = (schedule: Schedule) => schedule.schedule_type === 'leave' || /휴가|연차|조퇴|외출/.test(schedule.title);
 
 const dailyScheduleFilters: Array<{ value: DailyScheduleFilter; label: string }> = [
   { value: 'all', label: '전체' },
@@ -182,7 +182,7 @@ const matchesDailyScheduleFilter = (schedule: Schedule, filter: DailyScheduleFil
 
 const getAbsencePeople = (schedule: Schedule) => {
   const names = schedule.title
-    .replace(/^(?:휴가|연차|오전\s*조퇴|오후\s*조퇴|조퇴)\s*[-:)]?\s*/u, '')
+    .replace(/^(?:휴가|연차|오전\s*조퇴|오후\s*조퇴|조퇴|외출)\s*[-:)]?\s*/u, '')
     .split(/[,，/·]+/u)
     .map((name) => name.trim())
     .filter(Boolean);
