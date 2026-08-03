@@ -17,21 +17,10 @@ interface DeviceAccessGateProps {
   onApproved: (access: { userId: string; isAdmin: boolean }) => void;
 }
 
-const suggestDeviceName = () => {
-  if (typeof navigator === 'undefined') return '공용 기기';
-  const userAgent = navigator.userAgent;
-  if (/iPhone/i.test(userAgent)) return 'iPhone';
-  if (/iPad/i.test(userAgent)) return 'iPad';
-  if (/Android/i.test(userAgent)) return 'Android 모바일';
-  if (/Windows/i.test(userAgent)) return '사내 Windows PC';
-  if (/Macintosh/i.test(userAgent)) return 'Mac';
-  return '공용 기기';
-};
-
 export default function DeviceAccessGate({ onApproved }: DeviceAccessGateProps) {
   const [status, setStatus] = useState<DeviceStatus>('checking');
   const [accessInfo, setAccessInfo] = useState<DeviceAccessInfo | null>(null);
-  const [deviceName, setDeviceName] = useState('공용 기기');
+  const [deviceName, setDeviceName] = useState('');
   const [isRequesting, setIsRequesting] = useState(false);
   const [error, setError] = useState('');
 
@@ -64,10 +53,7 @@ export default function DeviceAccessGate({ onApproved }: DeviceAccessGateProps) 
   }, [onApproved]);
 
   useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
-      setDeviceName(suggestDeviceName());
-      void checkAccess();
-    });
+    const frame = window.requestAnimationFrame(() => void checkAccess());
     return () => window.cancelAnimationFrame(frame);
   }, [checkAccess]);
 
@@ -79,7 +65,7 @@ export default function DeviceAccessGate({ onApproved }: DeviceAccessGateProps) 
 
   const requestAccess = async () => {
     if (deviceName.trim().length < 2) {
-      setError('기기를 알아볼 수 있는 이름을 입력해 주십시오.');
+      setError('승인할 수 있도록 성함과 사용 기기를 입력해 주십시오.');
       return;
     }
     setIsRequesting(true);
@@ -117,10 +103,10 @@ export default function DeviceAccessGate({ onApproved }: DeviceAccessGateProps) 
 
         {status === 'unregistered' && (
           <div>
-            <p className="mb-5 text-sm font-bold leading-6 text-slate-500">회원가입 없이 이 브라우저만 승인받습니다. 승인 후에는 인터넷 주소가 바뀌어도 계속 이용할 수 있습니다.</p>
+            <p className="mb-5 text-sm font-bold leading-6 text-slate-500">회원가입 없이 이 브라우저만 승인받습니다. 관리자가 확인할 수 있도록 성함과 사용 기기를 함께 입력해 주십시오. 한 번 승인되면 관리자가 차단하기 전까지 계속 이용할 수 있습니다.</p>
             <label className="block">
-              <span className="mb-2 block text-xs font-black text-slate-600">기기 이름</span>
-              <input value={deviceName} onChange={(event) => setDeviceName(event.target.value)} maxLength={80} placeholder="예: 총무팀 PC, 홍길동 iPhone" className="w-full rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 py-3.5 text-sm font-bold outline-none transition-colors focus:border-blue-500 focus:bg-white" />
+              <span className="mb-2 block text-xs font-black text-slate-600">성함 · 사용 기기</span>
+              <input value={deviceName} onChange={(event) => setDeviceName(event.target.value)} maxLength={80} placeholder="예: 홍길동 사내 PC / 홍길동 iPhone" autoComplete="name" className="w-full rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 py-3.5 text-sm font-bold outline-none transition-colors focus:border-blue-500 focus:bg-white" />
             </label>
             <button onClick={requestAccess} disabled={isRequesting} className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 py-4 text-sm font-black text-white shadow-lg transition-colors hover:bg-blue-700 disabled:opacity-60">
               {isRequesting ? <LoaderCircle className="animate-spin" size={17} /> : <ShieldAlert size={17} />} 승인 요청
@@ -143,6 +129,7 @@ export default function DeviceAccessGate({ onApproved }: DeviceAccessGateProps) 
             <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-red-50 text-red-500"><ShieldAlert size={30} /></div>
             <h2 className="mt-5 text-lg font-black">차단된 기기입니다.</h2>
             <p className="mt-2 text-sm font-bold text-slate-400">관리자에게 다시 승인을 요청해 주십시오.</p>
+            <button onClick={() => void checkAccess()} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-3 text-xs font-black text-white"><RefreshCw size={14} /> 승인 상태 다시 확인</button>
           </div>
         )}
 

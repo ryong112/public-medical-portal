@@ -87,8 +87,11 @@ export default function IntegratedPortal() {
     if (!isAuthenticated) return;
     const verifyAccess = async () => {
       const { data, error } = await supabase.rpc('get_device_access_status');
-      if (error || data?.status !== 'approved') {
-        await supabase.auth.signOut();
+      if (error) {
+        console.error('기기 승인 상태를 확인하지 못했습니다.', error);
+        return;
+      }
+      if (data?.status !== 'approved') {
         setIsAuthenticated(false);
         setIsDeviceAdmin(false);
         setIsDeviceManagerOpen(false);
@@ -523,13 +526,8 @@ export default function IntegratedPortal() {
     fetchSchedules();
     setDraggedScheduleId(null);
   };
-  const handleDeviceSignOut = async () => {
-    const shouldDisconnect = window.confirm('이 브라우저의 기기 연결을 해제하시겠습니까? 다시 접속하려면 새 승인이 필요합니다.');
-    if (!shouldDisconnect) return;
-    await supabase.auth.signOut();
-    setIsAuthenticated(false);
-    setIsDeviceAdmin(false);
-    setIsDeviceManagerOpen(false);
+  const handlePortalExit = () => {
+    window.location.assign('about:blank');
   };
 
   if (!isMounted) return null;
@@ -632,7 +630,7 @@ export default function IntegratedPortal() {
           </button>
 
           {isDeviceAdmin && <button onClick={() => setIsDeviceManagerOpen(true)} aria-label="승인 기기 관리" className="shrink-0 rounded-xl p-2 text-blue-300 transition-colors hover:bg-white/10 hover:text-white"><ShieldCheck size={18} /></button>}
-          <button onClick={() => void handleDeviceSignOut()} aria-label="이 기기 연결 해제" className="text-slate-500 hover:text-white p-1 md:p-2 transition-colors ml-0.5 md:ml-0 shrink-0"><X size={18} className="md:w-[20px] md:h-[20px]"/></button>
+          <button onClick={handlePortalExit} aria-label="화면 나가기 (기기 승인 유지)" title="화면 나가기 · 기기 승인은 유지됩니다" className="text-slate-500 hover:text-white p-1 md:p-2 transition-colors ml-0.5 md:ml-0 shrink-0"><X size={18} className="md:w-[20px] md:h-[20px]"/></button>
         </div>
       </header>
 
