@@ -32,6 +32,29 @@ const normalizeCategoryLinkName = (name: string) => name
 const isSameCategory = (firstName: string, secondName: string) => firstName === secondName
   || normalizeCategoryLinkName(firstName) === normalizeCategoryLinkName(secondName);
 
+const getCategoryMeetingTone = (categoryName: string) => {
+  if (categoryName.includes('회의록')) return null;
+  if (categoryName.includes('정책결정회의')) return {
+    text: 'text-indigo-700',
+    badge: 'bg-indigo-50 text-indigo-700 ring-indigo-200',
+    active: 'bg-indigo-50/90 ring-indigo-200 shadow-sm',
+    hover: 'hover:bg-indigo-50/60',
+  };
+  if (categoryName.includes('월례회의')) return {
+    text: 'text-amber-700',
+    badge: 'bg-amber-50 text-amber-800 ring-amber-200',
+    active: 'bg-amber-50/90 ring-amber-200 shadow-sm',
+    hover: 'hover:bg-amber-50/60',
+  };
+  if (categoryName.includes('팀회의')) return {
+    text: 'text-teal-700',
+    badge: 'bg-teal-50 text-teal-700 ring-teal-200',
+    active: 'bg-teal-50/90 ring-teal-200 shadow-sm',
+    hover: 'hover:bg-teal-50/60',
+  };
+  return null;
+};
+
 export default function IntegratedPortal() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isDeviceAdmin, setIsDeviceAdmin] = useState(false);
@@ -282,6 +305,7 @@ export default function IntegratedPortal() {
   };
 
   const getCategoryScheduleKey = (categoryName: string) => {
+    if (categoryName.includes('회의록')) return null;
     if (categoryName.includes('정책결정회의')) return '정책결정회의';
     if (categoryName.includes('월례회의')) return '월례회의';
     if (categoryName.includes('팀회의')) return '팀회의';
@@ -326,7 +350,8 @@ export default function IntegratedPortal() {
   const formatUpcomingCategoryDate = (dateKey: string) => {
     const [year, month, day] = dateKey.split('-').map(Number);
     const currentYear = Number(todayStr.slice(0, 4));
-    return `${year !== currentYear ? `${year}년 ` : ''}${month}월 ${day}일 예정`;
+    const weekday = ['일', '월', '화', '수', '목', '금', '토'][new Date(year, month - 1, day).getDay()];
+    return `${year !== currentYear ? `${year}년 ` : ''}${month}월 ${day}일(${weekday}) 예정`;
   };
 
   const onMouseDownChat = (e: React.MouseEvent) => { setIsDraggingChat(true); dragStartPos.current = { x: e.clientX - position.x, y: e.clientY - position.y }; };
@@ -718,25 +743,32 @@ export default function IntegratedPortal() {
               <button onClick={() => { setViewMode('dashboard'); setIsMobileSidebarOpen(false); }} className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-bold transition-all ${viewMode === 'dashboard' ? 'bg-slate-900 shadow-lg text-white' : 'text-slate-500 hover:bg-slate-200/60'}`}><LayoutDashboard size={17} /> 공공의료지원과 일정</button>
               <div className="h-px bg-slate-300/70 my-3" />
               <button onClick={() => { setViewMode('files'); setSelectedCategory('전체'); setIsMobileSidebarOpen(false); }} className={`w-full text-left px-4 py-3.5 rounded-xl text-sm font-bold transition-all ${selectedCategory === '전체' && viewMode === 'files' ? 'bg-white shadow-md text-blue-600 ring-1 ring-slate-200' : 'text-slate-500 hover:bg-slate-200/60'}`}>🏠 전체 문서 보기</button>
-              {categories.map((cat, idx) => (
+              {categories.map((cat, idx) => {
+                const nextScheduleDate = getNextCategoryScheduleDate(cat.name);
+                const meetingTone = getCategoryMeetingTone(cat.name);
+                const isSelected = selectedCategory === cat.name && viewMode === 'files';
+                return (
                 <div key={cat.id} draggable onDragStart={() => setDraggedItemIndex(idx)} onDragOver={(e) => e.preventDefault()} onDrop={async() => {
                    if (draggedItemIndex === null || draggedItemIndex === idx) return;
                    const newCats = [...categories]; const item = newCats.splice(draggedItemIndex, 1)[0]; newCats.splice(idx, 0, item);
                    setCategories(newCats); for(let i=0; i<newCats.length; i++) await supabase.from('categories').update({order_index: i}).eq('id', newCats[i].id);
-                   setDraggedItemIndex(null);
+                  setDraggedItemIndex(null);
                 }} className={`group relative flex items-center gap-1 cursor-grab active:cursor-grabbing transition-transform ${draggedItemIndex === idx ? 'opacity-30' : 'opacity-100'}`}>
                   <div className="absolute left-1 opacity-0 group-hover:opacity-40"><GripVertical size={14}/></div>
-                  <button onClick={() => { setViewMode('files'); setSelectedCategory(cat.name); setIsMobileSidebarOpen(false); }} className={`flex-1 text-left px-4 py-3.5 rounded-xl text-sm font-bold transition-all pl-6 ${selectedCategory === cat.name && viewMode === 'files' ? 'bg-white shadow-md text-blue-600 ring-1 ring-slate-200' : 'text-slate-500 hover:bg-slate-200/60'}`}>
-                    <span className="block">📁 {cat.name}</span>
-                    {getNextCategoryScheduleDate(cat.name) && (
-                      <span className={`mt-1.5 ml-5 inline-flex rounded-md px-2 py-1 text-[9px] font-black ${selectedCategory === cat.name && viewMode === 'files' ? 'bg-blue-50 text-blue-600' : 'bg-white/70 text-violet-600'}`}>
-                        {formatUpcomingCategoryDate(getNextCategoryScheduleDate(cat.name)!)}
-                      </span>
-                    )}
+                  <button onClick={() => { setViewMode('files'); setSelectedCategory(cat.name); setIsMobileSidebarOpen(false); }} className={`min-w-0 flex-1 rounded-xl py-3.5 pl-6 pr-8 text-left text-sm font-bold ring-1 ring-transparent transition-all ${isSelected ? (meetingTone?.active ?? 'bg-white text-blue-600 ring-slate-200 shadow-md') : `${meetingTone?.hover ?? 'text-slate-500 hover:bg-slate-200/60'}`}`}>
+                    <span className="flex min-w-0 items-center justify-between gap-2">
+                      <span className={`min-w-0 truncate ${meetingTone?.text ?? (isSelected ? 'text-blue-600' : 'text-slate-500')}`}>📁 {cat.name}</span>
+                      {nextScheduleDate && meetingTone && (
+                        <span className={`shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-[9px] font-black tracking-tight ring-1 ring-inset ${meetingTone.badge}`}>
+                          {formatUpcomingCategoryDate(nextScheduleDate)}
+                        </span>
+                      )}
+                    </span>
                   </button>
-                  <button onClick={() => onDeleteCategoryWithFiles(cat.id, cat.name)} className="absolute right-2 top-4 opacity-0 group-hover:opacity-100 text-red-300 hover:text-red-500 text-xs px-2 transition-opacity">✕</button>
+                  <button onClick={() => onDeleteCategoryWithFiles(cat.id, cat.name)} aria-label={`${cat.name} 분류 삭제`} className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md bg-[#EBEEF2]/90 px-1.5 py-1 text-xs text-red-300 opacity-0 transition-opacity hover:text-red-500 group-hover:opacity-100">✕</button>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
           <div className="p-6 border-t border-slate-300 bg-[#EBEEF2]">
@@ -772,7 +804,7 @@ export default function IntegratedPortal() {
                     </div>
                   ) : (
                     <>
-                      <h2 className={`font-black text-slate-800 tracking-tighter uppercase truncate ${viewMode === 'external_calendar' ? 'text-xl md:text-2xl' : 'text-2xl md:text-4xl'}`}>
+                      <h2 className={`font-black tracking-tighter uppercase truncate ${viewMode === 'files' ? (getCategoryMeetingTone(selectedCategory)?.text ?? 'text-slate-800') : 'text-slate-800'} ${viewMode === 'external_calendar' ? 'text-xl md:text-2xl' : 'text-2xl md:text-4xl'}`}>
                         {viewMode === 'external_calendar' ? '손)일정확인' : selectedCategory}
                       </h2>
                       {viewMode === 'files' && selectedCategory !== '전체' && <button onClick={() => { setEditTitleValue(selectedCategory); setIsEditingTitle(true); }} className="opacity-100 md:opacity-0 group-hover:opacity-100 bg-slate-100 text-slate-400 p-2 rounded-xl hover:text-blue-500 text-xs font-bold transition-all">✎ 수정</button>}
