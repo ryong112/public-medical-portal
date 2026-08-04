@@ -21,11 +21,23 @@ interface KoreanHoliday {
   name: string;
 }
 
+const getLocalDateKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+const normalizeCategoryLinkName = (name: string) => name
+  .replace(/\s*\([^)]*\)\s*$/u, '')
+  .replace(/^\s*\d{2,4}년(?:도)?\s*/u, '')
+  .trim()
+  .toLocaleLowerCase('ko-KR');
+
+const isSameCategory = (firstName: string, secondName: string) => firstName === secondName
+  || normalizeCategoryLinkName(firstName) === normalizeCategoryLinkName(secondName);
+
 export default function IntegratedPortal() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isDeviceAdmin, setIsDeviceAdmin] = useState(false);
   const [isDeviceManagerOpen, setIsDeviceManagerOpen] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
+  const [todayStr, setTodayStr] = useState(() => getLocalDateKey());
 
   const [viewMode, setViewMode] = useState<'files' | 'calendar' | 'external_calendar' | 'dashboard'>('dashboard');
   
@@ -76,6 +88,14 @@ export default function IntegratedPortal() {
 
   useEffect(() => {
     setIsMounted(true);
+  }, []);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      const nextToday = getLocalDateKey();
+      setTodayStr((currentToday) => currentToday === nextToday ? currentToday : nextToday);
+    }, 60_000);
+    return () => window.clearInterval(interval);
   }, []);
 
   const handleDeviceApproved = useCallback((access: { userId: string; isAdmin: boolean }) => {
@@ -198,8 +218,6 @@ export default function IntegratedPortal() {
   }, [isAuthenticated]);
 
   // 데이터 필터링 계산 자동 처리 (오늘 날짜 기준 진행 중인 공지만 정렬 노출)
-  const localToday = new Date();
-  const todayStr = `${localToday.getFullYear()}-${String(localToday.getMonth() + 1).padStart(2, '0')}-${String(localToday.getDate()).padStart(2, '0')}`;
   const activeNotices = schedules
     .filter(s => s.is_notice && (s.end_date && s.end_date >= s.date ? s.end_date : s.date) >= todayStr)
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -261,6 +279,54 @@ export default function IntegratedPortal() {
     const labels: Record<string, string> = { meeting: '회의)', business_trip: '출장)', internal: '내부일정)', leave: '휴가)' };
     const prefix = labels[schedule.schedule_type];
     return prefix ? `${prefix} ${schedule.title}` : schedule.title;
+  };
+
+  const getCategoryScheduleKey = (categoryName: string) => {
+    if (categoryName.includes('정책결정회의')) return '정책결정회의';
+    if (categoryName.includes('월례회의')) return '월례회의';
+    if (categoryName.includes('팀회의')) return '팀회의';
+    if (categoryName.includes('확대간부회의')) return '확대간부회의';
+
+    const normalizedName = categoryName
+      .replace(/^\s*\d{2,4}년(?:도)?\s*/u, '')
+      .replace(/\([^)]*\)/gu, '')
+      .replace(/회의록\s*$/u, '회의')
+      .replace(/(?:공유자료|공유문서|자료|문서)\s*$/u, '')
+      .trim();
+    return normalizedName.length >= 3 ? normalizedName : null;
+  };
+
+  const getNextCategoryScheduleDate = (categoryName: string) => {
+    const scheduleKey = getCategoryScheduleKey(categoryName);
+    if (!scheduleKey) return null;
+
+    const directSchedule = schedules
+      .filter((schedule) => typeof schedule.title === 'string' && schedule.title.trim().length >= 2 && (schedule.title.includes(scheduleKey) || scheduleKey.includes(schedule.title)) && getScheduleEndDate(schedule) >= todayStr)
+      .sort((first, second) => first.date.localeCompare(second.date))[0];
+    if (directSchedule) return directSchedule.date;
+
+    // 팀회의 일정이 따로 등록되지 않은 경우 정책결정회의가 있는 주의 월요일을 사용합니다.
+    if (scheduleKey === '팀회의') {
+      const policySchedule = schedules
+        .filter((schedule) => typeof schedule.title === 'string' && schedule.title.includes('정책결정회의'))
+        .map((schedule) => {
+          const policyDate = new Date(`${schedule.date}T00:00:00`);
+          const daysFromMonday = (policyDate.getDay() + 6) % 7;
+          policyDate.setDate(policyDate.getDate() - daysFromMonday);
+          return getLocalDateKey(policyDate);
+        })
+        .filter((date) => date >= todayStr)
+        .sort()[0];
+      return policySchedule ?? null;
+    }
+
+    return null;
+  };
+
+  const formatUpcomingCategoryDate = (dateKey: string) => {
+    const [year, month, day] = dateKey.split('-').map(Number);
+    const currentYear = Number(todayStr.slice(0, 4));
+    return `${year !== currentYear ? `${year}년 ` : ''}${month}월 ${day}일 예정`;
   };
 
   const onMouseDownChat = (e: React.MouseEvent) => { setIsDraggingChat(true); dragStartPos.current = { x: e.clientX - position.x, y: e.clientY - position.y }; };
@@ -344,7 +410,7 @@ export default function IntegratedPortal() {
   };
 
   const onDeleteCategoryWithFiles = (id: number, catName: string) => {
-    const targetFiles = files.filter(f => f.category === catName);
+    const targetFiles = files.filter(f => isSameCategory(f.category, catName));
     const targetCategory = categories.find((category) => category.id === id);
     if (!targetCategory) return;
     const confirmMsg = targetFiles.length > 0 ? `'${catName}' 분류와 파일 ${targetFiles.length}개를 삭제하시겠습니까?\n8초 동안 삭제를 되돌릴 수 있습니다.` : `'${catName}' 분류를 삭제하시겠습니까?`;
@@ -355,7 +421,7 @@ export default function IntegratedPortal() {
       keys: [`category:${id}`, ...targetFiles.map((file) => `file:${file.id}`)],
       hide: () => {
         setCategories((current) => current.filter((category) => category.id !== id));
-        setFiles((current) => current.filter((file) => file.category !== catName));
+        setFiles((current) => current.filter((file) => !isSameCategory(file.category, catName)));
         setSelectedCategory('전체');
       },
       restore: () => {
@@ -368,7 +434,7 @@ export default function IntegratedPortal() {
       },
       commit: async () => {
         if (targetFiles.length > 0) {
-          const { error: fileError } = await supabase.from('files').delete().eq('category', catName);
+          const { error: fileError } = await supabase.from('files').delete().in('id', targetFiles.map((file) => file.id));
           if (fileError) throw new Error(`분류의 파일을 삭제하지 못했습니다: ${fileError.message}`);
         }
         const { error: categoryError } = await supabase.from('categories').delete().eq('id', id);
@@ -425,7 +491,7 @@ export default function IntegratedPortal() {
   
   const onSend = async (e: React.FormEvent) => { e.preventDefault(); if (!chatInput.trim()) return; await supabase.from('messages').insert([{ content: chatInput, sender_id: myId }]); setChatInput(''); };
   const handleDownloadCategoryZip = async () => {
-    const targetFiles = files.filter(f => selectedCategory === '전체' || f.category === selectedCategory);
+    const targetFiles = files.filter(f => selectedCategory === '전체' || isSameCategory(f.category, selectedCategory));
     if (targetFiles.length === 0) return alert("파일이 없습니다.");
     setIsDownloadingAll(true); const zip = new JSZip();
     try {
@@ -458,9 +524,13 @@ export default function IntegratedPortal() {
     await fetchFiles(); setUploading(false);
   };
   const onUpdateCategoryName = async () => { 
-    const targetCat = categories.find(c => c.name === selectedCategory); if (!targetCat || !editTitleValue.trim()) return; 
-    await supabase.from('categories').update({ name: editTitleValue.trim() }).eq('id', targetCat.id); 
-    setSelectedCategory(editTitleValue.trim()); setIsEditingTitle(false); fetchCategories(); 
+    const targetCat = categories.find(c => c.name === selectedCategory); if (!targetCat || !editTitleValue.trim()) return;
+    const nextName = editTitleValue.trim();
+    const { error } = await supabase.rpc('rename_category_with_files', { p_old_name: targetCat.name, p_new_name: nextName });
+    if (error) return alert(`분류 이름을 변경하지 못했습니다: ${error.message}`);
+    setSelectedCategory(nextName);
+    setIsEditingTitle(false);
+    await Promise.all([fetchCategories(), fetchFiles()]);
   };
 
   const onAddSchedule = (dateStr: string) => {
@@ -656,7 +726,14 @@ export default function IntegratedPortal() {
                    setDraggedItemIndex(null);
                 }} className={`group relative flex items-center gap-1 cursor-grab active:cursor-grabbing transition-transform ${draggedItemIndex === idx ? 'opacity-30' : 'opacity-100'}`}>
                   <div className="absolute left-1 opacity-0 group-hover:opacity-40"><GripVertical size={14}/></div>
-                  <button onClick={() => { setViewMode('files'); setSelectedCategory(cat.name); setIsMobileSidebarOpen(false); }} className={`flex-1 text-left px-4 py-3.5 rounded-xl text-sm font-bold transition-all pl-6 ${selectedCategory === cat.name && viewMode === 'files' ? 'bg-white shadow-md text-blue-600 ring-1 ring-slate-200' : 'text-slate-500 hover:bg-slate-200/60'}`}>📁 {cat.name}</button>
+                  <button onClick={() => { setViewMode('files'); setSelectedCategory(cat.name); setIsMobileSidebarOpen(false); }} className={`flex-1 text-left px-4 py-3.5 rounded-xl text-sm font-bold transition-all pl-6 ${selectedCategory === cat.name && viewMode === 'files' ? 'bg-white shadow-md text-blue-600 ring-1 ring-slate-200' : 'text-slate-500 hover:bg-slate-200/60'}`}>
+                    <span className="block">📁 {cat.name}</span>
+                    {getNextCategoryScheduleDate(cat.name) && (
+                      <span className={`mt-1.5 ml-5 inline-flex rounded-md px-2 py-1 text-[9px] font-black ${selectedCategory === cat.name && viewMode === 'files' ? 'bg-blue-50 text-blue-600' : 'bg-white/70 text-violet-600'}`}>
+                        {formatUpcomingCategoryDate(getNextCategoryScheduleDate(cat.name)!)}
+                      </span>
+                    )}
+                  </button>
                   <button onClick={() => onDeleteCategoryWithFiles(cat.id, cat.name)} className="absolute right-2 top-4 opacity-0 group-hover:opacity-100 text-red-300 hover:text-red-500 text-xs px-2 transition-opacity">✕</button>
                 </div>
               ))}
@@ -820,7 +897,7 @@ export default function IntegratedPortal() {
                       <tr className="text-[11px] text-slate-300 font-black uppercase tracking-widest"><th className="pb-5 px-4 w-2/3">Document Title</th><th className="pb-5">Label</th><th className="pb-5 text-right px-4">Action</th></tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50">
-                      {files.filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()) && (selectedCategory === '전체' || f.category === selectedCategory)).map(file => {
+                      {files.filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()) && (selectedCategory === '전체' || isSameCategory(f.category, selectedCategory))).map(file => {
                         const info = getFileIcon(file.name);
                         return (
                           <tr key={file.id} className="group hover:bg-slate-50/50 transition-all">
