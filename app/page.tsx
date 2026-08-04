@@ -731,7 +731,7 @@ export default function IntegratedPortal() {
 
       <main className="flex-1 flex overflow-hidden relative">
         <aside className={`
-          fixed bottom-0 left-0 top-14 z-50 flex w-[min(20rem,88vw)] flex-col border-r border-slate-300 bg-[#EBEEF2] shadow-2xl transition-transform duration-300 transform xl:relative xl:inset-auto xl:w-72 xl:shrink-0 xl:shadow-none 2xl:w-80
+          fixed bottom-0 left-0 top-14 z-50 flex w-[min(20rem,88vw)] flex-col border-r border-slate-300 bg-[#EBEEF2] shadow-2xl transition-transform duration-300 transform xl:relative xl:inset-auto xl:w-[clamp(18rem,20vw,23.5rem)] xl:shrink-0 xl:shadow-none
           ${isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full xl:translate-x-0'}
         `}>
           <div className="p-6 pb-2 text-slate-400 flex justify-between items-center">
@@ -757,9 +757,9 @@ export default function IntegratedPortal() {
                   <div className="absolute left-1 opacity-0 group-hover:opacity-40"><GripVertical size={14}/></div>
                   <button onClick={() => { setViewMode('files'); setSelectedCategory(cat.name); setIsMobileSidebarOpen(false); }} className={`min-w-0 flex-1 rounded-xl py-3.5 pl-6 pr-8 text-left text-sm font-bold ring-1 ring-transparent transition-all ${isSelected ? (meetingTone?.active ?? 'bg-white text-blue-600 ring-slate-200 shadow-md') : `${meetingTone?.hover ?? 'text-slate-500 hover:bg-slate-200/60'}`}`}>
                     <span className="flex min-w-0 items-center justify-between gap-2">
-                      <span className={`min-w-0 truncate ${meetingTone?.text ?? (isSelected ? 'text-blue-600' : 'text-slate-500')}`}>📁 {cat.name}</span>
+                      <span className={`min-w-0 truncate text-[13px] font-extrabold 2xl:text-sm ${meetingTone?.text ?? (isSelected ? 'text-blue-600' : 'text-slate-500')}`}>📁 {cat.name}</span>
                       {nextScheduleDate && meetingTone && (
-                        <span className={`shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-[9px] font-black tracking-tight ring-1 ring-inset ${meetingTone.badge}`}>
+                        <span className={`shrink-0 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-[11px] font-black leading-none tracking-tight ring-1 ring-inset 2xl:px-3 2xl:text-xs ${meetingTone.badge}`}>
                           {formatUpcomingCategoryDate(nextScheduleDate)}
                         </span>
                       )}
