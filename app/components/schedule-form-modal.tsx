@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { BellRing, CalendarPlus, CalendarRange, CheckSquare2, Clock3, Siren, X } from 'lucide-react';
+import { BellRing, CalendarPlus, CalendarRange, CheckSquare2, ChevronDown, Clock3, Siren, X } from 'lucide-react';
 
 export type ScheduleType = 'meeting' | 'business_trip' | 'internal' | 'leave' | 'unclassified';
 export type AbsenceType = 'annual' | 'early' | 'outing';
@@ -28,10 +28,18 @@ interface ScheduleFormModalProps {
 }
 
 type TimeMode = 'both' | 'start' | 'end' | 'none';
-type RecurrenceMode = 'none' | 'weekly' | 'biweekly' | 'monthly_first';
+type RecurrenceMode = 'none' | 'weekly' | 'biweekly' | 'monthly';
+type MonthlyWeek = 'first' | 'second' | 'third' | 'fourth' | 'last';
 type DateMode = 'single' | 'range';
 
 const weekdayNames = ['일', '월', '화', '수', '목', '금', '토'];
+const monthlyWeekLabels: Record<MonthlyWeek, string> = {
+  first: '첫째',
+  second: '둘째',
+  third: '셋째',
+  fourth: '넷째',
+  last: '마지막 주',
+};
 
 const parseLocalDate = (date: string) => {
   const [year, month, day] = date.split('-').map(Number);
@@ -47,7 +55,7 @@ const getRangeDayCount = (startDate: string, endDate: string) => {
   return Math.floor(difference / 86_400_000) + 1;
 };
 
-const createRecurringDates = (startDate: string, mode: RecurrenceMode) => {
+const createRecurringDates = (startDate: string, mode: RecurrenceMode, monthlyWeek: MonthlyWeek = 'first') => {
   if (mode === 'none') return [startDate];
 
   const start = parseLocalDate(startDate);
@@ -66,8 +74,15 @@ const createRecurringDates = (startDate: string, mode: RecurrenceMode) => {
 
   const weekday = start.getDay();
   for (let month = start.getMonth(); month <= 11; month += 1) {
-    const firstDay = new Date(start.getFullYear(), month, 1);
-    const occurrence = new Date(start.getFullYear(), month, 1 + ((weekday - firstDay.getDay() + 7) % 7));
+    let occurrence: Date;
+    if (monthlyWeek === 'last') {
+      const lastDay = new Date(start.getFullYear(), month + 1, 0);
+      occurrence = new Date(start.getFullYear(), month, lastDay.getDate() - ((lastDay.getDay() - weekday + 7) % 7));
+    } else {
+      const firstDay = new Date(start.getFullYear(), month, 1);
+      const weekIndex = ['first', 'second', 'third', 'fourth'].indexOf(monthlyWeek);
+      occurrence = new Date(start.getFullYear(), month, 1 + ((weekday - firstDay.getDay() + 7) % 7) + weekIndex * 7);
+    }
     if (occurrence >= start && occurrence <= yearEnd) dates.push(formatLocalDate(occurrence));
   }
   return dates;
@@ -114,6 +129,8 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
   const [scheduleType, setScheduleType] = useState<ScheduleType>(initialSchedule?.schedule_type ?? 'unclassified');
   const [absenceType, setAbsenceType] = useState<AbsenceType>(normalizeAbsenceType(initialSchedule?.absence_type));
   const [recurrenceMode, setRecurrenceMode] = useState<RecurrenceMode>('none');
+  const [monthlyWeek, setMonthlyWeek] = useState<MonthlyWeek>('first');
+  const [isMonthlyWeekOpen, setIsMonthlyWeekOpen] = useState(false);
   const [error, setError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
@@ -153,7 +170,7 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
         schedule_type: scheduleType,
         absence_type: absenceType,
       };
-      const recurringDates = initialSchedule || dateMode === 'range' ? [dateValue] : createRecurringDates(dateValue, recurrenceMode);
+      const recurringDates = initialSchedule || dateMode === 'range' ? [dateValue] : createRecurringDates(dateValue, recurrenceMode, monthlyWeek);
       await onSubmit(recurringDates.map((recurringDate) => ({ ...schedule, date: recurringDate, end_date: dateMode === 'range' ? endDateValue : null })));
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : '일정을 등록하지 못했습니다.');
@@ -281,17 +298,31 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
                 <p className="text-xs font-black text-slate-700">정기 일정</p>
                 <p className="mt-1 text-[10px] font-bold text-slate-400">선택한 날짜부터 {parseLocalDate(dateValue).getFullYear()}년 12월 31일까지만 등록합니다.</p>
               </div>
-              {recurrenceMode !== 'none' && <span className="shrink-0 rounded-lg bg-blue-600 px-2.5 py-1 text-[10px] font-black text-white">{createRecurringDates(dateValue, recurrenceMode).length}건</span>}
+              {recurrenceMode !== 'none' && <span className="shrink-0 rounded-lg bg-blue-600 px-2.5 py-1 text-[10px] font-black text-white">{createRecurringDates(dateValue, recurrenceMode, monthlyWeek).length}건</span>}
             </div>
             <div className="grid grid-cols-2 gap-2">
               {[
                 { value: 'none' as const, label: '반복 안 함' },
                 { value: 'weekly' as const, label: `매주 ${weekdayNames[parseLocalDate(dateValue).getDay()]}요일` },
                 { value: 'biweekly' as const, label: `2주마다 ${weekdayNames[parseLocalDate(dateValue).getDay()]}요일` },
-                { value: 'monthly_first' as const, label: `매월 첫째 ${weekdayNames[parseLocalDate(dateValue).getDay()]}요일` },
               ].map((option) => (
-                <button key={option.value} type="button" onClick={() => setRecurrenceMode(option.value)} className={`rounded-xl px-3 py-2.5 text-[10px] font-black transition-all ${recurrenceMode === option.value ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-slate-500 hover:bg-blue-100'}`}>{option.label}</button>
+                <button key={option.value} type="button" onClick={() => { setRecurrenceMode(option.value); setIsMonthlyWeekOpen(false); }} className={`rounded-xl px-3 py-2.5 text-[10px] font-black transition-all ${recurrenceMode === option.value ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-slate-500 hover:bg-blue-100'}`}>{option.label}</button>
               ))}
+              <div className="relative">
+                <button type="button" onClick={() => { setRecurrenceMode('monthly'); setIsMonthlyWeekOpen((current) => !current); }} className={`flex w-full items-center justify-center gap-1.5 rounded-xl px-3 py-2.5 text-[10px] font-black transition-all ${recurrenceMode === 'monthly' ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-slate-500 hover:bg-blue-100'}`}>
+                  <span>매월 {monthlyWeekLabels[monthlyWeek]} {weekdayNames[parseLocalDate(dateValue).getDay()]}요일</span>
+                  <ChevronDown size={13} className={`shrink-0 transition-transform ${isMonthlyWeekOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {isMonthlyWeekOpen && (
+                  <div className="absolute bottom-full left-0 z-20 mb-2 w-full overflow-hidden rounded-xl border border-blue-100 bg-white p-1.5 shadow-xl">
+                    {(Object.keys(monthlyWeekLabels) as MonthlyWeek[]).map((week) => (
+                      <button key={week} type="button" onClick={() => { setMonthlyWeek(week); setRecurrenceMode('monthly'); setIsMonthlyWeekOpen(false); }} className={`block w-full rounded-lg px-3 py-2 text-left text-[10px] font-black transition-colors ${monthlyWeek === week ? 'bg-blue-50 text-blue-600' : 'text-slate-500 hover:bg-slate-50'}`}>
+                        매월 {monthlyWeekLabels[week]} {weekdayNames[parseLocalDate(dateValue).getDay()]}요일
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -325,7 +356,7 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
 
         <div className="mt-7 flex gap-3">
           <button type="button" onClick={onClose} className="flex-1 rounded-2xl bg-slate-100 py-3.5 text-sm font-black text-slate-600 transition-colors hover:bg-slate-200">취소</button>
-          <button disabled={isSaving} className="flex-1 rounded-2xl bg-blue-600 py-3.5 text-sm font-black text-white shadow-lg transition-all hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60">{isSaving ? '저장 중...' : initialSchedule ? '변경사항 저장' : dateMode === 'range' ? `${getRangeDayCount(dateValue, endDateValue) - 1}박 ${getRangeDayCount(dateValue, endDateValue)}일 일정 추가` : recurrenceMode === 'none' ? '일정 추가' : `${createRecurringDates(dateValue, recurrenceMode).length}개 일정 추가`}</button>
+          <button disabled={isSaving} className="flex-1 rounded-2xl bg-blue-600 py-3.5 text-sm font-black text-white shadow-lg transition-all hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60">{isSaving ? '저장 중...' : initialSchedule ? '변경사항 저장' : dateMode === 'range' ? `${getRangeDayCount(dateValue, endDateValue) - 1}박 ${getRangeDayCount(dateValue, endDateValue)}일 일정 추가` : recurrenceMode === 'none' ? '일정 추가' : `${createRecurringDates(dateValue, recurrenceMode, monthlyWeek).length}개 일정 추가`}</button>
         </div>
       </form>
     </div>

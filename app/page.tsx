@@ -34,6 +34,12 @@ const isSameCategory = (firstName: string, secondName: string) => firstName === 
 
 const getCategoryMeetingTone = (categoryName: string) => {
   if (categoryName.includes('회의록')) return null;
+  if (categoryName.includes('확대간부회의')) return {
+    text: 'text-slate-500',
+    badge: 'bg-white text-slate-700 ring-slate-300',
+    active: 'bg-white text-slate-700 ring-slate-200 shadow-sm',
+    hover: 'hover:bg-slate-200/60',
+  };
   if (categoryName.includes('정책결정회의')) return {
     text: 'text-indigo-700',
     badge: 'bg-indigo-50 text-indigo-700 ring-indigo-200',
