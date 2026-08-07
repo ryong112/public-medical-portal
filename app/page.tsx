@@ -127,7 +127,6 @@ export default function IntegratedPortal() {
   const [isKioskOpen, setIsKioskOpen] = useState(false);
   const [isAbsenceBoardOpen, setIsAbsenceBoardOpen] = useState(false);
   const [isQuickScheduleOpen, setIsQuickScheduleOpen] = useState(false);
-  const [externalCalendarFrameKey, setExternalCalendarFrameKey] = useState(0);
   const [isYearlyCleanupOpen, setIsYearlyCleanupOpen] = useState(false);
   const [isActivityHistoryLoading, setIsActivityHistoryLoading] = useState(false);
   const [activityLogs, setActivityLogs] = useState<ActivityLogRow[]>([]);
@@ -136,8 +135,6 @@ export default function IntegratedPortal() {
   const pendingDeleteKeysRef = useRef(new Set<string>());
   const undoTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const undoActionsRef = useRef(new Map<string, { keys: string[]; restore: () => void }>());
-  const externalCalendarLoginPendingRef = useRef(false);
-  const externalCalendarLoginOpenedAtRef = useRef(0);
 
   useEffect(() => {
     setIsMounted(true);
@@ -149,25 +146,6 @@ export default function IntegratedPortal() {
       setTodayStr((currentToday) => currentToday === nextToday ? currentToday : nextToday);
     }, 60_000);
     return () => window.clearInterval(interval);
-  }, []);
-
-  useEffect(() => {
-    const refreshExternalCalendarAfterLogin = () => {
-      if (!externalCalendarLoginPendingRef.current) return;
-      if (Date.now() - externalCalendarLoginOpenedAtRef.current < 1_000) return;
-      externalCalendarLoginPendingRef.current = false;
-      setExternalCalendarFrameKey((current) => current + 1);
-    };
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') refreshExternalCalendarAfterLogin();
-    };
-
-    window.addEventListener('focus', refreshExternalCalendarAfterLogin);
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => {
-      window.removeEventListener('focus', refreshExternalCalendarAfterLogin);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
   }, []);
 
   const handleDeviceApproved = useCallback((access: { userId: string; isAdmin: boolean }) => {
@@ -934,21 +912,6 @@ export default function IntegratedPortal() {
           >
             {viewMode === 'external_calendar' ? <LayoutDashboard size={16} className="xl:h-[18px] xl:w-[18px]"/> : <CalendarDays size={16} className="xl:h-[18px] xl:w-[18px]"/>} <span className="hidden xl:inline">{viewMode === 'external_calendar' ? '홈' : '손)일정확인'}</span>
           </button>
-          {viewMode === 'external_calendar' && isDeviceAdmin && (
-            <a
-              href={EXTERNAL_CALENDAR_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={() => {
-                externalCalendarLoginPendingRef.current = true;
-                externalCalendarLoginOpenedAtRef.current = Date.now();
-              }}
-              className="flex shrink-0 items-center gap-1.5 rounded-xl bg-blue-600 px-3 py-2 text-xs font-black text-white shadow-md transition-colors hover:bg-blue-700 xl:rounded-2xl xl:px-4 xl:py-2.5 xl:text-sm"
-            >
-              <ExternalLink size={16} /> <span className="hidden 2xl:inline">전체화면</span>
-            </a>
-          )}
-
           <button 
             onClick={() => setViewMode(viewMode === 'calendar' ? 'dashboard' : 'calendar')} 
             className="relative flex shrink-0 items-center gap-1.5 rounded-xl bg-white px-2.5 py-2 text-xs font-black text-slate-900 shadow-md transition-all active:scale-95 sm:px-3 xl:gap-2 xl:rounded-2xl xl:px-5 xl:py-2.5 xl:text-sm"
@@ -993,20 +956,6 @@ export default function IntegratedPortal() {
             >
               <LayoutDashboard size={13} /> 홈
             </button>
-            {isDeviceAdmin && (
-              <a
-                href={EXTERNAL_CALENDAR_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => {
-                  externalCalendarLoginPendingRef.current = true;
-                  externalCalendarLoginOpenedAtRef.current = Date.now();
-                }}
-                className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1.5 text-[10px] font-black text-white"
-              >
-                전체화면 <ExternalLink size={11} />
-              </a>
-            )}
           </div>
         )}
       </header>
@@ -1137,7 +1086,6 @@ export default function IntegratedPortal() {
                     </a>
                   </div>
                   <iframe
-                    key={externalCalendarFrameKey}
                     src={EXTERNAL_CALENDAR_EMBED_URL}
                     className="absolute inset-0 hidden h-full w-full border-0 sm:block"
                     title="손 일정확인 외부 달력"
