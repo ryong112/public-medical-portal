@@ -859,7 +859,7 @@ export default function IntegratedPortal() {
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-[#F0F2F5] font-sans text-[#2C3E50] select-none">
-      <header className="z-[60] flex items-center justify-between gap-2 border-b border-white/5 bg-[#1A1C1E] px-3 py-3 text-white shadow-md sm:px-4 lg:px-6 xl:px-8 xl:py-4">
+      <header className={`z-[60] flex items-center justify-between gap-2 border-b border-white/5 bg-[#1A1C1E] text-white shadow-md sm:px-4 lg:px-6 xl:px-8 xl:py-4 ${viewMode === 'external_calendar' ? 'px-2 py-2 sm:py-3' : 'px-3 py-3'}`}>
         <div className="flex items-center gap-2 md:gap-3 overflow-hidden shrink-0">
           <button onClick={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)} className="shrink-0 rounded-lg p-1 transition-colors hover:bg-white/10 xl:hidden"><Menu size={22}/></button>
           <span className="text-lg md:text-2xl hidden sm:inline shrink-0">📂</span>
@@ -908,7 +908,7 @@ export default function IntegratedPortal() {
         </div>
         {/* ===================================================================== */}
 
-        <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto scrollbar-hide sm:gap-2 xl:gap-3">
+        <div className={`${viewMode === 'external_calendar' ? 'hidden xl:flex' : 'flex'} shrink-0 items-center gap-1.5 overflow-x-auto scrollbar-hide sm:gap-2 xl:gap-3`}>
           <a 
             href="https://docs.google.com/spreadsheets/d/1yz_fMbsVe0__VJWe6F0ObbrV2jvnRotqi03-mrnnZUc/edit?usp=sharing" 
             target="_blank" 
@@ -966,6 +966,31 @@ export default function IntegratedPortal() {
           {isDeviceAdmin && <button onClick={() => setIsYearlyCleanupOpen(true)} aria-label="연도 문서 정리" title="연도 문서 정리" className="shrink-0 rounded-xl p-2 text-amber-300 transition-colors hover:bg-white/10 hover:text-white"><FolderSync size={18} /></button>}
           <button onClick={handlePortalExit} aria-label="화면 나가기 (기기 승인 유지)" title="화면 나가기 · 기기 승인은 유지됩니다" className="text-slate-500 hover:text-white p-1 md:p-2 transition-colors ml-0.5 md:ml-0 shrink-0"><X size={18} className="md:w-[20px] md:h-[20px]"/></button>
         </div>
+        {viewMode === 'external_calendar' && (
+          <div className="ml-auto flex shrink-0 items-center gap-1.5 xl:hidden">
+            <button
+              type="button"
+              onClick={() => setViewMode('files')}
+              className="inline-flex items-center gap-1 rounded-lg bg-white/10 px-2.5 py-1.5 text-[10px] font-black text-white transition-colors hover:bg-white/20"
+            >
+              <FileText size={13} /> 문서함
+            </button>
+            {isDeviceAdmin && (
+              <a
+                href={EXTERNAL_CALENDAR_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => {
+                  externalCalendarLoginPendingRef.current = true;
+                  externalCalendarLoginOpenedAtRef.current = Date.now();
+                }}
+                className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1.5 text-[10px] font-black text-white"
+              >
+                로그인 <ExternalLink size={11} />
+              </a>
+            )}
+          </div>
+        )}
       </header>
 
       <main className="flex-1 flex overflow-hidden relative">
@@ -1032,7 +1057,7 @@ export default function IntegratedPortal() {
             </div>
           )}
 
-          <div className={`mx-auto flex w-full flex-1 flex-col overflow-hidden min-h-0 ${viewMode === 'dashboard' ? 'max-w-[1440px]' : viewMode === 'external_calendar' ? 'max-w-[1600px]' : 'max-w-6xl'} ${viewMode === 'external_calendar' || viewMode === 'calendar' ? 'p-2 sm:p-3 lg:p-4' : viewMode === 'dashboard' ? 'p-2.5 sm:p-4 lg:p-5 2xl:p-6' : 'p-4 sm:p-6 lg:p-10 2xl:p-12'}`}>
+          <div className={`mx-auto flex w-full flex-1 flex-col overflow-hidden min-h-0 ${viewMode === 'dashboard' ? 'max-w-[1440px]' : viewMode === 'external_calendar' ? 'max-w-[1600px]' : 'max-w-6xl'} ${viewMode === 'external_calendar' ? 'p-0 sm:p-3 lg:p-4' : viewMode === 'calendar' ? 'p-2 sm:p-3 lg:p-4' : viewMode === 'dashboard' ? 'p-2.5 sm:p-4 lg:p-5 2xl:p-6' : 'p-4 sm:p-6 lg:p-10 2xl:p-12'}`}>
             
             {viewMode === 'files' && <div className="mb-10 flex shrink-0 flex-col items-start justify-between gap-4 md:flex-row">
               <div className="flex-1 w-full overflow-hidden">
@@ -1079,7 +1104,7 @@ export default function IntegratedPortal() {
                   onOpenAbsenceBoard={() => setIsAbsenceBoardOpen(true)}
                 />
               ) : viewMode === 'external_calendar' ? (
-                <div className="relative h-full w-full overflow-hidden rounded-[16px] bg-slate-50 shadow-xl md:rounded-[24px]">
+                <div className="relative h-full w-full overflow-hidden bg-slate-50 sm:rounded-[24px] sm:shadow-xl">
                   <iframe
                     key={externalCalendarFrameKey}
                     src={EXTERNAL_CALENDAR_URL}
@@ -1095,7 +1120,7 @@ export default function IntegratedPortal() {
                         externalCalendarLoginPendingRef.current = true;
                         externalCalendarLoginOpenedAtRef.current = Date.now();
                       }}
-                      className="absolute right-2 top-2 z-10 inline-flex items-center gap-1 rounded-lg bg-blue-50/95 px-2.5 py-1.5 text-[10px] font-black text-blue-700 shadow-sm backdrop-blur transition-colors hover:bg-blue-100 sm:right-3 sm:top-3"
+                      className="absolute right-32 top-3 z-10 hidden items-center gap-1 rounded-lg bg-blue-50/95 px-2.5 py-1.5 text-[10px] font-black text-blue-700 shadow-sm backdrop-blur transition-colors hover:bg-blue-100 sm:inline-flex lg:right-36"
                       title="새 창에서 관리자 로그인"
                     >
                       관리자 로그인 <ExternalLink size={11} />
