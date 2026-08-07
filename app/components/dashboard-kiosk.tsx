@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { BellRing, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Maximize2, MonitorUp, Siren, X } from 'lucide-react';
+import { BellRing, CalendarDays, CheckCircle2, Clock3, Maximize2, MonitorUp, Siren, X } from 'lucide-react';
 
 interface KioskSchedule {
   id: number | string;
@@ -31,29 +31,18 @@ const cleanTitle = (title: string) => title.replace(/^(?:회의|출장|내부일
 const formatTime = (schedule: KioskSchedule) => schedule.start_time && schedule.end_time
   ? `${schedule.start_time}–${schedule.end_time}`
   : schedule.start_time ? `${schedule.start_time}부터` : schedule.end_time ? `${schedule.end_time}까지` : '시간 미정';
-
 const absenceLabel = (schedule: KioskSchedule) => ({ annual: '연차', early: '조퇴', outing: '외출' }[schedule.absence_type ?? ''] ?? '휴가');
 
 export default function DashboardKiosk({ schedules, onClose }: DashboardKioskProps) {
   const [now, setNow] = useState(() => new Date());
-  const [slide, setSlide] = useState(0);
   const today = dateKey(now);
   const tomorrow = dateKey(addDays(now, 1));
 
   useEffect(() => {
     const clock = window.setInterval(() => setNow(new Date()), 30_000);
-    const rotation = window.setInterval(() => setSlide((current) => (current + 1) % 3), 12_000);
-    return () => { window.clearInterval(clock); window.clearInterval(rotation); };
-  }, []);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-      if (event.key === 'ArrowRight') setSlide((current) => (current + 1) % 3);
-      if (event.key === 'ArrowLeft') setSlide((current) => (current + 2) % 3);
-    };
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    return () => { window.clearInterval(clock); window.removeEventListener('keydown', onKeyDown); };
   }, [onClose]);
 
   const data = useMemo(() => {
@@ -64,12 +53,11 @@ export default function DashboardKiosk({ schedules, onClose }: DashboardKioskPro
       today: active.filter((schedule) => happensOn(schedule, today) && schedule.schedule_type !== 'leave'),
       tomorrow: active.filter((schedule) => happensOn(schedule, tomorrow) && schedule.schedule_type !== 'leave'),
       absences: active.filter((schedule) => schedule.schedule_type === 'leave' && (happensOn(schedule, today) || happensOn(schedule, tomorrow))),
-      notices: active.filter((schedule) => schedule.is_notice).slice(0, 8),
-      todos: active.filter((schedule) => schedule.is_todo && !schedule.is_completed).slice(0, 8),
+      notices: active.filter((schedule) => schedule.is_notice),
+      todos: active.filter((schedule) => schedule.is_todo && !schedule.is_completed),
     };
   }, [schedules, today, tomorrow]);
 
-  const requestFullscreen = () => void document.documentElement.requestFullscreen?.();
   const closeKiosk = () => {
     if (document.fullscreenElement) void document.exitFullscreen().finally(onClose);
     else onClose();
@@ -78,85 +66,90 @@ export default function DashboardKiosk({ schedules, onClose }: DashboardKioskPro
   return (
     <div className="fixed inset-0 z-[400] overflow-hidden bg-[#071022] text-white">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(37,99,235,0.28),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(124,58,237,0.18),transparent_30%)]" />
-      <div className="relative flex h-full flex-col p-5 sm:p-8 lg:p-12">
-        <header className="flex shrink-0 items-start justify-between gap-5 border-b border-white/10 pb-5 lg:pb-7">
-          <div>
-            <div className="flex items-center gap-2 text-blue-300"><MonitorUp size={20} /><span className="text-xs font-black tracking-[0.2em]">공공의료지원과 공유 현황</span></div>
-            <h1 className="mt-3 text-3xl font-black tracking-tight sm:text-4xl lg:text-6xl">{now.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}</h1>
+      <div className="relative flex h-full flex-col p-3 sm:p-5 lg:p-7 2xl:p-9">
+        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-white/10 pb-3 lg:pb-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-blue-300"><MonitorUp size={18} /><span className="text-[10px] font-black tracking-[0.18em] lg:text-xs">공공의료지원과 공유 현황</span></div>
+            <h1 className="mt-1.5 truncate text-2xl font-black tracking-tight sm:text-3xl lg:text-4xl 2xl:text-5xl">{now.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}</h1>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="mr-2 hidden text-right sm:block"><p className="text-3xl font-black tabular-nums lg:text-5xl">{now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</p><p className="mt-1 text-xs font-bold text-slate-400">실시간 자동 반영</p></div>
-            <button onClick={requestFullscreen} aria-label="전체 화면" className="rounded-2xl bg-white/10 p-3 text-slate-200 hover:bg-white/20"><Maximize2 size={20} /></button>
-            <button onClick={closeKiosk} aria-label="전광판 닫기" className="rounded-2xl bg-white/10 p-3 text-slate-200 hover:bg-red-500"><X size={20} /></button>
+          <div className="flex shrink-0 items-center gap-2">
+            <div className="mr-1 hidden text-right sm:block"><p className="text-2xl font-black tabular-nums lg:text-4xl 2xl:text-5xl">{now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</p><p className="text-[9px] font-bold text-slate-400 lg:text-[10px]">실시간 자동 반영</p></div>
+            <button onClick={() => void document.documentElement.requestFullscreen?.()} aria-label="전체 화면" className="rounded-xl bg-white/10 p-2.5 text-slate-200 hover:bg-white/20"><Maximize2 size={18} /></button>
+            <button onClick={closeKiosk} aria-label="전광판 닫기" className="rounded-xl bg-white/10 p-2.5 text-slate-200 hover:bg-red-500"><X size={18} /></button>
           </div>
         </header>
 
-        <main className="min-h-0 flex-1 py-5 lg:py-8">
-          {slide === 0 && (
-            <div className="grid h-full min-h-0 gap-4 lg:grid-cols-2 lg:gap-7">
-              {([{ title: '오늘 일정', items: data.today, tone: 'blue' }, { title: '내일 일정', items: data.tomorrow, tone: 'violet' }] as const).map((section) => (
-                <section key={section.title} className="flex min-h-0 flex-col rounded-[28px] border border-white/10 bg-white/[0.06] p-5 backdrop-blur-sm lg:p-7">
-                  <div className="mb-4 flex items-center justify-between"><h2 className="text-xl font-black lg:text-3xl">{section.title}</h2><span className={`rounded-xl px-3 py-1.5 text-sm font-black ${section.tone === 'blue' ? 'bg-blue-500/20 text-blue-300' : 'bg-violet-500/20 text-violet-300'}`}>{section.items.length}건</span></div>
-                  <div className="min-h-0 flex-1 space-y-3 overflow-hidden">
-                    {section.items.length === 0 ? <Empty label="등록된 일정이 없습니다." /> : section.items.slice(0, 7).map((schedule) => <ScheduleRow key={schedule.id} schedule={schedule} />)}
-                  </div>
-                </section>
-              ))}
-            </div>
-          )}
+        <main className="grid min-h-0 flex-1 gap-2.5 overflow-y-auto pt-3 sm:gap-3 lg:grid-cols-12 lg:grid-rows-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:gap-4 lg:overflow-hidden lg:pt-4">
+          <Panel title="오늘 일정" count={data.today.length} tone="blue" className="lg:col-span-7">
+            <ScheduleList items={data.today} limit={6} empty="오늘 등록된 일정이 없습니다." />
+          </Panel>
 
-          {slide === 1 && (
-            <div className="grid h-full min-h-0 gap-4 lg:grid-cols-[1.2fr_0.8fr] lg:gap-7">
-              <KioskList title="진행 중인 공지사항" icon={<BellRing />} items={data.notices} empty="진행 중인 공지사항이 없습니다." />
-              <KioskList title="미완료 TO DO" icon={<CheckCircle2 />} items={data.todos} empty="미완료 항목이 없습니다." />
-            </div>
-          )}
+          <Panel title="내일 일정" count={data.tomorrow.length} tone="violet" className="lg:col-span-5">
+            <ScheduleList items={data.tomorrow} limit={6} empty="내일 등록된 일정이 없습니다." />
+          </Panel>
 
-          {slide === 2 && (
-            <section className="flex h-full min-h-0 flex-col rounded-[28px] border border-white/10 bg-white/[0.06] p-5 backdrop-blur-sm lg:p-8">
-              <div className="mb-5 flex items-center justify-between"><h2 className="text-2xl font-black lg:text-4xl">오늘·내일 연차·조퇴·외출</h2><span className="rounded-xl bg-amber-400/15 px-4 py-2 font-black text-amber-300">{data.absences.length}건</span></div>
-              {data.absences.length === 0 ? <Empty label="예정된 휴가·조퇴·외출이 없습니다." /> : (
-                <div className="grid min-h-0 flex-1 auto-rows-min grid-cols-1 gap-3 overflow-hidden sm:grid-cols-2 xl:grid-cols-3">
-                  {data.absences.slice(0, 12).map((schedule) => (
-                    <div key={schedule.id} className="rounded-2xl border border-amber-200/15 bg-amber-300/10 p-5">
-                      <div className="flex items-center justify-between"><span className="rounded-lg bg-amber-300/15 px-2.5 py-1 text-xs font-black text-amber-300">{absenceLabel(schedule)}</span><span className="text-xs font-bold text-slate-400">{happensOn(schedule, today) ? '오늘' : '내일'}</span></div>
-                      <p className="mt-4 truncate text-xl font-black lg:text-2xl">{cleanTitle(schedule.title)}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
-          )}
+          <Panel title="진행 중인 공지" count={data.notices.length} icon={<BellRing size={17} />} tone="red" className="lg:col-span-4">
+            <CompactList items={data.notices} limit={4} empty="진행 중인 공지가 없습니다." />
+          </Panel>
+
+          <Panel title="미완료 TO DO" count={data.todos.length} icon={<CheckCircle2 size={17} />} tone="emerald" className="lg:col-span-4">
+            <CompactList items={data.todos} limit={4} empty="미완료 항목이 없습니다." />
+          </Panel>
+
+          <Panel title="오늘·내일 휴가" count={data.absences.length} icon={<CalendarDays size={17} />} tone="amber" className="lg:col-span-4">
+            <AbsenceList items={data.absences} today={today} limit={5} />
+          </Panel>
         </main>
-
-        <footer className="flex shrink-0 items-center justify-between border-t border-white/10 pt-4">
-          <button onClick={() => setSlide((current) => (current + 2) % 3)} className="rounded-xl bg-white/10 p-2.5 hover:bg-white/20"><ChevronLeft size={18} /></button>
-          <div className="flex gap-2">{[0, 1, 2].map((index) => <button key={index} aria-label={`${index + 1}번 화면`} onClick={() => setSlide(index)} className={`h-2.5 rounded-full transition-all ${slide === index ? 'w-9 bg-blue-400' : 'w-2.5 bg-white/25'}`} />)}</div>
-          <button onClick={() => setSlide((current) => (current + 1) % 3)} className="rounded-xl bg-white/10 p-2.5 hover:bg-white/20"><ChevronRight size={18} /></button>
-        </footer>
       </div>
     </div>
   );
 }
 
-function ScheduleRow({ schedule }: { schedule: KioskSchedule }) {
-  return (
-    <div className="flex items-center gap-4 rounded-2xl border border-white/10 bg-slate-950/25 px-4 py-3 lg:px-5 lg:py-4">
-      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-500/15 text-blue-300">{schedule.is_urgent ? <Siren size={19} /> : <CalendarDays size={19} />}</span>
-      <div className="min-w-0 flex-1"><p className="truncate text-base font-black lg:text-xl">{cleanTitle(schedule.title)}</p><p className="mt-1 flex items-center gap-1.5 text-xs font-bold text-slate-400"><Clock3 size={12} />{formatTime(schedule)}</p></div>
-    </div>
-  );
-}
+const toneClasses = {
+  blue: 'bg-blue-500/20 text-blue-300',
+  violet: 'bg-violet-500/20 text-violet-300',
+  red: 'bg-red-500/15 text-red-300',
+  emerald: 'bg-emerald-500/15 text-emerald-300',
+  amber: 'bg-amber-400/15 text-amber-300',
+};
 
-function KioskList({ title, icon, items, empty }: { title: string; icon: React.ReactNode; items: KioskSchedule[]; empty: string }) {
+function Panel({ title, count, tone, icon, className = '', children }: { title: string; count: number; tone: keyof typeof toneClasses; icon?: React.ReactNode; className?: string; children: React.ReactNode }) {
   return (
-    <section className="flex min-h-0 flex-col rounded-[28px] border border-white/10 bg-white/[0.06] p-5 backdrop-blur-sm lg:p-7">
-      <div className="mb-4 flex items-center gap-3 text-2xl font-black lg:text-3xl"><span className="text-blue-300">{icon}</span>{title}<span className="ml-auto rounded-xl bg-white/10 px-3 py-1.5 text-sm">{items.length}건</span></div>
-      <div className="min-h-0 flex-1 space-y-3 overflow-hidden">{items.length === 0 ? <Empty label={empty} /> : items.map((schedule) => <ScheduleRow key={schedule.id} schedule={schedule} />)}</div>
+    <section className={`flex min-h-0 flex-col rounded-[20px] border border-white/10 bg-white/[0.06] p-3 backdrop-blur-sm sm:p-4 lg:rounded-[24px] lg:p-5 ${className}`}>
+      <div className="mb-2.5 flex shrink-0 items-center gap-2 lg:mb-3">{icon && <span className={toneClasses[tone].split(' ').at(-1)}>{icon}</span>}<h2 className="text-base font-black sm:text-lg lg:text-xl 2xl:text-2xl">{title}</h2><span className={`ml-auto rounded-lg px-2.5 py-1 text-[10px] font-black lg:text-xs ${toneClasses[tone]}`}>{count}건</span></div>
+      <div className="min-h-0 flex-1">{children}</div>
     </section>
   );
 }
 
+function ScheduleList({ items, limit, empty }: { items: KioskSchedule[]; limit: number; empty: string }) {
+  if (items.length === 0) return <Empty label={empty} />;
+  return <div className="flex h-full min-h-0 flex-col gap-1.5 overflow-hidden lg:gap-2">{items.slice(0, limit).map((schedule) => <ScheduleRow key={schedule.id} schedule={schedule} />)}<MoreCount count={items.length - limit} /></div>;
+}
+
+function ScheduleRow({ schedule }: { schedule: KioskSchedule }) {
+  return (
+    <div className="flex min-h-0 flex-1 items-center gap-3 rounded-xl border border-white/10 bg-slate-950/25 px-3 py-2 lg:rounded-2xl lg:px-4">
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-500/15 text-blue-300 lg:h-9 lg:w-9">{schedule.is_urgent ? <Siren size={16} /> : <CalendarDays size={16} />}</span>
+      <div className="min-w-0 flex-1"><p className="truncate text-xs font-black sm:text-sm lg:text-base 2xl:text-lg">{cleanTitle(schedule.title)}</p><p className="mt-0.5 flex items-center gap-1 text-[9px] font-bold text-slate-400 lg:text-[10px]"><Clock3 size={10} />{formatTime(schedule)}</p></div>
+    </div>
+  );
+}
+
+function CompactList({ items, limit, empty }: { items: KioskSchedule[]; limit: number; empty: string }) {
+  if (items.length === 0) return <Empty label={empty} />;
+  return <div className="space-y-1.5 overflow-hidden">{items.slice(0, limit).map((schedule) => <div key={schedule.id} className="flex items-center gap-2 rounded-xl bg-slate-950/25 px-3 py-2"><span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400" /><span className="min-w-0 flex-1 truncate text-xs font-black lg:text-sm">{cleanTitle(schedule.title)}</span><span className="shrink-0 text-[9px] font-bold text-slate-400">{schedule.date.slice(5).replace('-', '.')}</span></div>)}<MoreCount count={items.length - limit} /></div>;
+}
+
+function AbsenceList({ items, today, limit }: { items: KioskSchedule[]; today: string; limit: number }) {
+  if (items.length === 0) return <Empty label="예정된 휴가·조퇴·외출이 없습니다." />;
+  return <div className="space-y-1.5 overflow-hidden">{items.slice(0, limit).map((schedule) => <div key={schedule.id} className="flex items-center gap-2 rounded-xl bg-amber-300/10 px-3 py-2"><span className="rounded-md bg-amber-300/15 px-2 py-1 text-[9px] font-black text-amber-300">{absenceLabel(schedule)}</span><span className="min-w-0 flex-1 truncate text-xs font-black lg:text-sm">{cleanTitle(schedule.title)}</span><span className="shrink-0 text-[9px] font-bold text-slate-400">{happensOn(schedule, today) ? '오늘' : '내일'}</span></div>)}<MoreCount count={items.length - limit} /></div>;
+}
+
+function MoreCount({ count }: { count: number }) {
+  return count > 0 ? <p className="pt-0.5 text-center text-[9px] font-black text-slate-500">외 {count}건</p> : null;
+}
+
 function Empty({ label }: { label: string }) {
-  return <div className="flex h-full min-h-32 items-center justify-center rounded-2xl bg-white/[0.03] text-sm font-bold text-slate-500 lg:text-lg">{label}</div>;
+  return <div className="flex h-full min-h-16 items-center justify-center rounded-xl bg-white/[0.03] px-3 text-center text-[10px] font-bold text-slate-500 lg:text-xs">{label}</div>;
 }
