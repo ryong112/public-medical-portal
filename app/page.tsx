@@ -1098,7 +1098,7 @@ export default function IntegratedPortal() {
                   <iframe
                     key={externalCalendarFrameKey}
                     src={EXTERNAL_CALENDAR_URL}
-                    className="absolute inset-0 h-full w-full border-0"
+                    className="absolute left-0 -top-[720px] h-[calc(100%+720px)] w-full border-0 sm:-top-[455px] sm:h-[calc(100%+455px)]"
                     title="손 일정확인 외부 달력"
                   />
                 </div>
