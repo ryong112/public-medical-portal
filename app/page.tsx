@@ -29,6 +29,7 @@ interface KoreanHoliday {
 }
 
 const EXTERNAL_CALENDAR_URL = 'https://my-calendar-eta.vercel.app';
+const EXTERNAL_CALENDAR_EMBED_URL = `${EXTERNAL_CALENDAR_URL}/?embed=1`;
 
 const getLocalDateKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
@@ -933,6 +934,20 @@ export default function IntegratedPortal() {
           >
             {viewMode === 'external_calendar' ? <LayoutDashboard size={16} className="xl:h-[18px] xl:w-[18px]"/> : <CalendarDays size={16} className="xl:h-[18px] xl:w-[18px]"/>} <span className="hidden xl:inline">{viewMode === 'external_calendar' ? '홈' : '손)일정확인'}</span>
           </button>
+          {viewMode === 'external_calendar' && isDeviceAdmin && (
+            <a
+              href={EXTERNAL_CALENDAR_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => {
+                externalCalendarLoginPendingRef.current = true;
+                externalCalendarLoginOpenedAtRef.current = Date.now();
+              }}
+              className="flex shrink-0 items-center gap-1.5 rounded-xl bg-blue-600 px-3 py-2 text-xs font-black text-white shadow-md transition-colors hover:bg-blue-700 xl:rounded-2xl xl:px-4 xl:py-2.5 xl:text-sm"
+            >
+              <ExternalLink size={16} /> <span className="hidden 2xl:inline">전체화면</span>
+            </a>
+          )}
 
           <button 
             onClick={() => setViewMode(viewMode === 'calendar' ? 'dashboard' : 'calendar')} 
@@ -955,18 +970,18 @@ export default function IntegratedPortal() {
           </button>
           <button onClick={() => setIsQuickScheduleOpen(true)} aria-label="빠른 일정 입력" className="group relative shrink-0 rounded-xl p-2 text-amber-300 transition-colors hover:bg-white/10 hover:text-white">
             <Zap size={18} />
-            <span className="pointer-events-none absolute left-1/2 top-full z-[120] mt-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-bold text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 xl:block">빠른 일정 입력</span>
+            <span className="pointer-events-none absolute left-1/2 top-full z-[120] mt-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-bold text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 xl:block">빠른 일정 입력</span>
           </button>
           <button onClick={() => void openActivityHistory()} aria-label="변경 이력" className="group relative shrink-0 rounded-xl p-2 text-slate-300 transition-colors hover:bg-white/10 hover:text-white">
             <History size={18} />
-            <span className="pointer-events-none absolute left-1/2 top-full z-[120] mt-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-bold text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 xl:block">변경 이력</span>
+            <span className="pointer-events-none absolute left-1/2 top-full z-[120] mt-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-bold text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 xl:block">변경 이력</span>
           </button>
           <button onClick={() => setIsKioskOpen(true)} aria-label="전광판 모드" className="group relative shrink-0 rounded-xl p-2 text-slate-300 transition-colors hover:bg-white/10 hover:text-white">
             <MonitorPlay size={18} />
-            <span className="pointer-events-none absolute left-1/2 top-full z-[120] mt-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-bold text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 xl:block">전광판 모드</span>
+            <span className="pointer-events-none absolute left-1/2 top-full z-[120] mt-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-bold text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 xl:block">전광판 모드</span>
           </button>
-          {isDeviceAdmin && <button onClick={() => setIsDeviceManagerOpen(true)} aria-label="승인 기기 관리" className="group relative shrink-0 rounded-xl p-2 text-blue-300 transition-colors hover:bg-white/10 hover:text-white"><ShieldCheck size={18} /><span className="pointer-events-none absolute left-1/2 top-full z-[120] mt-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-bold text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 xl:block">승인 기기 관리</span></button>}
-          {isDeviceAdmin && <button onClick={() => setIsYearlyCleanupOpen(true)} aria-label="연도 문서 정리" className="group relative shrink-0 rounded-xl p-2 text-amber-300 transition-colors hover:bg-white/10 hover:text-white"><FolderSync size={18} /><span className="pointer-events-none absolute left-1/2 top-full z-[120] mt-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-bold text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 xl:block">연도 문서 정리</span></button>}
+          {isDeviceAdmin && <button onClick={() => setIsDeviceManagerOpen(true)} aria-label="승인 기기 관리" className="group relative shrink-0 rounded-xl p-2 text-blue-300 transition-colors hover:bg-white/10 hover:text-white"><ShieldCheck size={18} /><span className="pointer-events-none absolute left-1/2 top-full z-[120] mt-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-bold text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 xl:block">승인 기기 관리</span></button>}
+          {isDeviceAdmin && <button onClick={() => setIsYearlyCleanupOpen(true)} aria-label="연도 문서 정리" className="group relative shrink-0 rounded-xl p-2 text-amber-300 transition-colors hover:bg-white/10 hover:text-white"><FolderSync size={18} /><span className="pointer-events-none absolute left-1/2 top-full z-[120] mt-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-bold text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 xl:block">연도 문서 정리</span></button>}
           <button onClick={handlePortalExit} aria-label="화면 나가기 (기기 승인 유지)" title="화면 나가기 · 기기 승인은 유지됩니다" className="text-slate-500 hover:text-white p-1 md:p-2 transition-colors ml-0.5 md:ml-0 shrink-0"><X size={18} className="md:w-[20px] md:h-[20px]"/></button>
         </div>
         {viewMode === 'external_calendar' && (
@@ -989,7 +1004,7 @@ export default function IntegratedPortal() {
                 }}
                 className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1.5 text-[10px] font-black text-white"
               >
-                로그인 <ExternalLink size={11} />
+                전체화면 <ExternalLink size={11} />
               </a>
             )}
           </div>
@@ -1123,25 +1138,10 @@ export default function IntegratedPortal() {
                   </div>
                   <iframe
                     key={externalCalendarFrameKey}
-                    src={EXTERNAL_CALENDAR_URL}
-                    className="absolute left-0 top-[-104px] hidden h-[calc(100%+104px)] w-full border-0 sm:block"
+                    src={EXTERNAL_CALENDAR_EMBED_URL}
+                    className="absolute inset-0 hidden h-full w-full border-0 sm:block"
                     title="손 일정확인 외부 달력"
                   />
-                  {isDeviceAdmin && (
-                    <a
-                      href={EXTERNAL_CALENDAR_URL}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={() => {
-                        externalCalendarLoginPendingRef.current = true;
-                        externalCalendarLoginOpenedAtRef.current = Date.now();
-                      }}
-                      className="absolute right-32 top-3 z-10 hidden items-center gap-1 rounded-lg bg-blue-50/95 px-2.5 py-1.5 text-[10px] font-black text-blue-700 shadow-sm backdrop-blur transition-colors hover:bg-blue-100 sm:inline-flex lg:right-36"
-                      title="새 창에서 관리자 로그인"
-                    >
-                      관리자 로그인 <ExternalLink size={11} />
-                    </a>
-                  )}
                 </div>
 
               ) : viewMode === 'calendar' ? (
