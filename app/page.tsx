@@ -20,7 +20,7 @@ import {
   FileText, FilePlus,
   FileSpreadsheet, FileBox, File, Download, Trash2,
   GripVertical, Calendar as CalendarIcon, LayoutDashboard, Plus,
-  ChevronLeft, ChevronRight, X, Clock, CalendarDays, Archive, Menu, Siren, Pencil, ScanLine, ShieldCheck, Search, History, Copy, MonitorPlay, Zap, FolderSync, ExternalLink, RefreshCw
+  ChevronLeft, ChevronRight, X, Clock, CalendarDays, Archive, Menu, Siren, Pencil, ScanLine, ShieldCheck, Search, History, Copy, MonitorPlay, Zap, FolderSync, ExternalLink
 } from 'lucide-react';
 
 interface KoreanHoliday {
@@ -135,6 +135,8 @@ export default function IntegratedPortal() {
   const pendingDeleteKeysRef = useRef(new Set<string>());
   const undoTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const undoActionsRef = useRef(new Map<string, { keys: string[]; restore: () => void }>());
+  const externalCalendarLoginPendingRef = useRef(false);
+  const externalCalendarLoginOpenedAtRef = useRef(0);
 
   useEffect(() => {
     setIsMounted(true);
@@ -146,6 +148,25 @@ export default function IntegratedPortal() {
       setTodayStr((currentToday) => currentToday === nextToday ? currentToday : nextToday);
     }, 60_000);
     return () => window.clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    const refreshExternalCalendarAfterLogin = () => {
+      if (!externalCalendarLoginPendingRef.current) return;
+      if (Date.now() - externalCalendarLoginOpenedAtRef.current < 1_000) return;
+      externalCalendarLoginPendingRef.current = false;
+      setExternalCalendarFrameKey((current) => current + 1);
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refreshExternalCalendarAfterLogin();
+    };
+
+    window.addEventListener('focus', refreshExternalCalendarAfterLogin);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.removeEventListener('focus', refreshExternalCalendarAfterLogin);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, []);
 
   const handleDeviceApproved = useCallback((access: { userId: string; isAdmin: boolean }) => {
@@ -1041,6 +1062,21 @@ export default function IntegratedPortal() {
                   <input type="file" className="hidden" multiple onChange={(e) => e.target.files && handleUpload(e.target.files)} />
                 </label>
               )}
+              {viewMode === 'external_calendar' && isDeviceAdmin && (
+                <a
+                  href={EXTERNAL_CALENDAR_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => {
+                    externalCalendarLoginPendingRef.current = true;
+                    externalCalendarLoginOpenedAtRef.current = Date.now();
+                  }}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-blue-50 px-2.5 py-1.5 text-[10px] font-black text-blue-700 transition-colors hover:bg-blue-100"
+                  title="새 창에서 관리자 로그인"
+                >
+                  관리자 로그인 <ExternalLink size={11} />
+                </a>
+              )}
             </div>}
 
             <div className={`flex-1 flex flex-col min-h-0 ${viewMode === 'external_calendar' || viewMode === 'calendar' || viewMode === 'dashboard' ? 'overflow-hidden' : 'overflow-auto custom-scrollbar'}`}>
@@ -1058,40 +1094,13 @@ export default function IntegratedPortal() {
                   onOpenAbsenceBoard={() => setIsAbsenceBoardOpen(true)}
                 />
               ) : viewMode === 'external_calendar' ? (
-                <div className="flex h-full w-full flex-col overflow-hidden rounded-[16px] bg-slate-50 shadow-xl md:rounded-[24px]">
-                  <div className="flex shrink-0 flex-col gap-2 border-b border-slate-200 bg-white px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:px-4">
-                    <div className="min-w-0">
-                      <p className="text-xs font-black text-slate-800">외부 달력 관리자 기능</p>
-                      <p className="truncate text-[10px] font-medium text-slate-500 sm:text-xs">
-                        새 창에서 로그인한 뒤 이 화면을 새로고침해 주십시오.
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setExternalCalendarFrameKey((current) => current + 1)}
-                        className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-slate-100 px-3 py-2 text-[11px] font-black text-slate-700 transition-colors hover:bg-slate-200 sm:flex-none sm:text-xs"
-                      >
-                        <RefreshCw size={14} /> 달력 새로고침
-                      </button>
-                      <a
-                        href={EXTERNAL_CALENDAR_URL}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-blue-600 px-3 py-2 text-[11px] font-black text-white shadow-md transition-colors hover:bg-blue-700 sm:flex-none sm:text-xs"
-                      >
-                        관리자 로그인 <ExternalLink size={14} />
-                      </a>
-                    </div>
-                  </div>
-                  <div className="relative min-h-0 flex-1">
-                    <iframe
-                      key={externalCalendarFrameKey}
-                      src={EXTERNAL_CALENDAR_URL}
-                      className="absolute inset-0 h-full w-full border-0"
-                      title="손 일정확인 외부 달력"
-                    />
-                  </div>
+                <div className="relative h-full w-full overflow-hidden rounded-[16px] bg-slate-50 shadow-xl md:rounded-[24px]">
+                  <iframe
+                    key={externalCalendarFrameKey}
+                    src={EXTERNAL_CALENDAR_URL}
+                    className="absolute inset-0 h-full w-full border-0"
+                    title="손 일정확인 외부 달력"
+                  />
                 </div>
 
               ) : viewMode === 'calendar' ? (

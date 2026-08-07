@@ -41,6 +41,11 @@ const formatShortDate = (value: string) => {
   const weekday = ['일', '월', '화', '수', '목', '금', '토'][new Date(year, month - 1, day).getDay()];
   return `${month}.${day}(${weekday})`;
 };
+const formatAbsenceDate = (value: string) => {
+  const [year, month, day] = value.split('-').map(Number);
+  const weekday = ['일', '월', '화', '수', '목', '금', '토'][new Date(year, month - 1, day).getDay()];
+  return `${month}월 ${day}일(${weekday})`;
+};
 
 export default function DashboardKiosk({ schedules, onClose }: DashboardKioskProps) {
   const [now, setNow] = useState(() => new Date());
@@ -153,7 +158,7 @@ function CompactList({ items, limit, empty }: { items: KioskSchedule[]; limit: n
 
 function AbsenceList({ items, limit }: { items: KioskSchedule[]; limit: number }) {
   if (items.length === 0) return <Empty label="예정된 휴가·조퇴·외출이 없습니다." />;
-  return <div className="space-y-1.5 overflow-hidden">{items.slice(0, limit).map((schedule) => <div key={schedule.id} className="flex items-center gap-2 rounded-xl bg-amber-300/10 px-3 py-2"><span className="rounded-md bg-amber-300/15 px-2 py-1 text-[9px] font-black text-amber-300">{absenceLabel(schedule)}</span><span className="min-w-0 flex-1 truncate text-xs font-black lg:text-sm">{cleanTitle(schedule.title)}</span><span className="shrink-0 text-[9px] font-black text-amber-200">{schedule.end_date && schedule.end_date > schedule.date ? `${formatShortDate(schedule.date)}–${formatShortDate(schedule.end_date)}` : formatShortDate(schedule.date)}</span></div>)}<MoreCount count={items.length - limit} /></div>;
+  return <div className="space-y-1.5 overflow-hidden">{items.slice(0, limit).map((schedule) => <div key={schedule.id} className="flex items-center gap-2 rounded-xl bg-amber-300/10 px-3 py-2"><span className="rounded-md bg-amber-300/15 px-2 py-1 text-[9px] font-black text-amber-300">{absenceLabel(schedule)}</span><span className="shrink-0 text-xs font-black tracking-tight text-amber-100 lg:text-sm 2xl:text-base">{schedule.end_date && schedule.end_date > schedule.date ? `${formatAbsenceDate(schedule.date)}–${formatAbsenceDate(schedule.end_date)}` : formatAbsenceDate(schedule.date)}</span><span className="min-w-0 flex-1 truncate text-[10px] font-bold text-slate-200 lg:text-xs">{cleanTitle(schedule.title)}</span></div>)}<MoreCount count={items.length - limit} /></div>;
 }
 
 function MoreCount({ count }: { count: number }) {
