@@ -115,6 +115,7 @@ export default function IntegratedPortal() {
   const [schedules, setSchedules] = useState<any[]>([]);
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [calendarDensity, setCalendarDensity] = useState<'comfortable' | 'compact'>('comfortable');
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState(() => getLocalDateKey());
   const [koreanHolidays, setKoreanHolidays] = useState<Record<string, string[]>>({});
   const [selectedSchedule, setSelectedSchedule] = useState<any | null>(null);
   const [draggedScheduleId, setDraggedScheduleId] = useState<number | null>(null);
@@ -308,6 +309,55 @@ export default function IntegratedPortal() {
     if (dateStr === schedule.date) return schedule.start_time ? `${schedule.start_time}부터` : '일정 시작';
     if (dateStr === endDate) return schedule.end_time ? `${schedule.end_time}까지` : '일정 종료';
     return '기간 일정';
+  };
+
+  const getCalendarSchedulesForDate = (dateStr: string) => schedules
+    .filter((schedule) => schedule.date <= dateStr && getScheduleEndDate(schedule) >= dateStr)
+    .slice()
+    .sort((first, second) => {
+      const firstTime = first.start_time ?? first.end_time ?? '99:99';
+      const secondTime = second.start_time ?? second.end_time ?? '99:99';
+      const timeOrder = firstTime.localeCompare(secondTime);
+      if (timeOrder !== 0) return timeOrder;
+      const titleOrder = String(first.title ?? '').localeCompare(String(second.title ?? ''), 'ko-KR');
+      if (titleOrder !== 0) return titleOrder;
+      return String(first.id).localeCompare(String(second.id));
+    });
+
+  const formatCalendarDateHeading = (dateStr: string) => {
+    const [year, month, day] = dateStr.split('-').map(Number);
+    return new Intl.DateTimeFormat('ko-KR', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      weekday: 'long',
+    }).format(new Date(year, month - 1, day));
+  };
+
+  const getCalendarScheduleTypeLabel = (schedule: (typeof schedules)[number]) => {
+    if (schedule.schedule_type === 'leave') {
+      if (['early', 'early_am', 'early_pm'].includes(schedule.absence_type)) return '조퇴';
+      if (schedule.absence_type === 'outing') return '외출';
+      return '연차';
+    }
+    return ({
+      meeting: '회의',
+      business_trip: '출장',
+      internal: '내부일정',
+      unclassified: '일반',
+    } as Record<string, string>)[schedule.schedule_type] ?? '일반';
+  };
+
+  const moveCalendarMonth = (offset: number) => {
+    const nextMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + offset, 1);
+    const nextMonthKey = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}`;
+    setCurrentMonth(nextMonth);
+    setSelectedCalendarDate(todayStr.startsWith(nextMonthKey) ? todayStr : `${nextMonthKey}-01`);
+  };
+
+  const moveCalendarToToday = () => {
+    setCurrentMonth(new Date());
+    setSelectedCalendarDate(todayStr);
   };
 
   const addDaysToDateKey = (dateKey: string, days: number) => {
@@ -830,6 +880,9 @@ export default function IntegratedPortal() {
     window.location.assign('about:blank');
   };
 
+  const selectedCalendarSchedules = getCalendarSchedulesForDate(selectedCalendarDate);
+  const selectedCalendarHolidayNames = koreanHolidays[selectedCalendarDate] ?? [];
+
   if (!isMounted) return null;
 
   if (!isAuthenticated) {
@@ -1024,7 +1077,7 @@ export default function IntegratedPortal() {
             </div>
           )}
 
-          <div className={`mx-auto flex w-full flex-1 flex-col overflow-hidden min-h-0 ${viewMode === 'dashboard' ? 'max-w-[1440px]' : viewMode === 'external_calendar' ? 'max-w-[1600px]' : 'max-w-6xl'} ${viewMode === 'external_calendar' ? 'p-0 sm:p-3 lg:p-4' : viewMode === 'calendar' ? 'p-2 sm:p-3 lg:p-4' : viewMode === 'dashboard' ? 'p-2.5 sm:p-4 lg:p-5 2xl:p-6' : 'p-4 sm:p-6 lg:p-10 2xl:p-12'}`}>
+          <div className={`flex w-full flex-1 flex-col overflow-hidden min-h-0 ${viewMode === 'calendar' ? 'mr-auto max-w-[1600px]' : viewMode === 'dashboard' ? 'mx-auto max-w-[1440px]' : viewMode === 'external_calendar' ? 'mx-auto max-w-[1600px]' : 'mx-auto max-w-6xl'} ${viewMode === 'external_calendar' ? 'p-0 sm:p-3 lg:p-4' : viewMode === 'calendar' ? 'p-2 sm:p-3 lg:p-4' : viewMode === 'dashboard' ? 'p-2.5 sm:p-4 lg:p-5 2xl:p-6' : 'p-4 sm:p-6 lg:p-10 2xl:p-12'}`}>
             
             {viewMode === 'files' && <div className="mb-10 flex shrink-0 flex-col items-start justify-between gap-4 md:flex-row">
               <div className="flex-1 w-full overflow-hidden">
@@ -1056,7 +1109,7 @@ export default function IntegratedPortal() {
               )}
             </div>}
 
-            <div className={`flex-1 flex flex-col min-h-0 ${viewMode === 'external_calendar' || viewMode === 'calendar' || viewMode === 'dashboard' ? 'overflow-hidden' : 'overflow-auto custom-scrollbar'}`}>
+            <div className={`flex-1 flex flex-col min-h-0 ${viewMode === 'calendar' ? 'overflow-y-auto 2xl:overflow-hidden' : viewMode === 'external_calendar' || viewMode === 'dashboard' ? 'overflow-hidden' : 'overflow-auto custom-scrollbar'}`}>
               
               {viewMode === 'dashboard' ? (
                 <SharedDashboard
@@ -1093,78 +1146,188 @@ export default function IntegratedPortal() {
                 </div>
 
               ) : viewMode === 'calendar' ? (
-                <div className="flex min-h-0 w-full flex-1 flex-col pb-3 sm:pb-4 lg:pb-5">
+                <div className="flex min-h-full w-full flex-col pb-3 sm:pb-4 lg:pb-5 2xl:min-h-0 2xl:flex-1">
                   <div className="mb-2 flex shrink-0 flex-wrap items-center gap-2 sm:mb-3 sm:gap-4 md:gap-6">
                     <div className="min-w-0">
                       <p className="text-[9px] font-black uppercase tracking-[0.16em] text-blue-600 sm:text-[10px]">일정 공유 달력</p>
                       <h3 className="mt-0.5 text-lg font-black tracking-tight text-slate-800 sm:text-xl md:text-2xl">{currentMonth.getFullYear()}년 {currentMonth.getMonth() + 1}월</h3>
                     </div>
                     <div className="flex gap-1.5 sm:gap-2">
-                      <button onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() - 1)))} className="p-2 md:p-3 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"><ChevronLeft size={18}/></button>
-                      <button onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() + 1)))} className="p-2 md:p-3 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"><ChevronRight size={18}/></button>
-                      <button onClick={() => setCurrentMonth(new Date())} className="px-5 py-2 bg-slate-900 text-white text-xs font-bold rounded-xl shadow-md hidden sm:block">오늘</button>
+                      <button type="button" onClick={() => moveCalendarMonth(-1)} aria-label="이전 달" className="rounded-xl bg-slate-100 p-2 transition-colors hover:bg-slate-200 md:p-3"><ChevronLeft size={18}/></button>
+                      <button type="button" onClick={() => moveCalendarMonth(1)} aria-label="다음 달" className="rounded-xl bg-slate-100 p-2 transition-colors hover:bg-slate-200 md:p-3"><ChevronRight size={18}/></button>
+                      <button type="button" onClick={moveCalendarToToday} className="hidden rounded-xl bg-slate-900 px-5 py-2 text-xs font-bold text-white shadow-md sm:block">오늘</button>
                     </div>
-                    <button onClick={() => setCalendarDensity((current) => current === 'comfortable' ? 'compact' : 'comfortable')} className="ml-auto rounded-xl bg-slate-100 px-3 py-2.5 text-[10px] font-black text-slate-600 transition-colors hover:bg-slate-200 md:text-xs" title="일정 카드 보기 밀도 변경">{calendarDensity === 'comfortable' ? '촘촘히' : '기본 보기'}</button>
+                    <button type="button" onClick={() => setCalendarDensity((current) => current === 'comfortable' ? 'compact' : 'comfortable')} aria-pressed={calendarDensity === 'compact'} className="ml-auto rounded-xl bg-slate-100 px-3 py-2.5 text-[10px] font-black text-slate-600 transition-colors hover:bg-slate-200 md:text-xs" title="일정 카드 보기 밀도 변경">{calendarDensity === 'comfortable' ? '촘촘히' : '기본 보기'}</button>
                     <button onClick={() => setIsWhiteboardImportOpen(true)} className="flex items-center gap-2 rounded-xl bg-blue-600 px-3 py-2.5 text-[10px] font-black text-white shadow-md transition-colors hover:bg-blue-700 md:px-4 md:text-xs"><ScanLine size={16} /> <span className="hidden sm:inline">화이트보드 가져오기</span><span className="sm:hidden">사진 분석</span></button>
                   </div>
 
-                  <div className="flex-1 flex flex-col min-h-0 bg-slate-200 border border-slate-200 rounded-[16px] md:rounded-[32px] overflow-hidden shadow-2xl">
-                    <div className="grid grid-cols-7 bg-slate-50 border-b border-slate-200 shrink-0">
-                      {['일', '월', '화', '수', '목', '금', '토'].map((d, index) => (
-                        <div
-                          key={d}
-                          className={`p-2 text-center text-[10px] font-black uppercase tracking-widest md:p-3 md:text-xs ${index === 0 ? 'text-red-500' : index === 6 ? 'text-blue-500' : 'text-slate-800'}`}
-                        >
-                          {d}
+                  <div className="grid min-h-0 flex-1 gap-3 2xl:grid-cols-[minmax(0,1fr)_360px]">
+                    <div className="min-w-0 overflow-x-auto rounded-[16px] 2xl:overflow-hidden 2xl:rounded-[28px]">
+                      <div className="flex min-h-[620px] min-w-[760px] flex-col overflow-hidden rounded-[16px] border border-slate-200 bg-slate-200 shadow-xl 2xl:h-full 2xl:min-h-0 2xl:min-w-0 2xl:rounded-[28px]">
+                        <div className="grid shrink-0 grid-cols-7 border-b border-slate-200 bg-slate-50">
+                          {['일', '월', '화', '수', '목', '금', '토'].map((d, index) => (
+                            <div
+                              key={d}
+                              className={`p-2 text-center text-[10px] font-black uppercase tracking-widest md:p-3 md:text-xs ${index === 0 ? 'text-red-500' : index === 6 ? 'text-blue-500' : 'text-slate-800'}`}
+                            >
+                              {d}
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
-                    
-                    <div className="flex-1 grid grid-cols-7 gap-px bg-slate-200 min-h-0 auto-rows-fr">
-                      {Array.from({length: new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1).getDay()}).map((_, i) => <div key={`empty-${i}`} className="bg-slate-50/40" />)}
-                      {Array.from({length: new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0).getDate()}).map((_, i) => {
-                        const day = i + 1; const dateStr = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                        const daySchedules = schedules.filter(s => s.date <= dateStr && getScheduleEndDate(s) >= dateStr);
-                        const isToday = dateStr === todayStr;
-                        const holidayNames = koreanHolidays[dateStr] ?? [];
-                        const isHoliday = holidayNames.length > 0;
-                        return (
-                          <div key={day} onDragOver={(e)=>e.preventDefault()} onDrop={()=>onDayDrop(dateStr)} className={`flex min-h-0 flex-col border-r border-b border-slate-100 transition-all hover:bg-blue-50/40 group relative ${calendarDensity === 'compact' ? 'p-1 md:p-1.5' : 'p-1.5 md:p-3'} ${isToday ? 'z-10 bg-blue-50/70 ring-2 ring-inset ring-blue-500' : isHoliday ? 'bg-red-50/25' : 'bg-white'}`}>
-                            <div className="flex justify-between items-start mb-1.5 shrink-0">
-                              {/* 공지사항 지정 일정은 날짜 칸 내부에서도 눈에 띄게 테두리 가벼운 강조 효과 */}
-                              <div className="flex min-w-0 items-center gap-1.5">
-                                <span className={`flex h-6 min-w-6 items-center justify-center rounded-lg px-1 text-xs font-black md:h-7 md:min-w-7 md:text-sm ${isToday ? 'bg-blue-600 text-white shadow-md' : isHoliday || daySchedules.some(s => s.is_notice) ? 'bg-red-50 text-red-600' : (new Date(dateStr).getDay() === 0) ? 'text-red-500' : (new Date(dateStr).getDay() === 6) ? 'text-blue-500' : 'text-slate-800'}`}>{day}</span>
-                                {isToday && <span className="rounded-md bg-blue-100 px-1.5 py-0.5 text-[8px] font-black text-blue-700 md:text-[9px]">오늘</span>}
-                                {isHoliday && <span title={holidayNames.join(', ')} className="truncate text-[8px] font-extrabold text-red-500 md:text-[9px]">{holidayNames.join(' · ')}</span>}
-                              </div>
-                              <button onClick={() => onAddSchedule(dateStr)} className="opacity-0 group-hover:opacity-100 bg-slate-900 text-white p-1 rounded-md transition-all"><Plus size={10}/></button>
-                            </div>
-                            <div className="-mx-1.5 flex-1 space-y-1 overflow-y-auto custom-scrollbar md:-mx-3">
-                              {daySchedules.map(s => {
-                                const endDate = getScheduleEndDate(s);
-                                const isRange = endDate > s.date;
-                                const weekday = new Date(`${dateStr}T00:00:00`).getDay();
-                                const segmentStartsHere = dateStr === s.date || weekday === 0;
-                                const segmentEndsHere = dateStr === endDate || weekday === 6;
-                                const rangeEdges = isRange
-                                  ? `${segmentStartsHere ? 'ml-1.5 rounded-l-lg border-l md:ml-3' : 'rounded-l-none border-l-0'} ${segmentEndsHere ? 'mr-1.5 rounded-r-lg border-r md:mr-3' : 'rounded-r-none border-r-0'}`
-                                  : 'mx-1.5 rounded-lg md:mx-3';
-                                return (
-                                <div key={s.id} draggable onDragStart={(e)=>onScheduleDragStart(e, s.id)} onClick={()=>setSelectedSchedule(s)} className={`relative z-[1] flex cursor-pointer flex-col gap-0.5 truncate border font-bold text-slate-800 shadow-sm transition-all ${calendarDensity === 'compact' ? 'p-1 text-[8px] md:text-[9px]' : 'p-1.5 text-[9px] md:text-[10px]'} ${rangeEdges} ${s.is_notice ? 'border-red-200 bg-red-50/90 hover:border-red-400' : isRange ? 'border-indigo-200 bg-indigo-50/95 hover:bg-indigo-100' : 'border-blue-100 bg-white hover:border-blue-400'}`}>
-                                  <div className="flex items-center gap-1 text-blue-600 hidden md:flex">
-                                    <Clock size={9}/>
-                                    <span className={`text-[8px] font-black ${s.is_notice ? 'text-red-500' : isRange ? 'text-indigo-600' : 'text-blue-600'}`}>{formatCalendarScheduleTime(s, dateStr)}</span>
-                                    {s.is_notice && <span className="bg-red-500 text-white px-1 rounded-[4px] text-[7px] scale-90">공지</span>}
+
+                        <div className="grid min-h-0 flex-1 auto-rows-fr grid-cols-7 gap-px bg-slate-200">
+                          {Array.from({length: new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1).getDay()}).map((_, i) => <div key={`empty-${i}`} className="bg-slate-50/50" />)}
+                          {Array.from({length: new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0).getDate()}).map((_, i) => {
+                            const day = i + 1;
+                            const dateStr = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                            const daySchedules = getCalendarSchedulesForDate(dateStr);
+                            const visibleLimit = calendarDensity === 'compact' ? 3 : 2;
+                            const visibleSchedules = daySchedules.slice(0, visibleLimit);
+                            const hiddenScheduleCount = Math.max(0, daySchedules.length - visibleSchedules.length);
+                            const isToday = dateStr === todayStr;
+                            const isSelectedDay = dateStr === selectedCalendarDate;
+                            const holidayNames = koreanHolidays[dateStr] ?? [];
+                            const isHoliday = holidayNames.length > 0;
+                            return (
+                              <div
+                                key={day}
+                                role="button"
+                                tabIndex={0}
+                                aria-label={`${currentMonth.getMonth() + 1}월 ${day}일, 일정 ${daySchedules.length}건`}
+                                aria-pressed={isSelectedDay}
+                                onClick={() => setSelectedCalendarDate(dateStr)}
+                                onKeyDown={(event) => {
+                                  if (event.currentTarget !== event.target || !['Enter', ' '].includes(event.key)) return;
+                                  event.preventDefault();
+                                  setSelectedCalendarDate(dateStr);
+                                }}
+                                onDragOver={(event) => event.preventDefault()}
+                                onDrop={(event) => {
+                                  event.preventDefault();
+                                  setSelectedCalendarDate(dateStr);
+                                  void onDayDrop(dateStr);
+                                }}
+                                className={`group relative flex min-h-0 cursor-pointer flex-col border-b border-r border-slate-100 outline-none transition-all hover:bg-blue-50/50 focus-visible:z-20 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 ${calendarDensity === 'compact' ? 'p-1 md:p-1.5' : 'p-1.5 md:p-2'} ${isToday ? 'z-10 bg-blue-50/80 ring-2 ring-inset ring-blue-500' : isSelectedDay ? 'z-[9] bg-sky-50/70 ring-2 ring-inset ring-sky-300' : isHoliday ? 'bg-red-50/25' : 'bg-white'}`}
+                              >
+                                <div className="mb-1 flex shrink-0 items-start justify-between gap-1">
+                                  <div className="flex min-w-0 items-center gap-1.5">
+                                    <span className={`flex h-6 min-w-6 items-center justify-center rounded-lg px-1 text-xs font-black md:h-7 md:min-w-7 md:text-sm ${isToday ? 'bg-blue-600 text-white shadow-md' : isHoliday || daySchedules.some((schedule) => schedule.is_notice) ? 'bg-red-50 text-red-600' : new Date(`${dateStr}T00:00:00`).getDay() === 0 ? 'text-red-500' : new Date(`${dateStr}T00:00:00`).getDay() === 6 ? 'text-blue-500' : 'text-slate-800'}`}>{day}</span>
+                                    {isToday && <span className="rounded-md bg-blue-100 px-1.5 py-0.5 text-[8px] font-black text-blue-700 md:text-[9px]">오늘</span>}
+                                    {isHoliday && <span title={holidayNames.join(', ')} className="truncate text-[8px] font-extrabold text-red-500 md:text-[9px]">{holidayNames.join(' · ')}</span>}
                                   </div>
-                                  <span className={`flex items-center gap-1 ${s.is_notice ? 'text-red-900 font-extrabold' : ''} ${s.is_completed ? 'text-slate-400 line-through opacity-60' : ''}`}>{s.is_urgent && <Siren size={10} className="shrink-0 text-red-500" />}{formatScheduleTitle(s)}</span>
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      setSelectedCalendarDate(dateStr);
+                                      onAddSchedule(dateStr);
+                                    }}
+                                    aria-label={`${currentMonth.getMonth() + 1}월 ${day}일 일정 추가`}
+                                    className="rounded-md bg-slate-900 p-1 text-white opacity-100 transition-all hover:bg-blue-600 focus-visible:opacity-100 md:opacity-0 md:group-hover:opacity-100"
+                                  >
+                                    <Plus size={10}/>
+                                  </button>
                                 </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        );
-                      })}
+
+                                <div className="min-h-0 flex-1 space-y-1 overflow-hidden">
+                                  {visibleSchedules.map((schedule) => {
+                                    const endDate = getScheduleEndDate(schedule);
+                                    const isRange = endDate > schedule.date;
+                                    const weekday = new Date(`${dateStr}T00:00:00`).getDay();
+                                    const segmentStartsHere = dateStr === schedule.date || weekday === 0;
+                                    const segmentEndsHere = dateStr === endDate || weekday === 6;
+                                    const rangeEdges = isRange
+                                      ? `${segmentStartsHere ? 'ml-1 rounded-l-lg border-l' : 'rounded-l-none border-l-0'} ${segmentEndsHere ? 'mr-1 rounded-r-lg border-r' : 'rounded-r-none border-r-0'}`
+                                      : 'mx-1 rounded-lg';
+                                    return (
+                                      <button
+                                        type="button"
+                                        key={schedule.id}
+                                        draggable
+                                        title={`${formatCalendarScheduleTime(schedule, dateStr)} · ${formatScheduleTitle(schedule)}`}
+                                        onDragStart={(event) => onScheduleDragStart(event, schedule.id)}
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          setSelectedCalendarDate(dateStr);
+                                          setSelectedSchedule(schedule);
+                                        }}
+                                        className={`relative z-[1] grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1 border text-left font-bold text-slate-800 shadow-sm transition-all ${calendarDensity === 'compact' ? 'min-h-6 px-1 py-0.5' : 'min-h-7 px-1.5 py-1'} ${rangeEdges} ${schedule.is_notice ? 'border-red-200 bg-red-50/95 hover:border-red-400' : isRange ? 'border-indigo-200 bg-indigo-50/95 hover:bg-indigo-100' : 'border-blue-100 bg-white hover:border-blue-400'}`}
+                                      >
+                                        <span className={`max-w-[68px] truncate text-[8px] font-black tabular-nums md:text-[9px] ${schedule.is_notice ? 'text-red-500' : isRange ? 'text-indigo-600' : 'text-blue-600'}`}>{formatCalendarScheduleTime(schedule, dateStr)}</span>
+                                        <span className={`min-w-0 truncate text-[8px] font-extrabold md:text-[9px] ${schedule.is_notice ? 'text-red-900' : ''} ${schedule.is_completed ? 'text-slate-400 line-through opacity-60' : ''}`}>{formatScheduleTitle(schedule)}</span>
+                                        {schedule.is_urgent ? <Siren size={10} className="shrink-0 text-red-500" /> : schedule.is_notice ? <span className="rounded bg-red-500 px-1 text-[7px] font-black text-white">공지</span> : null}
+                                      </button>
+                                    );
+                                  })}
+                                  {hiddenScheduleCount > 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        setSelectedCalendarDate(dateStr);
+                                      }}
+                                      className="mx-1 flex items-center justify-center rounded-md bg-slate-100/90 px-2 py-1 text-[8px] font-black text-slate-500 transition-colors hover:bg-blue-100 hover:text-blue-700 md:text-[9px]"
+                                    >
+                                      +{hiddenScheduleCount}건 더보기
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
                     </div>
+
+                    <aside aria-labelledby="selected-calendar-date-heading" aria-live="polite" className="flex min-h-[360px] max-h-[560px] flex-col overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-xl 2xl:min-h-0 2xl:max-h-none">
+                      <div className="shrink-0 border-b border-slate-100 bg-gradient-to-br from-slate-50 to-white p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-[9px] font-black uppercase tracking-[0.18em] text-blue-600">선택한 날짜</p>
+                            <h4 id="selected-calendar-date-heading" className="mt-1 break-keep text-lg font-black leading-tight text-slate-900 2xl:text-xl">{formatCalendarDateHeading(selectedCalendarDate)}</h4>
+                          </div>
+                          <span className="shrink-0 rounded-xl bg-slate-900 px-2.5 py-1.5 text-[10px] font-black text-white">{selectedCalendarSchedules.length}건</span>
+                        </div>
+                        {selectedCalendarHolidayNames.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {selectedCalendarHolidayNames.map((holidayName) => <span key={holidayName} className="rounded-lg bg-red-50 px-2 py-1 text-[9px] font-black text-red-600">{holidayName}</span>)}
+                          </div>
+                        )}
+                        <button type="button" onClick={() => onAddSchedule(selectedCalendarDate)} className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl bg-blue-600 px-3 py-2.5 text-xs font-black text-white shadow-sm transition-colors hover:bg-blue-700"><Plus size={14}/> 이 날짜에 일정 추가</button>
+                      </div>
+
+                      <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto p-3 custom-scrollbar">
+                        {selectedCalendarSchedules.length === 0 ? (
+                          <div className="flex h-full min-h-44 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-5 text-center">
+                            <CalendarDays size={30} className="text-slate-300" />
+                            <p className="mt-3 text-sm font-black text-slate-600">등록된 일정이 없습니다.</p>
+                            <p className="mt-1 text-[10px] font-bold text-slate-400">날짜 칸의 + 또는 위 버튼으로 바로 추가할 수 있습니다.</p>
+                          </div>
+                        ) : selectedCalendarSchedules.map((schedule) => {
+                          const isRange = getScheduleEndDate(schedule) > schedule.date;
+                          return (
+                            <button
+                              type="button"
+                              key={schedule.id}
+                              onClick={() => setSelectedSchedule(schedule)}
+                              className={`w-full rounded-2xl border p-3.5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md ${schedule.is_notice ? 'border-red-200 bg-red-50/60 hover:border-red-300' : isRange ? 'border-indigo-200 bg-indigo-50/50 hover:border-indigo-300' : 'border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50/30'}`}
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <span className={`flex items-center gap-1.5 text-sm font-black tabular-nums ${schedule.is_notice ? 'text-red-600' : isRange ? 'text-indigo-600' : 'text-blue-600'}`}><Clock size={14}/>{formatScheduleTime(schedule)}</span>
+                                <div className="flex flex-wrap justify-end gap-1">
+                                  <span className="rounded-md bg-slate-100 px-1.5 py-1 text-[8px] font-black text-slate-600">{getCalendarScheduleTypeLabel(schedule)}</span>
+                                  {isRange && <span className="rounded-md bg-indigo-100 px-1.5 py-1 text-[8px] font-black text-indigo-700">기간</span>}
+                                  {schedule.is_notice && <span className="rounded-md bg-red-500 px-1.5 py-1 text-[8px] font-black text-white">공지</span>}
+                                  {schedule.is_urgent && <span className="rounded-md bg-red-100 px-1.5 py-1 text-[8px] font-black text-red-600">긴급</span>}
+                                </div>
+                              </div>
+                              <p className={`mt-2 break-keep text-sm font-extrabold leading-5 text-slate-900 ${schedule.is_completed ? 'text-slate-400 line-through opacity-70' : ''}`}>{formatScheduleTitle(schedule)}</p>
+                              <p className="mt-1.5 text-[10px] font-bold text-slate-400">{formatScheduleDateRange(schedule)}</p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </aside>
                   </div>
                 </div>
 
