@@ -166,9 +166,17 @@ export default function IntegratedPortal() {
         setIsAuthenticated(false);
         setIsDeviceAdmin(false);
         setIsDeviceManagerOpen(false);
+        setIsActivityHistoryOpen(false);
+        setIsYearlyCleanupOpen(false);
         return;
       }
-      setIsDeviceAdmin(Boolean(data.is_admin));
+      const nextIsAdmin = Boolean(data.is_admin);
+      setIsDeviceAdmin(nextIsAdmin);
+      if (!nextIsAdmin) {
+        setIsDeviceManagerOpen(false);
+        setIsActivityHistoryOpen(false);
+        setIsYearlyCleanupOpen(false);
+      }
     };
     const interval = window.setInterval(() => void verifyAccess(), 30000);
     return () => window.clearInterval(interval);
@@ -590,6 +598,7 @@ export default function IntegratedPortal() {
   const fetchSchedules = async () => { const { data } = await supabase.from('schedules').select('*').order('start_time', { ascending: true }); if (data) setSchedules(data.filter((schedule) => schedule.recurrence_status !== 'cancelled' && !pendingDeleteKeysRef.current.has(`schedule:${schedule.id}`))); };
 
   const openActivityHistory = async () => {
+    if (!isDeviceAdmin) return;
     setIsActivityHistoryOpen(true);
     setIsActivityHistoryLoading(true);
     const { data, error } = await supabase
@@ -674,6 +683,7 @@ export default function IntegratedPortal() {
   };
 
   const executeYearlyDocumentCleanup = async (targets: YearlyDocumentCleanupTarget[]) => {
+    if (!isDeviceAdmin) throw new Error('관리자 기기에서만 연도 문서를 정리할 수 있습니다.');
     const conflictingTarget = targets.find((target) => categories.some((category) => category.id !== target.category.id && category.name.trim().toLocaleLowerCase('ko-KR') === target.nextCategoryName.trim().toLocaleLowerCase('ko-KR')));
     if (conflictingTarget) throw new Error(`이미 '${conflictingTarget.nextCategoryName}' 분류가 있습니다. 기존 분류 이름을 먼저 정리해 주십시오.`);
 
@@ -988,10 +998,10 @@ export default function IntegratedPortal() {
             <Zap size={18} />
             <span className="pointer-events-none absolute left-1/2 top-full z-[120] mt-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-bold text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 xl:block">빠른 일정 입력</span>
           </button>
-          <button onClick={() => void openActivityHistory()} aria-label="변경 이력" className="group relative shrink-0 rounded-xl p-2 text-slate-300 transition-colors hover:bg-white/10 hover:text-white">
+          {isDeviceAdmin && <button onClick={() => void openActivityHistory()} aria-label="변경 이력" className="group relative shrink-0 rounded-xl p-2 text-slate-300 transition-colors hover:bg-white/10 hover:text-white">
             <History size={18} />
             <span className="pointer-events-none absolute left-1/2 top-full z-[120] mt-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-bold text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 xl:block">변경 이력</span>
-          </button>
+          </button>}
           <button onClick={() => setIsKioskOpen(true)} aria-label="전광판 모드" className="group relative shrink-0 rounded-xl p-2 text-slate-300 transition-colors hover:bg-white/10 hover:text-white">
             <MonitorPlay size={18} />
             <span className="pointer-events-none absolute left-1/2 top-full z-[120] mt-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-bold text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 xl:block">전광판 모드</span>
@@ -1018,8 +1028,7 @@ export default function IntegratedPortal() {
           fixed bottom-0 left-0 top-14 z-50 flex w-[min(20rem,88vw)] flex-col border-r border-slate-300 bg-[#EBEEF2] shadow-2xl transition-transform duration-300 transform xl:relative xl:inset-auto xl:w-[clamp(18rem,20vw,23.5rem)] xl:shrink-0 xl:shadow-none
           ${isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full xl:translate-x-0'}
         `}>
-          <div className="p-6 pb-2 text-slate-400 flex justify-between items-center">
-            <p className="text-[10px] font-black uppercase tracking-[0.2em] px-2 italic">Classification</p>
+          <div className="flex justify-end px-4 pt-3 text-slate-400 xl:hidden">
             <button onClick={() => setIsMobileSidebarOpen(false)} className="text-slate-600 xl:hidden"><X size={20}/></button>
           </div>
           <div className="flex-1 overflow-y-auto px-6 py-2 custom-scrollbar">
@@ -1057,7 +1066,6 @@ export default function IntegratedPortal() {
           </div>
           <div className="p-6 border-t border-slate-300 bg-[#EBEEF2]">
             <div className="flex gap-2 bg-white p-2.5 rounded-2xl border border-slate-200 focus-within:ring-2 focus-within:ring-blue-100 shadow-sm transition-all"><input className="flex-1 bg-transparent border-none text-xs font-bold outline-none px-2 text-slate-900" placeholder="분류 추가..." value={newCatName} onChange={(e) => setNewCatName(e.target.value)} onKeyDown={async(e) => { if(e.key === 'Enter' && newCatName.trim()) { await supabase.from('categories').insert([{ name: newCatName.trim(), order_index: categories.length }]); setNewCatName(''); } }} /><button onClick={async() => { if(newCatName.trim()) { await supabase.from('categories').insert([{ name: newCatName.trim(), order_index: categories.length }]); setNewCatName(''); } }} className="bg-slate-900 text-white w-8 h-8 rounded-xl shadow-sm font-black text-sm">+</button></div>
-            {isDeviceAdmin && <button onClick={() => setIsYearlyCleanupOpen(true)} className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2 text-[10px] font-black text-slate-500 transition-colors hover:bg-amber-50 hover:text-amber-700"><FolderSync size={14} /> 연도 문서 정리</button>}
           </div>
         </aside>
 
@@ -1388,7 +1396,7 @@ export default function IntegratedPortal() {
         onSelectMessage={() => setIsChatOpen(true)}
       />
 
-      {isActivityHistoryOpen && (
+      {isDeviceAdmin && isActivityHistoryOpen && (
         <ActivityHistoryModal
           logs={activityLogs}
           isLoading={isActivityHistoryLoading}
@@ -1415,7 +1423,7 @@ export default function IntegratedPortal() {
       />
 
       <YearlyDocumentCleanupModal
-        open={isYearlyCleanupOpen}
+        open={isDeviceAdmin && isYearlyCleanupOpen}
         onClose={() => setIsYearlyCleanupOpen(false)}
         categories={categories}
         files={files}
