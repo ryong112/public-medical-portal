@@ -928,17 +928,17 @@ export default function IntegratedPortal() {
           </a>
 
           <button 
-            onClick={() => setViewMode(viewMode === 'external_calendar' ? 'files' : 'external_calendar')} 
+            onClick={() => setViewMode(viewMode === 'external_calendar' ? 'dashboard' : 'external_calendar')} 
             className="flex shrink-0 items-center gap-1.5 rounded-xl bg-indigo-500 px-2.5 py-2 text-xs font-black text-white shadow-md transition-all hover:bg-indigo-600 active:scale-95 sm:px-3 xl:gap-2 xl:rounded-2xl xl:px-5 xl:py-2.5 xl:text-sm"
           >
-            <CalendarDays size={16} className="xl:h-[18px] xl:w-[18px]"/> <span className="hidden xl:inline">{viewMode === 'external_calendar' ? '문서함' : '손)일정확인'}</span>
+            {viewMode === 'external_calendar' ? <LayoutDashboard size={16} className="xl:h-[18px] xl:w-[18px]"/> : <CalendarDays size={16} className="xl:h-[18px] xl:w-[18px]"/>} <span className="hidden xl:inline">{viewMode === 'external_calendar' ? '홈' : '손)일정확인'}</span>
           </button>
 
           <button 
-            onClick={() => setViewMode(viewMode === 'calendar' ? 'files' : 'calendar')} 
+            onClick={() => setViewMode(viewMode === 'calendar' ? 'dashboard' : 'calendar')} 
             className="relative flex shrink-0 items-center gap-1.5 rounded-xl bg-white px-2.5 py-2 text-xs font-black text-slate-900 shadow-md transition-all active:scale-95 sm:px-3 xl:gap-2 xl:rounded-2xl xl:px-5 xl:py-2.5 xl:text-sm"
           >
-            <CalendarIcon size={16} className="xl:h-[18px] xl:w-[18px]"/> <span className="hidden xl:inline">{viewMode === 'calendar' ? '문서함' : '일정 공유'}</span>
+            {viewMode === 'calendar' ? <LayoutDashboard size={16} className="xl:h-[18px] xl:w-[18px]"/> : <CalendarIcon size={16} className="xl:h-[18px] xl:w-[18px]"/>} <span className="hidden xl:inline">{viewMode === 'calendar' ? '홈' : '일정 공유'}</span>
             {hasNewSchedule && viewMode !== 'calendar' && <span className="absolute -top-1 -right-1 w-3 h-3 md:w-4 md:h-4 bg-red-500 rounded-full border-2 border-[#1A1C1E] animate-bounce"></span>}
           </button>
 
@@ -973,10 +973,10 @@ export default function IntegratedPortal() {
           <div className="ml-auto flex shrink-0 items-center gap-1.5 xl:hidden">
             <button
               type="button"
-              onClick={() => setViewMode('files')}
+              onClick={() => setViewMode('dashboard')}
               className="inline-flex items-center gap-1 rounded-lg bg-white/10 px-2.5 py-1.5 text-[10px] font-black text-white transition-colors hover:bg-white/20"
             >
-              <FileText size={13} /> 문서함
+              <LayoutDashboard size={13} /> 홈
             </button>
             {isDeviceAdmin && (
               <a
