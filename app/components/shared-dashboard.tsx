@@ -61,6 +61,7 @@ interface SharedDashboardProps {
   onOpenFile: (url: string, name: string) => void;
   onOpenSchedule: (schedule: Schedule) => void;
   onToggleScheduleComplete: (schedule: Schedule) => void;
+  onOpenAbsenceBoard?: () => void;
 }
 
 interface ActivityItem {
@@ -242,6 +243,7 @@ export default function SharedDashboard({
   onOpenFile,
   onOpenSchedule,
   onToggleScheduleComplete,
+  onOpenAbsenceBoard,
 }: SharedDashboardProps) {
   const [todayFilter, setTodayFilter] = useState<DailyScheduleFilter>('all');
   const [tomorrowFilter, setTomorrowFilter] = useState<DailyScheduleFilter>('all');
@@ -440,6 +442,7 @@ export default function SharedDashboard({
           <div key={item.label} tabIndex={0} className="group relative rounded-2xl border border-slate-100 bg-white p-3 shadow-sm outline-none transition-all hover:z-30 hover:-translate-y-0.5 hover:border-slate-200 hover:shadow-lg focus:z-30 focus:border-blue-200 focus:ring-4 focus:ring-blue-50 sm:rounded-[22px] sm:p-4 lg:p-5">
             <div className={`mb-3 flex items-center gap-1.5 text-[10px] font-black sm:mb-4 sm:gap-2 sm:text-xs ${item.color}`}>
               {item.icon} {item.label}
+              {item.isAbsenceCard && onOpenAbsenceBoard && <button onClick={onOpenAbsenceBoard} className="ml-auto rounded-lg bg-amber-50 px-2 py-1 text-[9px] font-black text-amber-700 transition-colors hover:bg-amber-100">현황표</button>}
             </div>
             {item.isWeeklyCard && (
               <div className="mb-3 flex flex-wrap gap-1.5">

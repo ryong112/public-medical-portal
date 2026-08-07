@@ -10,13 +10,17 @@ import ScheduleFormModal, { type NewScheduleInput, type ScheduleRecurrenceSubmis
 import WhiteboardImportModal, { type WhiteboardCorrectionInput, type WhiteboardScheduleUpdate } from '@/app/components/whiteboard-import-modal';
 import CommandPalette from '@/app/components/command-palette';
 import ActivityHistoryModal, { type ActivityLogRow } from '@/app/components/activity-history-modal';
+import DashboardKiosk from '@/app/components/dashboard-kiosk';
+import MonthlyAbsenceBoard from '@/app/components/monthly-absence-board';
+import QuickScheduleInput from '@/app/components/quick-schedule-input';
+import YearlyDocumentCleanupModal, { type YearlyCleanupCategory, type YearlyCleanupFile, type YearlyDocumentCleanupTarget } from '@/app/components/yearly-document-cleanup-modal';
 import { attachRecurrenceMetadata, createRecurrenceGroupId, isRecurringSchedule, type RecurrenceScope } from '@/lib/schedule-recurrence';
 import JSZip from 'jszip';
 import { 
   FileText, FilePlus,
   FileSpreadsheet, FileBox, File, Download, Trash2,
   GripVertical, Calendar as CalendarIcon, LayoutDashboard, Plus,
-  ChevronLeft, ChevronRight, X, Clock, CalendarDays, Archive, Menu, Siren, Pencil, ScanLine, ShieldCheck, Search, History, Copy
+  ChevronLeft, ChevronRight, X, Clock, CalendarDays, Archive, Menu, Siren, Pencil, ScanLine, ShieldCheck, Search, History, Copy, MonitorPlay, Zap, FolderSync
 } from 'lucide-react';
 
 interface KoreanHoliday {
@@ -117,6 +121,10 @@ export default function IntegratedPortal() {
   const [isWhiteboardImportOpen, setIsWhiteboardImportOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isActivityHistoryOpen, setIsActivityHistoryOpen] = useState(false);
+  const [isKioskOpen, setIsKioskOpen] = useState(false);
+  const [isAbsenceBoardOpen, setIsAbsenceBoardOpen] = useState(false);
+  const [isQuickScheduleOpen, setIsQuickScheduleOpen] = useState(false);
+  const [isYearlyCleanupOpen, setIsYearlyCleanupOpen] = useState(false);
   const [isActivityHistoryLoading, setIsActivityHistoryLoading] = useState(false);
   const [activityLogs, setActivityLogs] = useState<ActivityLogRow[]>([]);
   const [recurrenceScope, setRecurrenceScope] = useState<RecurrenceScope>('this');
@@ -582,6 +590,63 @@ export default function IntegratedPortal() {
       const link = document.createElement('a'); link.href = window.URL.createObjectURL(content); link.download = `${selectedCategory}_백업_${new Date().toLocaleDateString()}.zip`; link.click();
     } catch (e) { alert("압축 오류"); } finally { setIsDownloadingAll(false); }
   };
+  const downloadCleanupCategoryZip = async (category: YearlyCleanupCategory, targetFiles: YearlyCleanupFile[]) => {
+    if (targetFiles.length === 0) return;
+    const zip = new JSZip();
+    for (const [index, file] of targetFiles.entries()) {
+      const url = typeof file.url === 'string' ? file.url : '';
+      if (!url) throw new Error(`${file.name} 파일의 다운로드 주소가 없습니다.`);
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`${file.name} 파일을 내려받지 못했습니다.`);
+      const duplicateSafeName = index === 0 ? file.name : `${String(index + 1).padStart(3, '0')}_${file.name}`;
+      zip.file(duplicateSafeName, await response.blob());
+    }
+    const content = await zip.generateAsync({ type: 'blob' });
+    const downloadUrl = window.URL.createObjectURL(content);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = `${category.name}_전체문서.zip`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => window.URL.revokeObjectURL(downloadUrl), 1000);
+  };
+
+  const getStoragePathFromPublicUrl = (url: unknown) => {
+    if (typeof url !== 'string' || !url) return '';
+    const marker = '/storage/v1/object/public/files/';
+    const markerIndex = url.indexOf(marker);
+    if (markerIndex >= 0) return decodeURIComponent(url.slice(markerIndex + marker.length));
+    try { return decodeURIComponent(new URL(url).pathname.split('/').pop() ?? ''); } catch { return decodeURIComponent(url.split('/').pop() ?? ''); }
+  };
+
+  const executeYearlyDocumentCleanup = async (targets: YearlyDocumentCleanupTarget[]) => {
+    const conflictingTarget = targets.find((target) => categories.some((category) => category.id !== target.category.id && category.name.trim().toLocaleLowerCase('ko-KR') === target.nextCategoryName.trim().toLocaleLowerCase('ko-KR')));
+    if (conflictingTarget) throw new Error(`이미 '${conflictingTarget.nextCategoryName}' 분류가 있습니다. 기존 분류 이름을 먼저 정리해 주십시오.`);
+
+    const targetFiles = targets.flatMap((target) => target.files);
+    const fileIds = targetFiles.map((file) => file.id);
+    if (fileIds.length > 0) {
+      const filesWithPaths = targetFiles.map((file) => ({ file, path: getStoragePathFromPublicUrl(file.url) }));
+      const missingPathFile = filesWithPaths.find((item) => !item.path);
+      if (missingPathFile) throw new Error(`${missingPathFile.file.name} 문서의 Storage 경로를 확인하지 못했습니다.`);
+      const storagePaths = [...new Set(filesWithPaths.map((item) => item.path))];
+      for (let index = 0; index < storagePaths.length; index += 100) {
+        const { error: storageError } = await supabase.storage.from('files').remove(storagePaths.slice(index, index + 100));
+        if (storageError) throw new Error(`문서 저장공간을 정리하지 못했습니다: ${storageError.message}`);
+      }
+      for (let index = 0; index < fileIds.length; index += 100) {
+        const { error: databaseError } = await supabase.from('files').delete().in('id', fileIds.slice(index, index + 100));
+        if (databaseError) throw new Error(`문서 목록을 정리하지 못했습니다: ${databaseError.message}`);
+      }
+    }
+
+    for (const target of targets) {
+      const { error } = await supabase.from('categories').update({ name: target.nextCategoryName }).eq('id', target.category.id);
+      if (error) throw new Error(`${target.category.name} 분류를 다음 연도로 변경하지 못했습니다: ${error.message}`);
+    }
+    await Promise.all([fetchFiles(), fetchCategories()]);
+  };
   const handleDownload = async (url: string, originalName: string) => { try { const response = await fetch(url); const blob = await response.blob(); const downloadUrl = window.URL.createObjectURL(blob); const link = document.createElement('a'); link.href = downloadUrl; link.download = originalName; document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(downloadUrl); } catch (e) { alert('오류'); } };
   
   const getFileIcon = (fileName: string) => {
@@ -864,10 +929,17 @@ export default function IntegratedPortal() {
           <button onClick={() => setIsCommandPaletteOpen(true)} aria-label="통합 검색" title="통합 검색 · Ctrl+K" className="flex shrink-0 items-center gap-1.5 rounded-xl p-2 text-slate-300 transition-colors hover:bg-white/10 hover:text-white xl:px-3">
             <Search size={18} /><span className="hidden 2xl:inline text-xs font-black">검색</span>
           </button>
+          <button onClick={() => setIsQuickScheduleOpen(true)} aria-label="빠른 일정 입력" title="빠른 일정 입력" className="shrink-0 rounded-xl p-2 text-amber-300 transition-colors hover:bg-white/10 hover:text-white">
+            <Zap size={18} />
+          </button>
           <button onClick={() => void openActivityHistory()} aria-label="변경 이력" title="변경 이력" className="shrink-0 rounded-xl p-2 text-slate-300 transition-colors hover:bg-white/10 hover:text-white">
             <History size={18} />
           </button>
+          <button onClick={() => setIsKioskOpen(true)} aria-label="전광판 모드" title="전광판 모드" className="shrink-0 rounded-xl p-2 text-slate-300 transition-colors hover:bg-white/10 hover:text-white">
+            <MonitorPlay size={18} />
+          </button>
           {isDeviceAdmin && <button onClick={() => setIsDeviceManagerOpen(true)} aria-label="승인 기기 관리" className="shrink-0 rounded-xl p-2 text-blue-300 transition-colors hover:bg-white/10 hover:text-white"><ShieldCheck size={18} /></button>}
+          {isDeviceAdmin && <button onClick={() => setIsYearlyCleanupOpen(true)} aria-label="연도 문서 정리" title="연도 문서 정리" className="shrink-0 rounded-xl p-2 text-amber-300 transition-colors hover:bg-white/10 hover:text-white"><FolderSync size={18} /></button>}
           <button onClick={handlePortalExit} aria-label="화면 나가기 (기기 승인 유지)" title="화면 나가기 · 기기 승인은 유지됩니다" className="text-slate-500 hover:text-white p-1 md:p-2 transition-colors ml-0.5 md:ml-0 shrink-0"><X size={18} className="md:w-[20px] md:h-[20px]"/></button>
         </div>
       </header>
@@ -916,6 +988,7 @@ export default function IntegratedPortal() {
           </div>
           <div className="p-6 border-t border-slate-300 bg-[#EBEEF2]">
             <div className="flex gap-2 bg-white p-2.5 rounded-2xl border border-slate-200 focus-within:ring-2 focus-within:ring-blue-100 shadow-sm transition-all"><input className="flex-1 bg-transparent border-none text-xs font-bold outline-none px-2 text-slate-900" placeholder="분류 추가..." value={newCatName} onChange={(e) => setNewCatName(e.target.value)} onKeyDown={async(e) => { if(e.key === 'Enter' && newCatName.trim()) { await supabase.from('categories').insert([{ name: newCatName.trim(), order_index: categories.length }]); setNewCatName(''); } }} /><button onClick={async() => { if(newCatName.trim()) { await supabase.from('categories').insert([{ name: newCatName.trim(), order_index: categories.length }]); setNewCatName(''); } }} className="bg-slate-900 text-white w-8 h-8 rounded-xl shadow-sm font-black text-sm">+</button></div>
+            {isDeviceAdmin && <button onClick={() => setIsYearlyCleanupOpen(true)} className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2 text-[10px] font-black text-slate-500 transition-colors hover:bg-amber-50 hover:text-amber-700"><FolderSync size={14} /> 연도 문서 정리</button>}
           </div>
         </aside>
 
@@ -979,6 +1052,7 @@ export default function IntegratedPortal() {
                   onOpenFile={handleDownload}
                   onOpenSchedule={setSelectedSchedule}
                   onToggleScheduleComplete={onToggleScheduleComplete}
+                  onOpenAbsenceBoard={() => setIsAbsenceBoardOpen(true)}
                 />
               ) : viewMode === 'external_calendar' ? (
                 <div className="w-full h-full relative rounded-[16px] md:rounded-[24px] overflow-hidden shadow-xl bg-slate-50">
@@ -1131,6 +1205,34 @@ export default function IntegratedPortal() {
           onClose={() => setIsActivityHistoryOpen(false)}
         />
       )}
+
+      {isKioskOpen && <DashboardKiosk schedules={schedules} onClose={() => setIsKioskOpen(false)} />}
+
+      <MonthlyAbsenceBoard
+        open={isAbsenceBoardOpen}
+        onClose={() => setIsAbsenceBoardOpen(false)}
+        schedules={schedules}
+        currentDate={todayStr}
+        onOpenSchedule={(schedule) => { setIsAbsenceBoardOpen(false); setSelectedSchedule(schedule); }}
+      />
+
+      <QuickScheduleInput
+        open={isQuickScheduleOpen}
+        onClose={() => setIsQuickScheduleOpen(false)}
+        defaultDate={todayStr}
+        onSubmit={async (schedule) => { await onSaveSchedule([schedule]); }}
+      />
+
+      <YearlyDocumentCleanupModal
+        open={isYearlyCleanupOpen}
+        onClose={() => setIsYearlyCleanupOpen(false)}
+        categories={categories}
+        files={files}
+        currentYear={Number(todayStr.slice(0, 4))}
+        onDownloadCategoryZip={downloadCleanupCategoryZip}
+        onExecuteCleanup={executeYearlyDocumentCleanup}
+        onRefresh={() => Promise.all([fetchCategories(), fetchFiles()]).then(() => undefined)}
+      />
 
       {scheduleFormDate && (
         <ScheduleFormModal
