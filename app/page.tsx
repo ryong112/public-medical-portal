@@ -1249,7 +1249,6 @@ export default function IntegratedPortal() {
                                         onClick={(event) => {
                                           event.stopPropagation();
                                           setSelectedCalendarDate(dateStr);
-                                          setSelectedSchedule(schedule);
                                         }}
                                         className={`relative z-[1] grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1 border text-left font-bold text-slate-800 shadow-sm transition-all ${calendarDensity === 'compact' ? 'min-h-6 px-1 py-0.5' : 'min-h-7 px-1.5 py-1'} ${rangeEdges} ${schedule.is_notice ? 'border-red-200 bg-red-50/95 hover:border-red-400' : isRange ? 'border-indigo-200 bg-indigo-50/95 hover:bg-indigo-100' : 'border-blue-100 bg-white hover:border-blue-400'}`}
                                       >
