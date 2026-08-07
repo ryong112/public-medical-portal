@@ -6,14 +6,17 @@ import SharedDashboard from '@/app/components/shared-dashboard';
 import DeviceAccessGate from '@/app/components/device-access-gate';
 import DeviceManagerModal from '@/app/components/device-manager-modal';
 import UndoToast, { type UndoNotice } from '@/app/components/undo-toast';
-import ScheduleFormModal, { type NewScheduleInput } from '@/app/components/schedule-form-modal';
-import WhiteboardImportModal, { type WhiteboardCorrectionInput } from '@/app/components/whiteboard-import-modal';
+import ScheduleFormModal, { type NewScheduleInput, type ScheduleRecurrenceSubmission } from '@/app/components/schedule-form-modal';
+import WhiteboardImportModal, { type WhiteboardCorrectionInput, type WhiteboardScheduleUpdate } from '@/app/components/whiteboard-import-modal';
+import CommandPalette from '@/app/components/command-palette';
+import ActivityHistoryModal, { type ActivityLogRow } from '@/app/components/activity-history-modal';
+import { attachRecurrenceMetadata, createRecurrenceGroupId, isRecurringSchedule, type RecurrenceScope } from '@/lib/schedule-recurrence';
 import JSZip from 'jszip';
 import { 
   FileText, FilePlus,
   FileSpreadsheet, FileBox, File, Download, Trash2,
   GripVertical, Calendar as CalendarIcon, LayoutDashboard, Plus,
-  ChevronLeft, ChevronRight, X, Clock, CalendarDays, Archive, Menu, Siren, Pencil, ScanLine, ShieldCheck
+  ChevronLeft, ChevronRight, X, Clock, CalendarDays, Archive, Menu, Siren, Pencil, ScanLine, ShieldCheck, Search, History, Copy
 } from 'lucide-react';
 
 interface KoreanHoliday {
@@ -104,12 +107,19 @@ export default function IntegratedPortal() {
 
   const [schedules, setSchedules] = useState<any[]>([]);
   const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [calendarDensity, setCalendarDensity] = useState<'comfortable' | 'compact'>('comfortable');
   const [koreanHolidays, setKoreanHolidays] = useState<Record<string, string[]>>({});
   const [selectedSchedule, setSelectedSchedule] = useState<any | null>(null);
   const [draggedScheduleId, setDraggedScheduleId] = useState<number | null>(null);
   const [scheduleFormDate, setScheduleFormDate] = useState<string | null>(null);
   const [editingSchedule, setEditingSchedule] = useState<any | null>(null);
+  const [isCopyingSchedule, setIsCopyingSchedule] = useState(false);
   const [isWhiteboardImportOpen, setIsWhiteboardImportOpen] = useState(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [isActivityHistoryOpen, setIsActivityHistoryOpen] = useState(false);
+  const [isActivityHistoryLoading, setIsActivityHistoryLoading] = useState(false);
+  const [activityLogs, setActivityLogs] = useState<ActivityLogRow[]>([]);
+  const [recurrenceScope, setRecurrenceScope] = useState<RecurrenceScope>('this');
   const [undoNotices, setUndoNotices] = useState<UndoNotice[]>([]);
   const pendingDeleteKeysRef = useRef(new Set<string>());
   const undoTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
@@ -516,7 +526,48 @@ export default function IntegratedPortal() {
   const fetchMessages = async () => { const { data } = await supabase.from('messages').select('*').order('created_at', { ascending: true }); if (data) setMessages(data.filter((message) => !pendingDeleteKeysRef.current.has(`message:${message.id}`))); };
   const fetchFiles = async () => { const { data } = await supabase.from('files').select('*').order('created_at', { ascending: false }); if (data) setFiles(data.filter((file) => !pendingDeleteKeysRef.current.has(`file:${file.id}`))); };
   const fetchCategories = async () => { const { data } = await supabase.from('categories').select('*').order('order_index', { ascending: true }); if (data) setCategories(data.filter((category) => !pendingDeleteKeysRef.current.has(`category:${category.id}`))); };
-  const fetchSchedules = async () => { const { data } = await supabase.from('schedules').select('*').order('start_time', { ascending: true }); if (data) setSchedules(data.filter((schedule) => !pendingDeleteKeysRef.current.has(`schedule:${schedule.id}`))); };
+  const fetchSchedules = async () => { const { data } = await supabase.from('schedules').select('*').order('start_time', { ascending: true }); if (data) setSchedules(data.filter((schedule) => schedule.recurrence_status !== 'cancelled' && !pendingDeleteKeysRef.current.has(`schedule:${schedule.id}`))); };
+
+  const openActivityHistory = async () => {
+    setIsActivityHistoryOpen(true);
+    setIsActivityHistoryLoading(true);
+    const { data, error } = await supabase
+      .from('activity_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(500);
+    if (error) {
+      console.error('변경 이력을 불러오지 못했습니다.', error);
+      alert('변경 이력 기능을 사용하려면 새 활동 이력 SQL을 Supabase에서 먼저 실행해 주십시오.');
+    } else {
+      setActivityLogs((data ?? []) as ActivityLogRow[]);
+    }
+    setIsActivityHistoryLoading(false);
+  };
+
+  const restoreActivityLog = async (log: ActivityLogRow) => {
+    if (!log.record_id || !log.before_data || (log.table_name !== 'schedules' && log.table_name !== 'messages')) return;
+    const allowedFields = log.table_name === 'schedules'
+      ? ['title', 'date', 'end_date', 'start_time', 'end_time', 'is_notice', 'is_urgent', 'is_completed', 'is_todo', 'schedule_type', 'absence_type', 'recurrence_group_id', 'recurrence_original_date', 'recurrence_index', 'recurrence_status', 'recurrence_is_exception', 'recurrence_cancelled_at']
+      : ['content', 'sender_id', 'created_at'];
+    const restoredValues = Object.fromEntries(
+      allowedFields
+        .filter((field) => field in log.before_data!)
+        .map((field) => [field, log.before_data![field]]),
+    );
+
+    const result = log.action === 'delete'
+      ? await supabase.from(log.table_name).insert({ id: log.record_id, ...restoredValues })
+      : await supabase.from(log.table_name).update(restoredValues).eq('id', log.record_id);
+    if (result.error) {
+      alert(`항목을 복원하지 못했습니다: ${result.error.message}`);
+      return;
+    }
+
+    await Promise.all([fetchSchedules(), fetchMessages()]);
+    const { data } = await supabase.from('activity_logs').select('*').order('created_at', { ascending: false }).limit(500);
+    if (data) setActivityLogs(data as ActivityLogRow[]);
+  };
   
   useEffect(() => { if (isChatOpen) { const timer = setTimeout(() => { if (scrollRef.current) scrollRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, 100); return () => clearTimeout(timer); } }, [messages, isChatOpen]);
   
@@ -566,32 +617,112 @@ export default function IntegratedPortal() {
 
   const onAddSchedule = (dateStr: string) => {
     setEditingSchedule(null);
+    setIsCopyingSchedule(false);
     setScheduleFormDate(dateStr);
   };
 
-  const onSaveSchedule = async (scheduleEntries: NewScheduleInput[]) => {
+  const onSaveSchedule = async (scheduleEntries: NewScheduleInput[], recurrence?: ScheduleRecurrenceSubmission) => {
     const schedule = scheduleEntries[0];
-    const { error } = editingSchedule
-      ? await supabase.from('schedules').update(schedule).eq('id', editingSchedule.id)
-      : await supabase.from('schedules').insert(scheduleEntries);
-    if (error) throw new Error(`일정을 저장하지 못했습니다: ${error.message}`);
+    if (editingSchedule && !isCopyingSchedule) {
+      if (isRecurringSchedule(editingSchedule) && recurrenceScope !== 'this') {
+        const sharedValues = {
+          title: schedule.title,
+          start_time: schedule.start_time,
+          end_time: schedule.end_time,
+          is_notice: schedule.is_notice,
+          is_urgent: schedule.is_urgent,
+          is_completed: schedule.is_completed,
+          is_todo: schedule.is_todo,
+          schedule_type: schedule.schedule_type,
+          absence_type: schedule.absence_type,
+        };
+        let query = supabase
+          .from('schedules')
+          .update(sharedValues)
+          .eq('recurrence_group_id', editingSchedule.recurrence_group_id);
+        if (recurrenceScope === 'future') query = query.gte('recurrence_index', editingSchedule.recurrence_index);
+        const { error } = await query;
+        if (error) throw new Error(`반복 일정을 변경하지 못했습니다: ${error.message}`);
+      } else {
+        const update = isRecurringSchedule(editingSchedule)
+          ? { ...schedule, recurrence_is_exception: true }
+          : schedule;
+        const { error } = await supabase.from('schedules').update(update).eq('id', editingSchedule.id);
+        if (error) throw new Error(`일정을 저장하지 못했습니다: ${error.message}`);
+      }
+    } else if (recurrence) {
+      const recurrenceGroupId = createRecurrenceGroupId();
+      const { error: groupError } = await supabase.from('schedule_recurrence_groups').insert({
+        id: recurrenceGroupId,
+        ...recurrence,
+      });
+      if (groupError) throw new Error(`반복 일정 기반을 만들지 못했습니다. 반복 일정 SQL 적용 여부를 확인해 주십시오: ${groupError.message}`);
+
+      const recurringSchedules = attachRecurrenceMetadata(scheduleEntries, recurrenceGroupId).schedules;
+      const { error: scheduleError } = await supabase.from('schedules').insert(recurringSchedules);
+      if (scheduleError) {
+        await supabase.from('schedule_recurrence_groups').delete().eq('id', recurrenceGroupId);
+        throw new Error(`반복 일정을 저장하지 못했습니다: ${scheduleError.message}`);
+      }
+    } else {
+      const { error } = await supabase.from('schedules').insert(scheduleEntries);
+      if (error) throw new Error(`일정을 저장하지 못했습니다: ${error.message}`);
+    }
     await fetchSchedules();
     setScheduleFormDate(null);
     setEditingSchedule(null);
+    setIsCopyingSchedule(false);
+    setRecurrenceScope('this');
   };
 
   const onEditSchedule = (schedule: any) => {
     setEditingSchedule(schedule);
+    setIsCopyingSchedule(false);
     setScheduleFormDate(schedule.date);
     setSelectedSchedule(null);
   };
 
+  const onCopySchedule = (schedule: any) => {
+    setEditingSchedule(schedule);
+    setIsCopyingSchedule(true);
+    setScheduleFormDate(schedule.date);
+    setSelectedSchedule(null);
+    setRecurrenceScope('this');
+  };
+
+  const onCancelRecurringSchedule = (schedule: any) => {
+    const targets = schedules.filter((candidate) => {
+      if (recurrenceScope === 'this') return candidate.id === schedule.id;
+      if (candidate.recurrence_group_id !== schedule.recurrence_group_id) return false;
+      return recurrenceScope === 'all' || candidate.recurrence_index >= schedule.recurrence_index;
+    });
+    if (targets.length === 0 || !confirm(`${targets.length}개의 반복 일정을 취소하시겠습니까?`)) return;
+
+    queueUndoableDeletion({
+      label: `반복 일정 ${targets.length}건이 취소 대기 중입니다.`,
+      keys: targets.map((target) => `schedule:${target.id}`),
+      hide: () => { setSchedules((current) => current.filter((item) => !targets.some((target) => target.id === item.id))); setSelectedSchedule(null); setRecurrenceScope('this'); },
+      restore: () => setSchedules((current) => [...current, ...targets.filter((target) => !current.some((item) => item.id === target.id))]),
+      commit: async () => {
+        const { error } = await supabase.from('schedules').update({ recurrence_status: 'cancelled', recurrence_cancelled_at: new Date().toISOString() }).in('id', targets.map((target) => target.id));
+        if (error) throw new Error(`반복 일정을 취소하지 못했습니다: ${error.message}`);
+      },
+    });
+  };
+
   const onImportWhiteboardSchedules = async (
     importedSchedules: NewScheduleInput[],
+    updates: WhiteboardScheduleUpdate[],
     corrections: WhiteboardCorrectionInput[],
   ) => {
-    const { error } = await supabase.from('schedules').insert(importedSchedules);
-    if (error) throw new Error(`일정을 등록하지 못했습니다: ${error.message}`);
+    if (importedSchedules.length > 0) {
+      const { error } = await supabase.from('schedules').insert(importedSchedules);
+      if (error) throw new Error(`일정을 등록하지 못했습니다: ${error.message}`);
+    }
+    for (const update of updates) {
+      const { error } = await supabase.from('schedules').update(update.values).eq('id', update.id);
+      if (error) throw new Error(`기존 일정을 변경하지 못했습니다: ${error.message}`);
+    }
 
     if (corrections.length > 0) {
       const { error: correctionError } = await supabase.rpc('save_whiteboard_corrections', {
@@ -730,6 +861,12 @@ export default function IntegratedPortal() {
             {hasUnread && !isChatOpen && <span className="absolute -top-1 -right-1 w-3 h-3 md:w-4 md:h-4 bg-red-500 rounded-full border-2 border-[#1A1C1E] animate-bounce"></span>}
           </button>
 
+          <button onClick={() => setIsCommandPaletteOpen(true)} aria-label="통합 검색" title="통합 검색 · Ctrl+K" className="flex shrink-0 items-center gap-1.5 rounded-xl p-2 text-slate-300 transition-colors hover:bg-white/10 hover:text-white xl:px-3">
+            <Search size={18} /><span className="hidden 2xl:inline text-xs font-black">검색</span>
+          </button>
+          <button onClick={() => void openActivityHistory()} aria-label="변경 이력" title="변경 이력" className="shrink-0 rounded-xl p-2 text-slate-300 transition-colors hover:bg-white/10 hover:text-white">
+            <History size={18} />
+          </button>
           {isDeviceAdmin && <button onClick={() => setIsDeviceManagerOpen(true)} aria-label="승인 기기 관리" className="shrink-0 rounded-xl p-2 text-blue-300 transition-colors hover:bg-white/10 hover:text-white"><ShieldCheck size={18} /></button>}
           <button onClick={handlePortalExit} aria-label="화면 나가기 (기기 승인 유지)" title="화면 나가기 · 기기 승인은 유지됩니다" className="text-slate-500 hover:text-white p-1 md:p-2 transition-colors ml-0.5 md:ml-0 shrink-0"><X size={18} className="md:w-[20px] md:h-[20px]"/></button>
         </div>
@@ -864,7 +1001,8 @@ export default function IntegratedPortal() {
                       <button onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() + 1)))} className="p-2 md:p-3 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"><ChevronRight size={18}/></button>
                       <button onClick={() => setCurrentMonth(new Date())} className="px-5 py-2 bg-slate-900 text-white text-xs font-bold rounded-xl shadow-md hidden sm:block">오늘</button>
                     </div>
-                    <button onClick={() => setIsWhiteboardImportOpen(true)} className="ml-auto flex items-center gap-2 rounded-xl bg-blue-600 px-3 py-2.5 text-[10px] font-black text-white shadow-md transition-colors hover:bg-blue-700 md:px-4 md:text-xs"><ScanLine size={16} /> <span className="hidden sm:inline">화이트보드 가져오기</span><span className="sm:hidden">사진 분석</span></button>
+                    <button onClick={() => setCalendarDensity((current) => current === 'comfortable' ? 'compact' : 'comfortable')} className="ml-auto rounded-xl bg-slate-100 px-3 py-2.5 text-[10px] font-black text-slate-600 transition-colors hover:bg-slate-200 md:text-xs" title="일정 카드 보기 밀도 변경">{calendarDensity === 'comfortable' ? '촘촘히' : '기본 보기'}</button>
+                    <button onClick={() => setIsWhiteboardImportOpen(true)} className="flex items-center gap-2 rounded-xl bg-blue-600 px-3 py-2.5 text-[10px] font-black text-white shadow-md transition-colors hover:bg-blue-700 md:px-4 md:text-xs"><ScanLine size={16} /> <span className="hidden sm:inline">화이트보드 가져오기</span><span className="sm:hidden">사진 분석</span></button>
                   </div>
 
                   <div className="flex-1 flex flex-col min-h-0 bg-slate-200 border border-slate-200 rounded-[16px] md:rounded-[32px] overflow-hidden shadow-2xl">
@@ -888,7 +1026,7 @@ export default function IntegratedPortal() {
                         const holidayNames = koreanHolidays[dateStr] ?? [];
                         const isHoliday = holidayNames.length > 0;
                         return (
-                          <div key={day} onDragOver={(e)=>e.preventDefault()} onDrop={()=>onDayDrop(dateStr)} className={`flex min-h-0 flex-col border-r border-b border-slate-100 p-1.5 transition-all hover:bg-blue-50/40 group relative md:p-3 ${isToday ? 'z-10 bg-blue-50/70 ring-2 ring-inset ring-blue-500' : isHoliday ? 'bg-red-50/25' : 'bg-white'}`}>
+                          <div key={day} onDragOver={(e)=>e.preventDefault()} onDrop={()=>onDayDrop(dateStr)} className={`flex min-h-0 flex-col border-r border-b border-slate-100 transition-all hover:bg-blue-50/40 group relative ${calendarDensity === 'compact' ? 'p-1 md:p-1.5' : 'p-1.5 md:p-3'} ${isToday ? 'z-10 bg-blue-50/70 ring-2 ring-inset ring-blue-500' : isHoliday ? 'bg-red-50/25' : 'bg-white'}`}>
                             <div className="flex justify-between items-start mb-1.5 shrink-0">
                               {/* 공지사항 지정 일정은 날짜 칸 내부에서도 눈에 띄게 테두리 가벼운 강조 효과 */}
                               <div className="flex min-w-0 items-center gap-1.5">
@@ -909,7 +1047,7 @@ export default function IntegratedPortal() {
                                   ? `${segmentStartsHere ? 'ml-1.5 rounded-l-lg border-l md:ml-3' : 'rounded-l-none border-l-0'} ${segmentEndsHere ? 'mr-1.5 rounded-r-lg border-r md:mr-3' : 'rounded-r-none border-r-0'}`
                                   : 'mx-1.5 rounded-lg md:mx-3';
                                 return (
-                                <div key={s.id} draggable onDragStart={(e)=>onScheduleDragStart(e, s.id)} onClick={()=>setSelectedSchedule(s)} className={`relative z-[1] flex cursor-pointer flex-col gap-0.5 truncate border p-1.5 text-[9px] font-bold text-slate-800 shadow-sm transition-all md:text-[10px] ${rangeEdges} ${s.is_notice ? 'border-red-200 bg-red-50/90 hover:border-red-400' : isRange ? 'border-indigo-200 bg-indigo-50/95 hover:bg-indigo-100' : 'border-blue-100 bg-white hover:border-blue-400'}`}>
+                                <div key={s.id} draggable onDragStart={(e)=>onScheduleDragStart(e, s.id)} onClick={()=>setSelectedSchedule(s)} className={`relative z-[1] flex cursor-pointer flex-col gap-0.5 truncate border font-bold text-slate-800 shadow-sm transition-all ${calendarDensity === 'compact' ? 'p-1 text-[8px] md:text-[9px]' : 'p-1.5 text-[9px] md:text-[10px]'} ${rangeEdges} ${s.is_notice ? 'border-red-200 bg-red-50/90 hover:border-red-400' : isRange ? 'border-indigo-200 bg-indigo-50/95 hover:bg-indigo-100' : 'border-blue-100 bg-white hover:border-blue-400'}`}>
                                   <div className="flex items-center gap-1 text-blue-600 hidden md:flex">
                                     <Clock size={9}/>
                                     <span className={`text-[8px] font-black ${s.is_notice ? 'text-red-500' : isRange ? 'text-indigo-600' : 'text-blue-600'}`}>{formatCalendarScheduleTime(s, dateStr)}</span>
@@ -964,18 +1102,44 @@ export default function IntegratedPortal() {
       {isWhiteboardImportOpen && (
         <WhiteboardImportModal
           onClose={() => setIsWhiteboardImportOpen(false)}
+          existingSchedules={schedules}
           onImport={onImportWhiteboardSchedules}
         />
       )}
 
       {isDeviceManagerOpen && <DeviceManagerModal onClose={() => setIsDeviceManagerOpen(false)} />}
 
+      <CommandPalette
+        open={isCommandPaletteOpen}
+        onOpen={() => setIsCommandPaletteOpen(true)}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        files={files}
+        categories={categories}
+        schedules={schedules}
+        messages={messages}
+        onSelectFile={(file) => handleDownload(String(file.url), file.name)}
+        onSelectCategory={(category) => { setViewMode('files'); setSelectedCategory(category.name); setIsMobileSidebarOpen(false); }}
+        onSelectSchedule={(schedule) => setSelectedSchedule(schedule)}
+        onSelectMessage={() => setIsChatOpen(true)}
+      />
+
+      {isActivityHistoryOpen && (
+        <ActivityHistoryModal
+          logs={activityLogs}
+          isLoading={isActivityHistoryLoading}
+          onRestore={restoreActivityLog}
+          onClose={() => setIsActivityHistoryOpen(false)}
+        />
+      )}
+
       {scheduleFormDate && (
         <ScheduleFormModal
           key={`${scheduleFormDate}-${editingSchedule?.id ?? 'new'}`}
           date={scheduleFormDate}
           initialSchedule={editingSchedule ?? undefined}
-          onClose={() => { setScheduleFormDate(null); setEditingSchedule(null); }}
+          existingSchedules={schedules}
+          copyMode={isCopyingSchedule}
+          onClose={() => { setScheduleFormDate(null); setEditingSchedule(null); setIsCopyingSchedule(false); setRecurrenceScope('this'); }}
           onSubmit={onSaveSchedule}
         />
       )}
@@ -989,10 +1153,26 @@ export default function IntegratedPortal() {
             {selectedSchedule.is_urgent && <span className="mb-3 rounded-lg bg-red-500 px-3 py-1 text-[10px] font-black text-white">긴급 일정</span>}
             <h3 className={`mb-2 text-center text-2xl font-black leading-tight ${selectedSchedule.is_completed ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{formatScheduleTitle(selectedSchedule)}</h3>
             <p className="mb-8 text-center font-bold text-slate-400">{formatScheduleDateRange(selectedSchedule)} | {formatScheduleTime(selectedSchedule)}</p>
-            <div className="grid w-full grid-cols-2 gap-3">
+            {isRecurringSchedule(selectedSchedule) && (
+              <div className="mb-5 w-full rounded-2xl bg-slate-50 p-3">
+                <p className="mb-2 text-[10px] font-black text-slate-500">반복 일정 적용 범위</p>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {([
+                    { value: 'this', label: '이번 일정' },
+                    { value: 'future', label: '이후 일정' },
+                    { value: 'all', label: '전체 일정' },
+                  ] as const).map((scope) => (
+                    <button key={scope.value} type="button" onClick={() => setRecurrenceScope(scope.value)} className={`rounded-xl px-2 py-2 text-[10px] font-black transition-colors ${recurrenceScope === scope.value ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-100'}`}>{scope.label}</button>
+                  ))}
+                </div>
+                {recurrenceScope !== 'this' && <p className="mt-2 text-[9px] font-bold text-slate-400">내용과 시간은 함께 변경되며 각 회차의 날짜는 유지됩니다.</p>}
+              </div>
+            )}
+            <div className="grid w-full grid-cols-3 gap-3">
               <button onClick={() => onEditSchedule(selectedSchedule)} className="flex items-center justify-center gap-2 rounded-2xl bg-blue-50 py-4 font-black text-blue-600 transition-all hover:bg-blue-600 hover:text-white"><Pencil size={17}/> 일정 수정</button>
-              <button onClick={() => onDeleteSchedule(selectedSchedule.id)} className="flex items-center justify-center gap-2 rounded-2xl bg-red-50 py-4 font-black text-red-500 transition-all hover:bg-red-500 hover:text-white"><Trash2 size={18}/> 일정 삭제</button>
-              <button onClick={() => setSelectedSchedule(null)} className="col-span-2 rounded-2xl bg-slate-900 py-4 font-black text-white transition-all hover:bg-black">닫기</button>
+              <button onClick={() => onCopySchedule(selectedSchedule)} className="flex items-center justify-center gap-2 rounded-2xl bg-slate-100 py-4 font-black text-slate-600 transition-all hover:bg-slate-700 hover:text-white"><Copy size={17}/> 일정 복사</button>
+              <button onClick={() => isRecurringSchedule(selectedSchedule) ? onCancelRecurringSchedule(selectedSchedule) : onDeleteSchedule(selectedSchedule.id)} className="flex items-center justify-center gap-2 rounded-2xl bg-red-50 py-4 font-black text-red-500 transition-all hover:bg-red-500 hover:text-white"><Trash2 size={18}/> {isRecurringSchedule(selectedSchedule) ? '일정 취소' : '일정 삭제'}</button>
+              <button onClick={() => { setSelectedSchedule(null); setRecurrenceScope('this'); }} className="col-span-3 rounded-2xl bg-slate-900 py-4 font-black text-white transition-all hover:bg-black">닫기</button>
             </div>
           </div>
         </div>

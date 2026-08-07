@@ -27,6 +27,15 @@ interface AnalyzedSchedule {
   is_manual: boolean;
 }
 
+export interface ExistingWhiteboardSchedule extends NewScheduleInput {
+  id: number;
+}
+
+export interface WhiteboardScheduleUpdate {
+  id: number;
+  values: Pick<NewScheduleInput, 'title' | 'date' | 'end_date' | 'start_time' | 'end_time' | 'schedule_type' | 'absence_type' | 'is_urgent'>;
+}
+
 export interface WhiteboardCorrectionInput {
   source_text: string;
   ai_title: string;
@@ -37,7 +46,8 @@ export interface WhiteboardCorrectionInput {
 
 interface WhiteboardImportModalProps {
   onClose: () => void;
-  onImport: (schedules: NewScheduleInput[], corrections: WhiteboardCorrectionInput[]) => Promise<void>;
+  existingSchedules: ExistingWhiteboardSchedule[];
+  onImport: (schedules: NewScheduleInput[], updates: WhiteboardScheduleUpdate[], corrections: WhiteboardCorrectionInput[]) => Promise<void>;
 }
 
 const scheduleTypes: Array<{ value: ScheduleType; label: string }> = [
@@ -98,7 +108,42 @@ const fileToBase64 = (file: File) => new Promise<string>((resolve, reject) => {
   reader.readAsDataURL(file);
 });
 
-export default function WhiteboardImportModal({ onClose, onImport }: WhiteboardImportModalProps) {
+const normalizeScheduleTitle = (title: string) => title
+  .normalize('NFKC')
+  .replace(/^(?:회의|출장|내부일정|휴가|조퇴|외출)\s*\)\s*/u, '')
+  .replace(/\s+/gu, ' ')
+  .trim()
+  .toLocaleLowerCase('ko-KR');
+
+const compareSchedule = (draft: AnalyzedSchedule, existingSchedules: ExistingWhiteboardSchedule[]) => {
+  if (draft.is_manual) return { status: 'new' as const, matched: null, changedFields: [] as string[] };
+  const sameTitleAndDate = existingSchedules.filter((schedule) => normalizeScheduleTitle(schedule.title) === normalizeScheduleTitle(draft.title) && schedule.date === draft.date);
+
+  const exactMatch = sameTitleAndDate.find((schedule) => (
+    (schedule.start_time ?? '') === draft.start_time
+    && (schedule.end_time ?? '') === draft.end_time
+    && schedule.schedule_type === draft.schedule_type
+    && (schedule.schedule_type !== 'leave' || schedule.absence_type === draft.absence_type)
+    && Boolean(schedule.is_urgent) === draft.is_urgent
+  ));
+  if (exactMatch) return { status: 'duplicate' as const, matched: exactMatch, changedFields: [] as string[] };
+  if (sameTitleAndDate.length !== 1) return { status: 'new' as const, matched: null, changedFields: [] as string[] };
+
+  const matched = sameTitleAndDate[0];
+  const changedFields = [
+    (matched.start_time ?? '') !== draft.start_time ? '시작 시간' : '',
+    (matched.end_time ?? '') !== draft.end_time ? '종료 시간' : '',
+    matched.schedule_type !== draft.schedule_type ? '일정 유형' : '',
+    matched.schedule_type === 'leave' && matched.absence_type !== draft.absence_type ? '휴가 구분' : '',
+    Boolean(matched.is_urgent) !== draft.is_urgent ? '긴급 표시' : '',
+  ].filter(Boolean);
+
+  return changedFields.length === 0
+    ? { status: 'duplicate' as const, matched, changedFields }
+    : { status: 'changed' as const, matched, changedFields };
+};
+
+export default function WhiteboardImportModal({ onClose, existingSchedules, onImport }: WhiteboardImportModalProps) {
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [originalFile, setOriginalFile] = useState<File | null>(null);
@@ -159,24 +204,27 @@ export default function WhiteboardImportModal({ onClose, onImport }: WhiteboardI
       if (data?.error) throw new Error(data.error);
 
       const schedules = Array.isArray(data?.schedules) ? data.schedules : [];
-      setDrafts(schedules.map((schedule: Partial<AnalyzedSchedule>, index: number) => ({
-        id: `${Date.now()}-${index}`,
-        selected: Boolean(schedule.title && schedule.date),
-        title: schedule.title ?? '',
-        date: schedule.date ?? '',
-        start_time: schedule.start_time ?? '',
-        end_time: schedule.end_time ?? '',
-        schedule_type: scheduleTypes.some((type) => type.value === schedule.schedule_type) ? schedule.schedule_type as ScheduleType : 'unclassified',
-        is_urgent: Boolean(schedule.is_urgent),
-        is_todo: false,
-        absence_type: 'annual',
-        confidence: typeof schedule.confidence === 'number' ? schedule.confidence : 0,
-        source_text: schedule.source_text ?? '',
-        warnings: Array.isArray(schedule.warnings) ? schedule.warnings : [],
-        original_title: schedule.title ?? '',
-        original_schedule_type: scheduleTypes.some((type) => type.value === schedule.schedule_type) ? schedule.schedule_type as ScheduleType : 'unclassified',
-        is_manual: false,
-      })));
+      setDrafts(schedules.map((schedule: Partial<AnalyzedSchedule>, index: number) => {
+        const draft: AnalyzedSchedule = {
+          id: `${Date.now()}-${index}`,
+          selected: Boolean(schedule.title && schedule.date),
+          title: schedule.title ?? '',
+          date: schedule.date ?? '',
+          start_time: schedule.start_time ?? '',
+          end_time: schedule.end_time ?? '',
+          schedule_type: scheduleTypes.some((type) => type.value === schedule.schedule_type) ? schedule.schedule_type as ScheduleType : 'unclassified',
+          is_urgent: Boolean(schedule.is_urgent),
+          is_todo: false,
+          absence_type: 'annual',
+          confidence: typeof schedule.confidence === 'number' ? schedule.confidence : 0,
+          source_text: schedule.source_text ?? '',
+          warnings: Array.isArray(schedule.warnings) ? schedule.warnings : [],
+          original_title: schedule.title ?? '',
+          original_schedule_type: scheduleTypes.some((type) => type.value === schedule.schedule_type) ? schedule.schedule_type as ScheduleType : 'unclassified',
+          is_manual: false,
+        };
+        return { ...draft, selected: draft.selected && compareSchedule(draft, existingSchedules).status !== 'duplicate' };
+      }));
       if (schedules.length === 0) setError('사진에서 일정을 찾지 못했습니다. 다른 각도에서 다시 촬영해 주십시오.');
     } catch (analysisError) {
       setError(analysisError instanceof Error ? analysisError.message : '사진을 분석하지 못했습니다.');
@@ -213,11 +261,12 @@ export default function WhiteboardImportModal({ onClose, onImport }: WhiteboardI
 
   const importSelected = async () => {
     const selected = drafts.filter((draft) => draft.selected);
-    if (selected.length === 0) {
+    const actionable = selected.filter((draft) => compareSchedule(draft, existingSchedules).status !== 'duplicate');
+    if (actionable.length === 0) {
       setError('등록할 일정을 선택해 주십시오.');
       return;
     }
-    if (selected.some((draft) => !draft.title.trim() || !draft.date)) {
+    if (actionable.some((draft) => !draft.title.trim() || !draft.date)) {
       setError('선택한 일정의 제목과 날짜를 모두 입력해 주십시오.');
       return;
     }
@@ -225,7 +274,7 @@ export default function WhiteboardImportModal({ onClose, onImport }: WhiteboardI
     setIsSaving(true);
     setError('');
     try {
-      const corrections = selected
+      const corrections = drafts
         .filter((draft) => !draft.is_manual && (
           draft.title.trim() !== draft.original_title.trim()
           || draft.schedule_type !== draft.original_schedule_type
@@ -238,7 +287,7 @@ export default function WhiteboardImportModal({ onClose, onImport }: WhiteboardI
           corrected_schedule_type: draft.schedule_type,
         }));
 
-      await onImport(selected.map((draft) => ({
+      const toScheduleInput = (draft: AnalyzedSchedule): NewScheduleInput => ({
         title: draft.title.trim(),
         date: draft.date,
         end_date: null,
@@ -250,7 +299,30 @@ export default function WhiteboardImportModal({ onClose, onImport }: WhiteboardI
         is_completed: false,
         is_todo: draft.is_todo,
         absence_type: draft.absence_type,
-      })), corrections);
+      });
+      const inserts = selected
+        .filter((draft) => compareSchedule(draft, existingSchedules).status === 'new')
+        .map(toScheduleInput);
+      const updates = selected.flatMap((draft) => {
+        const comparison = compareSchedule(draft, existingSchedules);
+        if (comparison.status !== 'changed' || !comparison.matched) return [];
+        const values = toScheduleInput(draft);
+        return [{
+          id: comparison.matched.id,
+          values: {
+            title: values.title,
+            date: values.date,
+            end_date: values.end_date,
+            start_time: values.start_time,
+            end_time: values.end_time,
+            schedule_type: values.schedule_type,
+            absence_type: values.absence_type,
+            is_urgent: values.is_urgent,
+          },
+        }];
+      });
+
+      await onImport(inserts, updates, corrections);
       onClose();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : '일정을 등록하지 못했습니다.');
@@ -320,6 +392,13 @@ export default function WhiteboardImportModal({ onClose, onImport }: WhiteboardI
             </>
           ) : (
             <div>
+              <div className="mb-4 grid grid-cols-3 gap-2">
+                {([
+                  { label: '신규', status: 'new', style: 'bg-blue-50 text-blue-700' },
+                  { label: '변경', status: 'changed', style: 'bg-amber-50 text-amber-700' },
+                  { label: '중복', status: 'duplicate', style: 'bg-slate-100 text-slate-500' },
+                ] as const).map((summary) => <div key={summary.status} className={`rounded-xl px-3 py-2.5 text-center ${summary.style}`}><span className="text-[10px] font-black">{summary.label}</span><strong className="ml-2 text-base">{drafts.filter((draft) => compareSchedule(draft, existingSchedules).status === summary.status).length}</strong></div>)}
+              </div>
               <div className="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
                 <div>
                   <h3 className="text-lg font-black text-slate-900">추출된 일정 확인</h3>
@@ -334,7 +413,12 @@ export default function WhiteboardImportModal({ onClose, onImport }: WhiteboardI
                 {drafts.map((draft) => (
                   <div key={draft.id} className={`rounded-2xl border p-4 transition-colors ${draft.selected ? 'border-blue-200 bg-blue-50/30' : 'border-slate-100 bg-slate-50 opacity-65'}`}>
                     <div className="flex items-start gap-3">
-                      <button onClick={() => updateDraft(draft.id, 'selected', !draft.selected)} className={`mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border-2 ${draft.selected ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 bg-white text-transparent'}`}><Check size={14} strokeWidth={3} /></button>
+                      <button
+                        disabled={compareSchedule(draft, existingSchedules).status === 'duplicate'}
+                        onClick={() => updateDraft(draft.id, 'selected', !draft.selected)}
+                        aria-label={draft.selected ? '일정 선택 해제' : '일정 선택'}
+                        className={`mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border-2 ${draft.selected ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 bg-white text-transparent'} disabled:cursor-not-allowed disabled:bg-slate-100`}
+                      ><Check size={14} strokeWidth={3} /></button>
                       <div className="grid min-w-0 flex-1 gap-3 md:grid-cols-[140px_1fr]">
                         <select value={draft.schedule_type} onChange={(event) => updateDraft(draft.id, 'schedule_type', event.target.value as ScheduleType)} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-black text-slate-700 outline-none focus:border-blue-500">
                           {scheduleTypes.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
@@ -356,6 +440,12 @@ export default function WhiteboardImportModal({ onClose, onImport }: WhiteboardI
                       <button onClick={() => setDrafts((current) => current.filter((item) => item.id !== draft.id))} className="mt-1 shrink-0 text-slate-300 hover:text-red-500"><X size={16} /></button>
                     </div>
                     <div className="mt-3 flex flex-wrap items-center gap-2 pl-9 text-[10px] font-bold">
+                      {(() => {
+                        const comparison = compareSchedule(draft, existingSchedules);
+                        if (comparison.status === 'duplicate') return <span className="rounded-lg bg-slate-200 px-2 py-1 text-slate-600">기존 일정과 동일 · 등록 제외</span>;
+                        if (comparison.status === 'changed') return <span className="rounded-lg bg-amber-100 px-2 py-1 text-amber-700">기존 일정 변경 · {comparison.changedFields.join(', ')}</span>;
+                        return <span className="rounded-lg bg-blue-100 px-2 py-1 text-blue-700">새 일정</span>;
+                      })()}
                       {draft.is_manual
                         ? <span className="rounded-lg bg-blue-50 px-2 py-1 text-blue-600">직접 추가</span>
                         : <span className={`rounded-lg px-2 py-1 ${draft.confidence >= 0.8 ? 'bg-emerald-50 text-emerald-600' : draft.confidence >= 0.55 ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600'}`}>인식 신뢰도 {Math.round(draft.confidence * 100)}%</span>}
@@ -374,7 +464,7 @@ export default function WhiteboardImportModal({ onClose, onImport }: WhiteboardI
         {drafts.length > 0 && (
           <div className="flex shrink-0 gap-3 border-t border-slate-100 p-4 md:px-7">
             <button onClick={onClose} className="flex-1 rounded-2xl bg-slate-100 py-3.5 text-sm font-black text-slate-600 hover:bg-slate-200">취소</button>
-            <button disabled={isSaving} onClick={importSelected} className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-blue-600 py-3.5 text-sm font-black text-white shadow-lg hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60">{isSaving && <LoaderCircle size={16} className="animate-spin" />}{isSaving ? '등록 중...' : `선택한 일정 등록 (${drafts.filter((draft) => draft.selected).length})`}</button>
+            <button disabled={isSaving} onClick={importSelected} className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-blue-600 py-3.5 text-sm font-black text-white shadow-lg hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60">{isSaving && <LoaderCircle size={16} className="animate-spin" />}{isSaving ? '등록 중...' : `선택한 일정 반영 (${drafts.filter((draft) => draft.selected && compareSchedule(draft, existingSchedules).status !== 'duplicate').length})`}</button>
           </div>
         )}
       </div>

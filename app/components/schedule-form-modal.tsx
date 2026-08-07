@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { BellRing, CalendarPlus, CalendarRange, CheckSquare2, ChevronDown, Clock3, Siren, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { AlertTriangle, BellRing, CalendarPlus, CalendarRange, CheckSquare2, ChevronDown, Clock3, RotateCcw, Siren, X } from 'lucide-react';
 
 export type ScheduleType = 'meeting' | 'business_trip' | 'internal' | 'leave' | 'unclassified';
 export type AbsenceType = 'annual' | 'early' | 'outing';
@@ -20,11 +20,28 @@ export interface NewScheduleInput {
   absence_type: AbsenceType;
 }
 
+export interface ScheduleRecurrenceSubmission {
+  recurrence_type: Exclude<RecurrenceMode, 'none'>;
+  weekday: number;
+  monthly_week: MonthlyWeek | null;
+  starts_on: string;
+  ends_on: string;
+}
+
 interface ScheduleFormModalProps {
   date: string;
-  initialSchedule?: NewScheduleInput;
+  initialSchedule?: NewScheduleInput & { id?: number | string };
+  existingSchedules?: Array<NewScheduleInput & { id?: number | string }>;
+  copyMode?: boolean;
   onClose: () => void;
-  onSubmit: (schedules: NewScheduleInput[]) => Promise<void>;
+  onSubmit: (schedules: NewScheduleInput[], recurrence?: ScheduleRecurrenceSubmission) => Promise<void>;
+}
+
+interface ScheduleDraft extends NewScheduleInput {
+  dateMode: DateMode;
+  timeMode: TimeMode;
+  recurrenceMode: RecurrenceMode;
+  monthlyWeek: MonthlyWeek;
 }
 
 type TimeMode = 'both' | 'start' | 'end' | 'none';
@@ -110,7 +127,7 @@ const normalizeAbsenceType = (value?: string): AbsenceType => {
   return 'annual';
 };
 
-export default function ScheduleFormModal({ date, initialSchedule, onClose, onSubmit }: ScheduleFormModalProps) {
+export default function ScheduleFormModal({ date, initialSchedule, existingSchedules = [], copyMode = false, onClose, onSubmit }: ScheduleFormModalProps) {
   const defaults = getDefaultTimes(date);
   const initialTimeMode: TimeMode = initialSchedule
     ? initialSchedule.start_time && initialSchedule.end_time ? 'both' : initialSchedule.start_time ? 'start' : initialSchedule.end_time ? 'end' : 'none'
@@ -133,6 +150,80 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
   const [isMonthlyWeekOpen, setIsMonthlyWeekOpen] = useState(false);
   const [error, setError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [savedDraft, setSavedDraft] = useState<ScheduleDraft | null>(null);
+  const draftStorageKey = `schedule-draft:${date}`;
+
+  useEffect(() => {
+    if (initialSchedule) return;
+    let restoreTimer: number | undefined;
+    try {
+      const stored = window.localStorage.getItem(draftStorageKey);
+      if (!stored) return;
+      const parsed = JSON.parse(stored) as ScheduleDraft;
+      if (parsed?.title?.trim()) restoreTimer = window.setTimeout(() => setSavedDraft(parsed), 0);
+    } catch {
+      window.localStorage.removeItem(draftStorageKey);
+    }
+    return () => {
+      if (restoreTimer !== undefined) window.clearTimeout(restoreTimer);
+    };
+  }, [draftStorageKey, initialSchedule]);
+
+  useEffect(() => {
+    if (initialSchedule || !title.trim()) return;
+    const draft: ScheduleDraft = {
+      title,
+      date: dateValue,
+      end_date: dateMode === 'range' ? endDateValue : null,
+      start_time: timeMode === 'both' || timeMode === 'start' ? startTime : null,
+      end_time: timeMode === 'both' || timeMode === 'end' ? endTime : null,
+      is_notice: isNotice,
+      is_urgent: isUrgent,
+      is_completed: false,
+      is_todo: isTodo,
+      schedule_type: scheduleType,
+      absence_type: absenceType,
+      dateMode,
+      timeMode,
+      recurrenceMode,
+      monthlyWeek,
+    };
+    window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
+  }, [absenceType, dateMode, dateValue, draftStorageKey, endDateValue, endTime, initialSchedule, isNotice, isTodo, isUrgent, monthlyWeek, recurrenceMode, scheduleType, startTime, timeMode, title]);
+
+  const conflicts = (() => {
+    const currentEndDate = dateMode === 'range' ? endDateValue : dateValue;
+    const currentStart = timeMode === 'both' || timeMode === 'start' ? startTime : null;
+    const currentEnd = timeMode === 'both' || timeMode === 'end' ? endTime : null;
+    return existingSchedules.filter((schedule) => {
+      if (!copyMode && initialSchedule?.id !== undefined && schedule.id === initialSchedule.id) return false;
+      const scheduleEndDate = schedule.end_date && schedule.end_date >= schedule.date ? schedule.end_date : schedule.date;
+      const datesOverlap = dateValue <= scheduleEndDate && currentEndDate >= schedule.date;
+      if (!datesOverlap) return false;
+      if (dateMode === 'range' || scheduleEndDate > schedule.date) return true;
+      if (!currentStart || !currentEnd || !schedule.start_time || !schedule.end_time) return false;
+      return currentStart < schedule.end_time && currentEnd > schedule.start_time;
+    });
+  })();
+
+  const restoreDraft = () => {
+    if (!savedDraft) return;
+    setTitle(savedDraft.title);
+    setDateValue(savedDraft.date);
+    setEndDateValue(savedDraft.end_date ?? savedDraft.date);
+    setDateMode(savedDraft.dateMode ?? (savedDraft.end_date ? 'range' : 'single'));
+    setStartTime(savedDraft.start_time ?? defaults.start);
+    setEndTime(savedDraft.end_time ?? defaults.end);
+    setTimeMode(savedDraft.timeMode ?? (savedDraft.start_time && savedDraft.end_time ? 'both' : savedDraft.start_time ? 'start' : savedDraft.end_time ? 'end' : 'none'));
+    setIsNotice(savedDraft.is_notice);
+    setIsTodo(savedDraft.is_todo);
+    setIsUrgent(savedDraft.is_urgent);
+    setScheduleType(savedDraft.schedule_type);
+    setAbsenceType(normalizeAbsenceType(savedDraft.absence_type));
+    setRecurrenceMode(savedDraft.recurrenceMode ?? 'none');
+    setMonthlyWeek(savedDraft.monthlyWeek ?? 'first');
+    setSavedDraft(null);
+  };
 
   const applyDuration = (minutes: number) => {
     setEndTime(addMinutes(startTime, minutes));
@@ -165,13 +256,26 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
         end_time: timeMode === 'both' || timeMode === 'end' ? endTime : null,
         is_notice: isNotice,
         is_urgent: isUrgent,
-        is_completed: initialSchedule?.is_completed ?? false,
+        is_completed: copyMode ? false : initialSchedule?.is_completed ?? false,
         is_todo: isTodo,
         schedule_type: scheduleType,
         absence_type: absenceType,
       };
       const recurringDates = initialSchedule || dateMode === 'range' ? [dateValue] : createRecurringDates(dateValue, recurrenceMode, monthlyWeek);
-      await onSubmit(recurringDates.map((recurringDate) => ({ ...schedule, date: recurringDate, end_date: dateMode === 'range' ? endDateValue : null })));
+      const recurrence = !initialSchedule && dateMode === 'single' && recurrenceMode !== 'none'
+        ? {
+            recurrence_type: recurrenceMode,
+            weekday: parseLocalDate(dateValue).getDay(),
+            monthly_week: recurrenceMode === 'monthly' ? monthlyWeek : null,
+            starts_on: dateValue,
+            ends_on: `${parseLocalDate(dateValue).getFullYear()}-12-31`,
+          } satisfies ScheduleRecurrenceSubmission
+        : undefined;
+      await onSubmit(
+        recurringDates.map((recurringDate) => ({ ...schedule, date: recurringDate, end_date: dateMode === 'range' ? endDateValue : null })),
+        recurrence,
+      );
+      if (!initialSchedule) window.localStorage.removeItem(draftStorageKey);
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : '일정을 등록하지 못했습니다.');
       setIsSaving(false);
@@ -187,7 +291,7 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
               <CalendarPlus size={23} />
             </div>
             <div>
-              <h2 className="text-xl font-black text-slate-900">{initialSchedule ? '일정 수정' : '일정 추가'}</h2>
+              <h2 className="text-xl font-black text-slate-900">{copyMode ? '일정 복사' : initialSchedule ? '일정 수정' : '일정 추가'}</h2>
               <p className="mt-1 text-xs font-bold text-slate-400">날짜와 내용을 입력해 주십시오.</p>
             </div>
           </div>
@@ -195,6 +299,18 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
             <X size={18} />
           </button>
         </div>
+
+        {savedDraft && (
+          <div className="mb-5 flex items-center gap-3 rounded-2xl border border-blue-100 bg-blue-50 p-3">
+            <RotateCcw size={18} className="shrink-0 text-blue-600" />
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-black text-slate-700">작성 중이던 일정이 있습니다.</p>
+              <p className="mt-0.5 truncate text-[10px] font-bold text-slate-400">{savedDraft.title}</p>
+            </div>
+            <button type="button" onClick={restoreDraft} className="shrink-0 rounded-lg bg-blue-600 px-3 py-2 text-[10px] font-black text-white">복원</button>
+            <button type="button" onClick={() => { window.localStorage.removeItem(draftStorageKey); setSavedDraft(null); }} className="shrink-0 rounded-lg bg-white px-3 py-2 text-[10px] font-black text-slate-500">삭제</button>
+          </div>
+        )}
 
         <div className="mb-5">
           <div className="mb-2 flex items-center justify-between gap-3">
@@ -352,11 +468,18 @@ export default function ScheduleFormModal({ date, initialSchedule, onClose, onSu
           <span className={`h-5 w-9 rounded-full p-0.5 transition-colors ${isUrgent ? 'bg-red-500' : 'bg-slate-900'}`}><span className={`block h-4 w-4 rounded-full bg-white shadow transition-transform ${isUrgent ? 'translate-x-4' : ''}`} /></span>
         </button>
 
+        {conflicts.length > 0 && (
+          <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
+            <div className="flex items-center gap-2 text-xs font-black"><AlertTriangle size={15} /> 겹칠 수 있는 일정 {conflicts.length}건</div>
+            <p className="mt-1.5 line-clamp-2 text-[10px] font-bold leading-relaxed opacity-80">{conflicts.slice(0, 3).map((schedule) => schedule.title).join(' · ')}</p>
+          </div>
+        )}
+
         {error && <p className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-xs font-bold text-red-600">{error}</p>}
 
         <div className="mt-7 flex gap-3">
           <button type="button" onClick={onClose} className="flex-1 rounded-2xl bg-slate-100 py-3.5 text-sm font-black text-slate-600 transition-colors hover:bg-slate-200">취소</button>
-          <button disabled={isSaving} className="flex-1 rounded-2xl bg-blue-600 py-3.5 text-sm font-black text-white shadow-lg transition-all hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60">{isSaving ? '저장 중...' : initialSchedule ? '변경사항 저장' : dateMode === 'range' ? `${getRangeDayCount(dateValue, endDateValue) - 1}박 ${getRangeDayCount(dateValue, endDateValue)}일 일정 추가` : recurrenceMode === 'none' ? '일정 추가' : `${createRecurringDates(dateValue, recurrenceMode, monthlyWeek).length}개 일정 추가`}</button>
+          <button disabled={isSaving} className="flex-1 rounded-2xl bg-blue-600 py-3.5 text-sm font-black text-white shadow-lg transition-all hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60">{isSaving ? '저장 중...' : copyMode ? '복사한 일정 추가' : initialSchedule ? '변경사항 저장' : dateMode === 'range' ? `${getRangeDayCount(dateValue, endDateValue) - 1}박 ${getRangeDayCount(dateValue, endDateValue)}일 일정 추가` : recurrenceMode === 'none' ? '일정 추가' : `${createRecurringDates(dateValue, recurrenceMode, monthlyWeek).length}개 일정 추가`}</button>
         </div>
       </form>
     </div>
