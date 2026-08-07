@@ -263,7 +263,7 @@ export default function QuickScheduleInput({ open, onClose, defaultDate, onSubmi
               value={source}
               onChange={(event) => { setSource(event.target.value); setParsed(null); setError(''); }}
               onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); analyze(); } }}
-              placeholder="예: 8/12 오후 2시 보건소 출장 권,룡"
+              placeholder="예: 8/12 오후 2시 보건소 출장 룡"
               className="min-w-0 flex-1 rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-blue-500 focus:bg-white"
             />
             <button type="button" onClick={analyze} className="shrink-0 rounded-2xl bg-slate-900 px-5 py-3 text-xs font-black text-white hover:bg-black">일정 해석</button>

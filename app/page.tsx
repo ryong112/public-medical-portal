@@ -908,7 +908,7 @@ export default function IntegratedPortal() {
         </div>
         {/* ===================================================================== */}
 
-        <div className={`${viewMode === 'external_calendar' ? 'hidden xl:flex' : 'flex'} shrink-0 items-center gap-1.5 overflow-x-auto scrollbar-hide sm:gap-2 xl:gap-3`}>
+        <div className={`${viewMode === 'external_calendar' ? 'hidden xl:flex' : 'flex'} shrink-0 items-center gap-1.5 overflow-x-auto scrollbar-hide sm:gap-2 xl:gap-3 xl:overflow-visible`}>
           <a 
             href="https://docs.google.com/spreadsheets/d/1yz_fMbsVe0__VJWe6F0ObbrV2jvnRotqi03-mrnnZUc/edit?usp=sharing" 
             target="_blank" 
@@ -953,17 +953,20 @@ export default function IntegratedPortal() {
           <button onClick={() => setIsCommandPaletteOpen(true)} aria-label="통합 검색" title="통합 검색 · Ctrl+K" className="flex shrink-0 items-center gap-1.5 rounded-xl p-2 text-slate-300 transition-colors hover:bg-white/10 hover:text-white xl:px-3">
             <Search size={18} /><span className="hidden 2xl:inline text-xs font-black">검색</span>
           </button>
-          <button onClick={() => setIsQuickScheduleOpen(true)} aria-label="빠른 일정 입력" title="빠른 일정 입력" className="shrink-0 rounded-xl p-2 text-amber-300 transition-colors hover:bg-white/10 hover:text-white">
+          <button onClick={() => setIsQuickScheduleOpen(true)} aria-label="빠른 일정 입력" className="group relative shrink-0 rounded-xl p-2 text-amber-300 transition-colors hover:bg-white/10 hover:text-white">
             <Zap size={18} />
+            <span className="pointer-events-none absolute left-1/2 top-full z-[120] mt-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-bold text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 xl:block">빠른 일정 입력</span>
           </button>
-          <button onClick={() => void openActivityHistory()} aria-label="변경 이력" title="변경 이력" className="shrink-0 rounded-xl p-2 text-slate-300 transition-colors hover:bg-white/10 hover:text-white">
+          <button onClick={() => void openActivityHistory()} aria-label="변경 이력" className="group relative shrink-0 rounded-xl p-2 text-slate-300 transition-colors hover:bg-white/10 hover:text-white">
             <History size={18} />
+            <span className="pointer-events-none absolute left-1/2 top-full z-[120] mt-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-bold text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 xl:block">변경 이력</span>
           </button>
-          <button onClick={() => setIsKioskOpen(true)} aria-label="전광판 모드" title="전광판 모드" className="shrink-0 rounded-xl p-2 text-slate-300 transition-colors hover:bg-white/10 hover:text-white">
+          <button onClick={() => setIsKioskOpen(true)} aria-label="전광판 모드" className="group relative shrink-0 rounded-xl p-2 text-slate-300 transition-colors hover:bg-white/10 hover:text-white">
             <MonitorPlay size={18} />
+            <span className="pointer-events-none absolute left-1/2 top-full z-[120] mt-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-bold text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 xl:block">전광판 모드</span>
           </button>
-          {isDeviceAdmin && <button onClick={() => setIsDeviceManagerOpen(true)} aria-label="승인 기기 관리" className="shrink-0 rounded-xl p-2 text-blue-300 transition-colors hover:bg-white/10 hover:text-white"><ShieldCheck size={18} /></button>}
-          {isDeviceAdmin && <button onClick={() => setIsYearlyCleanupOpen(true)} aria-label="연도 문서 정리" title="연도 문서 정리" className="shrink-0 rounded-xl p-2 text-amber-300 transition-colors hover:bg-white/10 hover:text-white"><FolderSync size={18} /></button>}
+          {isDeviceAdmin && <button onClick={() => setIsDeviceManagerOpen(true)} aria-label="승인 기기 관리" className="group relative shrink-0 rounded-xl p-2 text-blue-300 transition-colors hover:bg-white/10 hover:text-white"><ShieldCheck size={18} /><span className="pointer-events-none absolute left-1/2 top-full z-[120] mt-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-bold text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 xl:block">승인 기기 관리</span></button>}
+          {isDeviceAdmin && <button onClick={() => setIsYearlyCleanupOpen(true)} aria-label="연도 문서 정리" className="group relative shrink-0 rounded-xl p-2 text-amber-300 transition-colors hover:bg-white/10 hover:text-white"><FolderSync size={18} /><span className="pointer-events-none absolute left-1/2 top-full z-[120] mt-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-bold text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 xl:block">연도 문서 정리</span></button>}
           <button onClick={handlePortalExit} aria-label="화면 나가기 (기기 승인 유지)" title="화면 나가기 · 기기 승인은 유지됩니다" className="text-slate-500 hover:text-white p-1 md:p-2 transition-colors ml-0.5 md:ml-0 shrink-0"><X size={18} className="md:w-[20px] md:h-[20px]"/></button>
         </div>
         {viewMode === 'external_calendar' && (
@@ -1108,7 +1111,7 @@ export default function IntegratedPortal() {
                   <iframe
                     key={externalCalendarFrameKey}
                     src={EXTERNAL_CALENDAR_URL}
-                    className="absolute left-0 -top-[128px] h-[calc(100%+128px)] w-full border-0 sm:-top-[104px] sm:h-[calc(100%+104px)]"
+                    className="absolute left-0 -top-[213px] h-[calc(166.667%+213px)] w-[166.667%] origin-top-left scale-[0.6] border-0 sm:-top-[104px] sm:h-[calc(100%+104px)] sm:w-full sm:scale-100"
                     title="손 일정확인 외부 달력"
                   />
                   {isDeviceAdmin && (
