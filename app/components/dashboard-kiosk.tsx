@@ -55,9 +55,24 @@ export default function DashboardKiosk({ schedules, onClose }: DashboardKioskPro
 
   useEffect(() => {
     const clock = window.setInterval(() => setNow(new Date()), 30_000);
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKeyDown);
-    return () => { window.clearInterval(clock); window.removeEventListener('keydown', onKeyDown); };
+    let enteredFullscreen = Boolean(document.fullscreenElement);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      onClose();
+      if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    };
+    const onFullscreenChange = () => {
+      if (document.fullscreenElement) enteredFullscreen = true;
+      else if (enteredFullscreen) onClose();
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => {
+      window.clearInterval(clock);
+      document.removeEventListener('keydown', onKeyDown, true);
+      document.removeEventListener('fullscreenchange', onFullscreenChange);
+    };
   }, [onClose]);
 
   const data = useMemo(() => {

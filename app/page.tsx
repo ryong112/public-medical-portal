@@ -1108,10 +1108,23 @@ export default function IntegratedPortal() {
                 />
               ) : viewMode === 'external_calendar' ? (
                 <div className="relative h-full w-full overflow-hidden bg-slate-50 sm:rounded-[24px] sm:shadow-xl">
+                  <div className="flex h-full items-center justify-center bg-[radial-gradient(circle_at_top,rgba(37,99,235,0.12),transparent_45%)] p-6 sm:hidden">
+                    <a
+                      href={EXTERNAL_CALENDAR_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex w-full max-w-sm flex-col items-center rounded-[28px] border border-blue-100 bg-white px-6 py-10 text-center shadow-xl transition-transform active:scale-[0.98]"
+                    >
+                      <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-600 text-white shadow-lg shadow-blue-200"><CalendarDays size={30} /></span>
+                      <strong className="mt-5 text-xl font-black tracking-tight text-slate-900">일정 확인하러 가기</strong>
+                      <span className="mt-2 text-xs font-bold leading-5 text-slate-500">휴대폰에 최적화된 일정 공유 달력을 새 창에서 엽니다.</span>
+                      <span className="mt-6 inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-5 py-3 text-sm font-black text-white">일정 열기 <ExternalLink size={15} /></span>
+                    </a>
+                  </div>
                   <iframe
                     key={externalCalendarFrameKey}
                     src={EXTERNAL_CALENDAR_URL}
-                    className="absolute left-0 -top-[213px] h-[calc(166.667%+213px)] w-[166.667%] origin-top-left scale-[0.6] border-0 sm:-top-[104px] sm:h-[calc(100%+104px)] sm:w-full sm:scale-100"
+                    className="absolute left-0 top-[-104px] hidden h-[calc(100%+104px)] w-full border-0 sm:block"
                     title="손 일정확인 외부 달력"
                   />
                   {isDeviceAdmin && (

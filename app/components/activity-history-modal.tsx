@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { CalendarClock, ChevronDown, ChevronUp, FileClock, Filter, LoaderCircle, RotateCcw, X } from 'lucide-react';
 
 type ActivityTable = 'schedules' | 'messages' | 'categories' | 'files';
@@ -71,6 +71,16 @@ export default function ActivityHistoryModal({ logs, onClose, isLoading = false,
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [restoringId, setRestoringId] = useState<number | null>(null);
   const todayKey = seoulDateKey(new Date());
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      onClose();
+    };
+    document.addEventListener('keydown', handleKeyDown, true);
+    return () => document.removeEventListener('keydown', handleKeyDown, true);
+  }, [onClose]);
 
   const todayLogs = useMemo(
     () => logs.filter((log) => seoulDateKey(log.created_at) === todayKey),

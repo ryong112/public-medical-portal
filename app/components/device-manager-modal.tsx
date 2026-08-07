@@ -43,6 +43,16 @@ export default function DeviceManagerModal({ onClose }: DeviceManagerModalProps)
     };
   }, [loadDevices]);
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      onClose();
+    };
+    document.addEventListener('keydown', handleKeyDown, true);
+    return () => document.removeEventListener('keydown', handleKeyDown, true);
+  }, [onClose]);
+
   const updateDevice = async (device: DeviceAccessRow, status: DeviceAccessRow['status'], isAdmin: boolean | null = null) => {
     if (status === 'blocked' && !window.confirm(`'${device.device_name}' 기기를 차단하시겠습니까?`)) return;
     setWorkingId(device.user_id);
