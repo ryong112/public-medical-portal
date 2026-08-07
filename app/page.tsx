@@ -1032,9 +1032,9 @@ export default function IntegratedPortal() {
             </div>
           )}
 
-          <div className={`mx-auto flex w-full flex-1 flex-col overflow-hidden min-h-0 ${viewMode === 'dashboard' ? 'max-w-[1440px]' : 'max-w-6xl'} ${viewMode === 'external_calendar' || viewMode === 'calendar' ? 'p-2 sm:p-3 lg:p-4' : viewMode === 'dashboard' ? 'p-2.5 sm:p-4 lg:p-5 2xl:p-6' : 'p-4 sm:p-6 lg:p-10 2xl:p-12'}`}>
+          <div className={`mx-auto flex w-full flex-1 flex-col overflow-hidden min-h-0 ${viewMode === 'dashboard' ? 'max-w-[1440px]' : viewMode === 'external_calendar' ? 'max-w-[1600px]' : 'max-w-6xl'} ${viewMode === 'external_calendar' || viewMode === 'calendar' ? 'p-2 sm:p-3 lg:p-4' : viewMode === 'dashboard' ? 'p-2.5 sm:p-4 lg:p-5 2xl:p-6' : 'p-4 sm:p-6 lg:p-10 2xl:p-12'}`}>
             
-            {viewMode !== 'dashboard' && viewMode !== 'calendar' && <div className={`flex flex-col md:flex-row justify-between items-start gap-4 shrink-0 ${viewMode === 'external_calendar' ? 'mb-2 md:mb-4' : 'mb-10'}`}>
+            {viewMode === 'files' && <div className="mb-10 flex shrink-0 flex-col items-start justify-between gap-4 md:flex-row">
               <div className="flex-1 w-full overflow-hidden">
                 <div className="group flex items-center gap-4 mb-1">
                   {isEditingTitle && viewMode === 'files' ? (
@@ -1044,8 +1044,8 @@ export default function IntegratedPortal() {
                     </div>
                   ) : (
                     <>
-                      <h2 className={`font-black tracking-tighter uppercase truncate ${viewMode === 'files' ? (getCategoryMeetingTone(selectedCategory)?.text ?? 'text-slate-800') : 'text-slate-800'} ${viewMode === 'external_calendar' ? 'text-xl md:text-2xl' : 'text-2xl md:text-4xl'}`}>
-                        {viewMode === 'external_calendar' ? `손)일정확인 · ${todayStr.slice(0, 4)}년 ${Number(todayStr.slice(5, 7))}월` : selectedCategory}
+                      <h2 className={`truncate text-2xl font-black uppercase tracking-tighter md:text-4xl ${getCategoryMeetingTone(selectedCategory)?.text ?? 'text-slate-800'}`}>
+                        {selectedCategory}
                       </h2>
                       {viewMode === 'files' && selectedCategory !== '전체' && <button onClick={() => { setEditTitleValue(selectedCategory); setIsEditingTitle(true); }} className="opacity-100 md:opacity-0 group-hover:opacity-100 bg-slate-100 text-slate-400 p-2 rounded-xl hover:text-blue-500 text-xs font-bold transition-all">✎ 수정</button>}
                       {viewMode === 'files' && <button onClick={handleDownloadCategoryZip} disabled={isDownloadingAll} className="flex items-center gap-2 bg-blue-50 text-blue-600 px-4 py-2 rounded-xl text-xs font-black hover:bg-blue-600 hover:text-white transition-all ml-2 shadow-sm"><Archive size={14} /> <span className="hidden sm:inline">전체 다운로드(ZIP)</span></button>}
@@ -1053,7 +1053,7 @@ export default function IntegratedPortal() {
                   )}
                 </div>
                 <p className="text-[10px] md:text-xs text-slate-400 font-medium tracking-tight italic truncate">
-                  {viewMode === 'external_calendar' ? '연동된 외부 일정을 확인합니다.' : '부서 자료를 분류별로 확인할 수 있습니다.'}
+                  부서 자료를 분류별로 확인할 수 있습니다.
                 </p>
               </div>
               {viewMode === 'files' && (
@@ -1061,21 +1061,6 @@ export default function IntegratedPortal() {
                   <Plus size={18} /><span>파일 업로드</span>
                   <input type="file" className="hidden" multiple onChange={(e) => e.target.files && handleUpload(e.target.files)} />
                 </label>
-              )}
-              {viewMode === 'external_calendar' && isDeviceAdmin && (
-                <a
-                  href={EXTERNAL_CALENDAR_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => {
-                    externalCalendarLoginPendingRef.current = true;
-                    externalCalendarLoginOpenedAtRef.current = Date.now();
-                  }}
-                  className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-blue-50 px-2.5 py-1.5 text-[10px] font-black text-blue-700 transition-colors hover:bg-blue-100"
-                  title="새 창에서 관리자 로그인"
-                >
-                  관리자 로그인 <ExternalLink size={11} />
-                </a>
               )}
             </div>}
 
@@ -1098,9 +1083,24 @@ export default function IntegratedPortal() {
                   <iframe
                     key={externalCalendarFrameKey}
                     src={EXTERNAL_CALENDAR_URL}
-                    className="absolute left-0 -top-[720px] h-[calc(100%+720px)] w-full border-0 sm:-top-[455px] sm:h-[calc(100%+455px)]"
+                    className="absolute inset-0 h-full w-full border-0"
                     title="손 일정확인 외부 달력"
                   />
+                  {isDeviceAdmin && (
+                    <a
+                      href={EXTERNAL_CALENDAR_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() => {
+                        externalCalendarLoginPendingRef.current = true;
+                        externalCalendarLoginOpenedAtRef.current = Date.now();
+                      }}
+                      className="absolute right-2 top-2 z-10 inline-flex items-center gap-1 rounded-lg bg-blue-50/95 px-2.5 py-1.5 text-[10px] font-black text-blue-700 shadow-sm backdrop-blur transition-colors hover:bg-blue-100 sm:right-3 sm:top-3"
+                      title="새 창에서 관리자 로그인"
+                    >
+                      관리자 로그인 <ExternalLink size={11} />
+                    </a>
+                  )}
                 </div>
 
               ) : viewMode === 'calendar' ? (
