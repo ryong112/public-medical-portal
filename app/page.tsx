@@ -1045,7 +1045,7 @@ export default function IntegratedPortal() {
                   ) : (
                     <>
                       <h2 className={`font-black tracking-tighter uppercase truncate ${viewMode === 'files' ? (getCategoryMeetingTone(selectedCategory)?.text ?? 'text-slate-800') : 'text-slate-800'} ${viewMode === 'external_calendar' ? 'text-xl md:text-2xl' : 'text-2xl md:text-4xl'}`}>
-                        {viewMode === 'external_calendar' ? '손)일정확인' : selectedCategory}
+                        {viewMode === 'external_calendar' ? `손)일정확인 · ${todayStr.slice(0, 4)}년 ${Number(todayStr.slice(5, 7))}월` : selectedCategory}
                       </h2>
                       {viewMode === 'files' && selectedCategory !== '전체' && <button onClick={() => { setEditTitleValue(selectedCategory); setIsEditingTitle(true); }} className="opacity-100 md:opacity-0 group-hover:opacity-100 bg-slate-100 text-slate-400 p-2 rounded-xl hover:text-blue-500 text-xs font-bold transition-all">✎ 수정</button>}
                       {viewMode === 'files' && <button onClick={handleDownloadCategoryZip} disabled={isDownloadingAll} className="flex items-center gap-2 bg-blue-50 text-blue-600 px-4 py-2 rounded-xl text-xs font-black hover:bg-blue-600 hover:text-white transition-all ml-2 shadow-sm"><Archive size={14} /> <span className="hidden sm:inline">전체 다운로드(ZIP)</span></button>}

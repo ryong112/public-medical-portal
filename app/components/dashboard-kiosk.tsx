@@ -146,7 +146,13 @@ function ScheduleRow({ schedule, showDate = false }: { schedule: KioskSchedule; 
   return (
     <div className="flex min-h-0 flex-1 items-center gap-3 rounded-xl border border-white/10 bg-slate-950/25 px-3 py-2 lg:rounded-2xl lg:px-4">
       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-500/15 text-blue-300 lg:h-9 lg:w-9">{schedule.is_urgent ? <Siren size={16} /> : <CalendarDays size={16} />}</span>
-      <div className="min-w-0 flex-1"><p className="truncate text-xs font-black sm:text-sm lg:text-base 2xl:text-lg">{cleanTitle(schedule.title)}</p><p className="mt-0.5 flex items-center gap-1 text-[9px] font-bold text-slate-400 lg:text-[10px]"><Clock3 size={10} />{showDate && <span className="font-black text-violet-300">{formatShortDate(schedule.date)} ·</span>}{formatTime(schedule)}</p></div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs font-black sm:text-sm lg:text-base 2xl:text-lg">{cleanTitle(schedule.title)}</p>
+        <div className="mt-0.5 flex items-center gap-2">
+          {showDate && <span className="shrink-0 text-xs font-black tracking-tight text-violet-200 lg:text-sm 2xl:text-base">{formatShortDate(schedule.date)}</span>}
+          <span className="flex min-w-0 items-center gap-1 truncate text-[9px] font-bold text-slate-400 lg:text-[10px]"><Clock3 size={10} className="shrink-0" />{formatTime(schedule)}</span>
+        </div>
+      </div>
     </div>
   );
 }
