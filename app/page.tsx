@@ -20,13 +20,15 @@ import {
   FileText, FilePlus,
   FileSpreadsheet, FileBox, File, Download, Trash2,
   GripVertical, Calendar as CalendarIcon, LayoutDashboard, Plus,
-  ChevronLeft, ChevronRight, X, Clock, CalendarDays, Archive, Menu, Siren, Pencil, ScanLine, ShieldCheck, Search, History, Copy, MonitorPlay, Zap, FolderSync
+  ChevronLeft, ChevronRight, X, Clock, CalendarDays, Archive, Menu, Siren, Pencil, ScanLine, ShieldCheck, Search, History, Copy, MonitorPlay, Zap, FolderSync, ExternalLink, RefreshCw
 } from 'lucide-react';
 
 interface KoreanHoliday {
   date: string;
   name: string;
 }
+
+const EXTERNAL_CALENDAR_URL = 'https://my-calendar-eta.vercel.app';
 
 const getLocalDateKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
@@ -124,6 +126,7 @@ export default function IntegratedPortal() {
   const [isKioskOpen, setIsKioskOpen] = useState(false);
   const [isAbsenceBoardOpen, setIsAbsenceBoardOpen] = useState(false);
   const [isQuickScheduleOpen, setIsQuickScheduleOpen] = useState(false);
+  const [externalCalendarFrameKey, setExternalCalendarFrameKey] = useState(0);
   const [isYearlyCleanupOpen, setIsYearlyCleanupOpen] = useState(false);
   const [isActivityHistoryLoading, setIsActivityHistoryLoading] = useState(false);
   const [activityLogs, setActivityLogs] = useState<ActivityLogRow[]>([]);
@@ -1055,12 +1058,40 @@ export default function IntegratedPortal() {
                   onOpenAbsenceBoard={() => setIsAbsenceBoardOpen(true)}
                 />
               ) : viewMode === 'external_calendar' ? (
-                <div className="w-full h-full relative rounded-[16px] md:rounded-[24px] overflow-hidden shadow-xl bg-slate-50">
-                  <iframe 
-                    src="https://my-calendar-eta.vercel.app" 
-                    className="absolute inset-0 w-full h-full border-0" 
-                    title="손 일정확인 외부 달력" 
-                  />
+                <div className="flex h-full w-full flex-col overflow-hidden rounded-[16px] bg-slate-50 shadow-xl md:rounded-[24px]">
+                  <div className="flex shrink-0 flex-col gap-2 border-b border-slate-200 bg-white px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:px-4">
+                    <div className="min-w-0">
+                      <p className="text-xs font-black text-slate-800">외부 달력 관리자 기능</p>
+                      <p className="truncate text-[10px] font-medium text-slate-500 sm:text-xs">
+                        새 창에서 로그인한 뒤 이 화면을 새로고침해 주십시오.
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setExternalCalendarFrameKey((current) => current + 1)}
+                        className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-slate-100 px-3 py-2 text-[11px] font-black text-slate-700 transition-colors hover:bg-slate-200 sm:flex-none sm:text-xs"
+                      >
+                        <RefreshCw size={14} /> 달력 새로고침
+                      </button>
+                      <a
+                        href={EXTERNAL_CALENDAR_URL}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-blue-600 px-3 py-2 text-[11px] font-black text-white shadow-md transition-colors hover:bg-blue-700 sm:flex-none sm:text-xs"
+                      >
+                        관리자 로그인 <ExternalLink size={14} />
+                      </a>
+                    </div>
+                  </div>
+                  <div className="relative min-h-0 flex-1">
+                    <iframe
+                      key={externalCalendarFrameKey}
+                      src={EXTERNAL_CALENDAR_URL}
+                      className="absolute inset-0 h-full w-full border-0"
+                      title="손 일정확인 외부 달력"
+                    />
+                  </div>
                 </div>
 
               ) : viewMode === 'calendar' ? (
