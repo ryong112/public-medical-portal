@@ -1298,7 +1298,7 @@ export default function IntegratedPortal() {
                       </div>
                     </div>
 
-                    <aside aria-labelledby="selected-calendar-date-heading" aria-live="polite" className="flex min-h-[280px] flex-col overflow-hidden rounded-[20px] border border-slate-200 bg-white shadow-xl sm:min-h-[360px] xl:min-h-0 xl:rounded-[24px]">
+                    <aside aria-labelledby="selected-calendar-date-heading" aria-live="polite" className="flex min-h-0 max-h-[68dvh] flex-col overflow-hidden rounded-[20px] border border-slate-200 bg-white shadow-xl sm:max-h-[70dvh] xl:h-full xl:max-h-none xl:rounded-[24px]">
                       <div className="shrink-0 border-b border-slate-100 bg-gradient-to-br from-slate-50 to-white p-3 sm:p-4">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
@@ -1315,7 +1315,7 @@ export default function IntegratedPortal() {
                         <button type="button" onClick={() => onAddSchedule(selectedCalendarDate)} className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl bg-blue-600 px-3 py-2.5 text-xs font-black text-white shadow-sm transition-colors hover:bg-blue-700"><Plus size={14}/> 이 날짜에 일정 추가</button>
                       </div>
 
-                      <div className="space-y-2.5 p-3 xl:min-h-0 xl:flex-1 xl:overflow-y-auto custom-scrollbar">
+                      <div className="min-h-0 flex-1 touch-pan-y space-y-2.5 overflow-y-auto overscroll-contain p-3 custom-scrollbar [-webkit-overflow-scrolling:touch]">
                         {selectedCalendarSchedules.length === 0 ? (
                           <div className="flex h-full min-h-44 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-5 text-center">
                             <CalendarDays size={30} className="text-slate-300" />

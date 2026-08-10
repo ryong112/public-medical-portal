@@ -264,7 +264,7 @@ export default function SharedDashboard({
     .sort((a, b) => getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
   const filteredTodaySchedules = todaySchedules.filter((schedule) => matchesDailyScheduleFilter(schedule, todayFilter));
   const todayWorkSchedules = filteredTodaySchedules.filter((schedule) => !isAbsenceSchedule(schedule));
-  const todayAbsenceGroups = groupAbsenceSchedules(filteredTodaySchedules.filter(isAbsenceSchedule));
+  const todayAbsenceGroups = groupAbsenceSchedules(todaySchedules.filter(isAbsenceSchedule));
   const todayTodoSchedules = todaySchedules
     .filter((schedule) => schedule.is_todo)
     .sort((a, b) => Number(Boolean(a.is_completed)) - Number(Boolean(b.is_completed)) || getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
@@ -294,10 +294,10 @@ export default function SharedDashboard({
     .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
     .slice(0, 4);
   const summaryCards = [
-    { label: 'TO DO LIST', value: pendingTodoCount, unit: '개', color: 'text-blue-600', icon: <Check size={18} />, items: todayTodoSchedules, isTodoCard: true, completedValue: completedTodoCount, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[], isWeeklyCard: false },
-    { label: '진행 중인 공지사항', value: allUpcomingNotices.length, unit: '건', color: 'text-red-500', icon: <BellRing size={18} />, items: allUpcomingNotices, isTodoCard: false, completedValue: 0, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[], isWeeklyCard: false },
-    { label: '주간 일정', value: filteredWeeklySchedules.length, unit: '건', color: 'text-violet-600', icon: <CalendarDays size={18} />, items: filteredWeeklySchedules, isTodoCard: false, completedValue: 0, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[], isWeeklyCard: true },
-    { label: '이번 달 휴가', value: monthlyAbsenceGroups.length, unit: '명', color: 'text-amber-500', icon: <CalendarDays size={18} />, items: [] as Schedule[], isTodoCard: false, completedValue: 0, isAbsenceCard: true, absenceItems: monthlyAbsenceGroups, isWeeklyCard: false },
+    { label: 'TO DO LIST', value: pendingTodoCount, unit: '개', color: 'text-blue-600', icon: <Check size={18} />, items: todayTodoSchedules, isTodoCard: true, completedValue: completedTodoCount, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[], todayAbsenceItems: [] as AbsenceGroup[], isWeeklyCard: false },
+    { label: '진행 중인 공지사항', value: allUpcomingNotices.length, unit: '건', color: 'text-red-500', icon: <BellRing size={18} />, items: allUpcomingNotices, isTodoCard: false, completedValue: 0, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[], todayAbsenceItems: [] as AbsenceGroup[], isWeeklyCard: false },
+    { label: '주간 일정', value: filteredWeeklySchedules.length, unit: '건', color: 'text-violet-600', icon: <CalendarDays size={18} />, items: filteredWeeklySchedules, isTodoCard: false, completedValue: 0, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[], todayAbsenceItems: [] as AbsenceGroup[], isWeeklyCard: true },
+    { label: '이번 달 휴가', value: monthlyAbsenceGroups.length, unit: '명', color: 'text-amber-500', icon: <CalendarDays size={18} />, items: [] as Schedule[], isTodoCard: false, completedValue: 0, isAbsenceCard: true, absenceItems: monthlyAbsenceGroups, todayAbsenceItems: todayAbsenceGroups, isWeeklyCard: false },
   ];
 
   const activities: ActivityItem[] = [
@@ -463,12 +463,27 @@ export default function SharedDashboard({
                 <span className="pb-0.5 text-xs font-black text-emerald-600">완료 {item.completedValue}개</span>
               </div>
             ) : item.isAbsenceCard ? (
-              <div className="flex flex-wrap items-center gap-2">
-                <strong className="shrink-0 text-2xl font-black text-slate-900 md:text-3xl">{item.value}<span className="ml-1 text-xs text-slate-400">{item.unit}</span></strong>
-                <div className="flex max-h-16 min-w-0 flex-1 flex-wrap gap-1.5 overflow-y-auto custom-scrollbar">
-                  {item.absenceItems.map((absence) => (
-                    <button key={`absence-chip-${absence.key}`} onClick={() => setSelectedAbsence(absence)} className="min-w-8 rounded-lg bg-amber-50 px-2 py-1.5 text-[9px] font-black text-amber-700 transition-colors hover:bg-amber-100 sm:px-2.5 sm:text-[10px]">{absence.person}</button>
-                  ))}
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <strong className="shrink-0 text-2xl font-black text-slate-900 md:text-3xl">{item.value}<span className="ml-1 text-xs text-slate-400">{item.unit}</span></strong>
+                  <div className="flex max-h-16 min-w-0 flex-1 flex-wrap gap-1.5 overflow-y-auto custom-scrollbar">
+                    {item.absenceItems.map((absence) => (
+                      <button key={`absence-chip-${absence.key}`} onClick={() => setSelectedAbsence(absence)} className="min-w-8 rounded-lg bg-amber-50 px-2 py-1.5 text-[9px] font-black text-amber-700 transition-colors hover:bg-amber-100 sm:px-2.5 sm:text-[10px]">{absence.person}</button>
+                    ))}
+                  </div>
+                </div>
+                <div className="mt-3 border-t border-amber-100 pt-2.5">
+                  <div className="mb-1.5 flex items-center gap-1.5 text-[9px] font-black text-amber-600 sm:text-[10px]"><CalendarDays size={12} /> 오늘 휴가·조퇴·외출</div>
+                  {item.todayAbsenceItems.length > 0 ? (
+                    <div className="flex max-h-16 flex-wrap gap-1.5 overflow-y-auto custom-scrollbar">
+                      {item.todayAbsenceItems.map((absence) => (
+                        <button key={`today-absence-${absence.key}`} onClick={() => onOpenSchedule(absence.schedules[0])} className="flex items-center gap-1.5 rounded-lg border border-amber-100 bg-amber-50 px-2 py-1.5 text-left transition-colors hover:border-amber-300 hover:bg-amber-100">
+                          <span className="text-[10px] font-black text-slate-800">{absence.person}</span>
+                          <span className="text-[8px] font-black text-amber-600 sm:text-[9px]">{absence.typeLabel}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : <p className="text-[9px] font-bold text-slate-400">오늘 등록된 휴가·조퇴·외출이 없습니다.</p>}
                 </div>
               </div>
             ) : (
@@ -542,31 +557,16 @@ export default function SharedDashboard({
             </div>
           </div>
 
-          {todayWorkSchedules.length > 0 || todayAbsenceGroups.length > 0 ? (
+          {todayWorkSchedules.length > 0 ? (
             <div className="flex max-h-80 flex-col">
-              {todayWorkSchedules.length > 0 && (
-                <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1 custom-scrollbar">
-                  {todayWorkSchedules.map((schedule) => renderDailySchedule(schedule))}
-                </div>
-              )}
-              {todayAbsenceGroups.length > 0 && (
-                <div className={`shrink-0 ${todayWorkSchedules.length > 0 ? 'mt-4 border-t border-slate-100 pt-4' : ''}`}>
-                  <div className="mb-2 flex items-center gap-2 text-[10px] font-black text-amber-600"><CalendarDays size={13} /> 오늘 휴가·조퇴</div>
-                  <div className="flex flex-wrap gap-2">
-                    {todayAbsenceGroups.map((absence) => (
-                      <button key={`today-${absence.key}`} onClick={() => onOpenSchedule(absence.schedules[0])} className="flex items-center gap-2 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-left transition-colors hover:border-amber-300 hover:bg-amber-100">
-                        <span className="text-xs font-black text-slate-800">{absence.person}</span>
-                        <span className="text-[9px] font-black text-amber-600">{absence.typeLabel}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
+              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1 custom-scrollbar">
+                {todayWorkSchedules.map((schedule) => renderDailySchedule(schedule))}
+              </div>
             </div>
           ) : (
             <div className="flex min-h-48 flex-col items-center justify-center rounded-2xl bg-slate-50 text-center">
               <CalendarDays size={30} className="mb-3 text-slate-300" />
-              <p className="text-sm font-black text-slate-500">{todayFilter === 'all' ? '오늘 등록된 일정이 없습니다.' : `오늘 ${todayFilterLabel} 일정이 없습니다.`}</p>
+              <p className="text-sm font-black text-slate-500">{todayFilter === 'leave' ? '오늘 휴가·조퇴·외출은 위 요약 카드에서 확인할 수 있습니다.' : todayFilter === 'all' && todayAbsenceGroups.length > 0 ? '오늘 등록된 일반 일정이 없습니다.' : todayFilter === 'all' ? '오늘 등록된 일정이 없습니다.' : `오늘 ${todayFilterLabel} 일정이 없습니다.`}</p>
               <button onClick={() => onChangeView('calendar')} className="mt-3 text-xs font-black text-blue-500">일정 추가</button>
             </div>
           )}
