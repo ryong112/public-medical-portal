@@ -24,9 +24,9 @@ export interface RecurrenceTarget extends RecurrenceOccurrenceFields {
   id: number;
 }
 
-export const isRecurringSchedule = (
-  schedule: Partial<RecurrenceOccurrenceFields>,
-): schedule is Partial<RecurrenceOccurrenceFields> & {
+export const isRecurringSchedule = <T extends Partial<RecurrenceOccurrenceFields>>(
+  schedule: T,
+): schedule is T & {
   recurrence_group_id: string;
   recurrence_original_date: string;
   recurrence_index: number;

@@ -2,6 +2,8 @@
   [string]$PortalUrl = 'https://dphs2023.vercel.app/?kiosk=1',
   [ValidateSet('Left', 'Right')]
   [string]$HandleSide = 'Right',
+  [ValidateRange(10, 120)]
+  [int]$WindowWaitSeconds = 30,
   [switch]$ValidateOnly
 )
 
@@ -102,6 +104,12 @@ if ($ValidateOnly) {
   exit 0
 }
 
+$logPath = Join-Path $PSScriptRoot 'kiosk-handle.log'
+function Write-KioskLog([string]$Message) {
+  Add-Content -LiteralPath $logPath -Encoding UTF8 -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $Message"
+}
+Write-KioskLog "START url=$PortalUrl"
+
 $createdNew = $false
 $mutex = [System.Threading.Mutex]::new($true, 'Local\DPHS-Kiosk-Handle', [ref]$createdNew)
 if (-not $createdNew) {
@@ -158,9 +166,10 @@ function Open-KioskWindow {
   $existing = Get-KioskProcess
   if (-not $existing) {
     $edgePath = Get-EdgePath
+    Write-KioskLog "Launching Edge path=$edgePath"
     Start-Process -FilePath $edgePath -ArgumentList @("--app=$PortalUrl", '--new-window', '--start-maximized') | Out-Null
 
-    $deadline = [DateTime]::UtcNow.AddSeconds(120)
+    $deadline = [DateTime]::UtcNow.AddSeconds($WindowWaitSeconds)
     do {
       Start-Sleep -Milliseconds 350
       $existing = Get-KioskProcess
@@ -168,7 +177,13 @@ function Open-KioskWindow {
   }
 
   if (-not $existing) {
-    throw "전광판 창을 찾지 못했습니다. Edge에서 기기 승인을 완료한 뒤 다시 실행해 주십시오."
+    $portalWindow = Get-Process -Name msedge -ErrorAction SilentlyContinue |
+      Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like '*공공의료지원과 문서함*' } |
+      Select-Object -First 1
+    if ($portalWindow) {
+      throw "포털은 열렸지만 전광판 전용 화면이 시작되지 않았습니다. '?kiosk=1' 변경 사항을 먼저 배포한 뒤 다시 실행해 주십시오."
+    }
+    throw "전광판 창을 찾지 못했습니다. Edge 창과 기기 승인 상태를 확인한 뒤 다시 실행해 주십시오."
   }
 
   $script:kioskHandle = [IntPtr]$existing.MainWindowHandle
@@ -176,6 +191,7 @@ function Open-KioskWindow {
   if (-not $script:targetScreen) { $script:targetScreen = Get-PreferredScreen }
   [DphsKioskWindow]::ShowBorderless($script:kioskHandle, $script:targetScreen.Bounds)
   $script:boardVisible = $true
+  Write-KioskLog "Kiosk window ready handle=$script:kioskHandle screen=$($script:targetScreen.DeviceName)"
 }
 
 function Test-KioskWindow {
@@ -221,9 +237,11 @@ function Toggle-KioskWindow {
   if ($script:boardVisible) {
     [DphsKioskWindow]::Hide($script:kioskHandle)
     $script:boardVisible = $false
+    Write-KioskLog 'Kiosk hidden'
   } else {
     [DphsKioskWindow]::ShowBorderless($script:kioskHandle, $script:targetScreen.Bounds)
     $script:boardVisible = $true
+    Write-KioskLog 'Kiosk restored'
   }
   Set-HandleAppearance
 }
@@ -338,8 +356,9 @@ try {
   [System.Windows.Forms.Application]::Run($script:handleForm)
 }
 catch {
+  Write-KioskLog "ERROR $($_.Exception.Message)"
   [System.Windows.Forms.MessageBox]::Show(
-    $_.Exception.Message,
+    "$($_.Exception.Message)`n`n실행 기록: $logPath",
     '공공의료지원과 전광판',
     [System.Windows.Forms.MessageBoxButtons]::OK,
     [System.Windows.Forms.MessageBoxIcon]::Error

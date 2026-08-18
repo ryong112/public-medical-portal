@@ -14,7 +14,7 @@ import DashboardKiosk from '@/app/components/dashboard-kiosk';
 import MonthlyAbsenceBoard from '@/app/components/monthly-absence-board';
 import QuickScheduleInput from '@/app/components/quick-schedule-input';
 import YearlyDocumentCleanupModal, { type YearlyCleanupCategory, type YearlyCleanupFile, type YearlyDocumentCleanupTarget } from '@/app/components/yearly-document-cleanup-modal';
-import { attachRecurrenceMetadata, createRecurrenceGroupId, isRecurringSchedule, type RecurrenceScope } from '@/lib/schedule-recurrence';
+import { attachRecurrenceMetadata, createRecurrenceGroupId, isRecurringSchedule, type RecurrenceOccurrenceFields, type RecurrenceScope } from '@/lib/schedule-recurrence';
 import JSZip from 'jszip';
 import { 
   FileText, FilePlus,
@@ -27,6 +27,8 @@ interface KoreanHoliday {
   date: string;
   name: string;
 }
+
+type PortalSchedule = NewScheduleInput & Partial<RecurrenceOccurrenceFields> & { id: number };
 
 const EXTERNAL_CALENDAR_URL = 'https://my-calendar-eta.vercel.app';
 const EXTERNAL_CALENDAR_EMBED_URL = `${EXTERNAL_CALENDAR_URL}/?embed=1`;
@@ -133,6 +135,7 @@ export default function IntegratedPortal() {
   const [isActivityHistoryLoading, setIsActivityHistoryLoading] = useState(false);
   const [activityLogs, setActivityLogs] = useState<ActivityLogRow[]>([]);
   const [recurrenceScope, setRecurrenceScope] = useState<RecurrenceScope>('this');
+  const [pendingRecurrenceMove, setPendingRecurrenceMove] = useState<{ schedule: PortalSchedule; targetDate: string } | null>(null);
   const [undoNotices, setUndoNotices] = useState<UndoNotice[]>([]);
   const pendingDeleteKeysRef = useRef(new Set<string>());
   const undoTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
@@ -769,8 +772,11 @@ export default function IntegratedPortal() {
 
   const onSaveSchedule = async (scheduleEntries: NewScheduleInput[], recurrence?: ScheduleRecurrenceSubmission) => {
     const schedule = scheduleEntries[0];
+    const editingScheduleDate = editingSchedule ? String(editingSchedule.date) : '';
     if (editingSchedule && !isCopyingSchedule) {
       if (isRecurringSchedule(editingSchedule) && recurrenceScope !== 'this') {
+        const dayDelta = getDateDifference(editingScheduleDate, schedule.date);
+        let shiftedGroup = false;
         const sharedValues = {
           title: schedule.title,
           start_time: schedule.start_time,
@@ -782,13 +788,28 @@ export default function IntegratedPortal() {
           schedule_type: schedule.schedule_type,
           absence_type: schedule.absence_type,
         };
+        if (recurrenceScope === 'all' && dayDelta !== 0) {
+          const { error: shiftError } = await supabase.rpc('shift_schedule_recurrence_group', {
+            p_group_id: editingSchedule.recurrence_group_id,
+            p_day_delta: dayDelta,
+          });
+          if (shiftError) throw new Error(`반복 일정 전체 날짜를 이동하지 못했습니다: ${shiftError.message}`);
+          shiftedGroup = true;
+        }
         let query = supabase
           .from('schedules')
           .update(sharedValues)
-          .eq('recurrence_group_id', editingSchedule.recurrence_group_id);
+          .eq('recurrence_group_id', editingSchedule.recurrence_group_id)
+          .eq('recurrence_status', 'active');
         if (recurrenceScope === 'future') query = query.gte('recurrence_index', editingSchedule.recurrence_index);
         const { error } = await query;
-        if (error) throw new Error(`반복 일정을 변경하지 못했습니다: ${error.message}`);
+        if (error) {
+          if (shiftedGroup) await supabase.rpc('shift_schedule_recurrence_group', {
+            p_group_id: editingSchedule.recurrence_group_id,
+            p_day_delta: -dayDelta,
+          });
+          throw new Error(`반복 일정을 변경하지 못했습니다: ${error.message}`);
+        }
       } else {
         const update = isRecurringSchedule(editingSchedule)
           ? { ...schedule, recurrence_is_exception: true }
@@ -891,18 +912,61 @@ export default function IntegratedPortal() {
   };
 
   const onScheduleDragStart = (e: React.DragEvent, id: number) => { setDraggedScheduleId(id); e.dataTransfer.effectAllowed = "move"; };
+  const moveSingleSchedule = async (schedule: PortalSchedule, dateStr: string) => {
+    const endDate = getScheduleEndDate(schedule);
+    const duration = getDateDifference(schedule.date, endDate);
+    const update = {
+      date: dateStr,
+      end_date: duration > 0 ? addDaysToDateKey(dateStr, duration) : null,
+      ...(isRecurringSchedule(schedule) ? { recurrence_is_exception: true } : {}),
+    };
+    const { error } = await supabase.from('schedules').update(update).eq('id', schedule.id);
+    if (error) throw new Error(`일정을 이동하지 못했습니다: ${error.message}`);
+  };
+
+  const moveEntireRecurrence = async (schedule: PortalSchedule, dateStr: string) => {
+    const sourceDate = String(schedule.date);
+    if (!isRecurringSchedule(schedule)) return moveSingleSchedule(schedule, dateStr);
+    const dayDelta = getDateDifference(sourceDate, dateStr);
+    if (dayDelta === 0) return;
+    const { error } = await supabase.rpc('shift_schedule_recurrence_group', {
+      p_group_id: schedule.recurrence_group_id,
+      p_day_delta: dayDelta,
+    });
+    if (error) throw new Error(`반복 일정 전체를 이동하지 못했습니다: ${error.message}`);
+  };
+
+  const confirmRecurrenceMove = async (scope: 'this' | 'all') => {
+    if (!pendingRecurrenceMove) return;
+    const { schedule, targetDate } = pendingRecurrenceMove;
+    setPendingRecurrenceMove(null);
+    try {
+      if (scope === 'all') await moveEntireRecurrence(schedule, targetDate);
+      else await moveSingleSchedule(schedule, targetDate);
+      await fetchSchedules();
+      setSelectedCalendarDate(targetDate);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : '일정을 이동하지 못했습니다.');
+    }
+  };
+
   const onDayDrop = async (dateStr: string) => {
     if (draggedScheduleId === null) return;
     const draggedSchedule = schedules.find((schedule) => schedule.id === draggedScheduleId);
     if (!draggedSchedule) return;
-    const endDate = getScheduleEndDate(draggedSchedule);
-    const duration = getDateDifference(draggedSchedule.date, endDate);
-    const update = duration > 0
-      ? { date: dateStr, end_date: addDaysToDateKey(dateStr, duration) }
-      : { date: dateStr, end_date: null };
-    await supabase.from('schedules').update(update).eq('id', draggedScheduleId);
-    fetchSchedules();
     setDraggedScheduleId(null);
+    if (dateStr === draggedSchedule.date) return;
+    if (isRecurringSchedule(draggedSchedule)) {
+      setPendingRecurrenceMove({ schedule: draggedSchedule, targetDate: dateStr });
+      return;
+    }
+    try {
+      await moveSingleSchedule(draggedSchedule, dateStr);
+      await fetchSchedules();
+      setSelectedCalendarDate(dateStr);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : '일정을 이동하지 못했습니다.');
+    }
   };
   const handlePortalExit = () => {
     window.location.assign('about:blank');
@@ -1487,24 +1551,49 @@ export default function IntegratedPortal() {
             {isRecurringSchedule(selectedSchedule) && (
               <div className="mb-5 w-full rounded-2xl bg-slate-50 p-3">
                 <p className="mb-2 text-[10px] font-black text-slate-500">반복 일정 적용 범위</p>
-                <div className="grid grid-cols-3 gap-1.5">
+                <div className="grid grid-cols-2 gap-1.5">
                   {([
-                    { value: 'this', label: '이번 일정' },
-                    { value: 'future', label: '이후 일정' },
-                    { value: 'all', label: '전체 일정' },
+                    { value: 'this', label: '이번 일정만' },
+                    { value: 'all', label: '전체 반복 일정' },
                   ] as const).map((scope) => (
                     <button key={scope.value} type="button" onClick={() => setRecurrenceScope(scope.value)} className={`rounded-xl px-2 py-2 text-[10px] font-black transition-colors ${recurrenceScope === scope.value ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-100'}`}>{scope.label}</button>
                   ))}
                 </div>
-                {recurrenceScope !== 'this' && <p className="mt-2 text-[9px] font-bold text-slate-400">내용과 시간은 함께 변경되며 각 회차의 날짜는 유지됩니다.</p>}
+                {recurrenceScope !== 'this' && <p className="mt-2 text-[9px] font-bold text-slate-400">날짜를 옮기면 모든 회차가 같은 일수만큼 함께 이동합니다.</p>}
               </div>
             )}
             <div className="grid w-full grid-cols-3 gap-3">
               <button onClick={() => onEditSchedule(selectedSchedule)} className="flex items-center justify-center gap-2 rounded-2xl bg-blue-50 py-4 font-black text-blue-600 transition-all hover:bg-blue-600 hover:text-white"><Pencil size={17}/> 일정 수정</button>
               <button onClick={() => onCopySchedule(selectedSchedule)} className="flex items-center justify-center gap-2 rounded-2xl bg-slate-100 py-4 font-black text-slate-600 transition-all hover:bg-slate-700 hover:text-white"><Copy size={17}/> 일정 복사</button>
-              <button onClick={() => isRecurringSchedule(selectedSchedule) ? onCancelRecurringSchedule(selectedSchedule) : onDeleteSchedule(selectedSchedule.id)} className="flex items-center justify-center gap-2 rounded-2xl bg-red-50 py-4 font-black text-red-500 transition-all hover:bg-red-500 hover:text-white"><Trash2 size={18}/> {isRecurringSchedule(selectedSchedule) ? '일정 취소' : '일정 삭제'}</button>
+              <button onClick={() => isRecurringSchedule(selectedSchedule) ? onCancelRecurringSchedule(selectedSchedule) : onDeleteSchedule(Number((selectedSchedule as { id: number }).id))} className="flex items-center justify-center gap-2 rounded-2xl bg-red-50 py-4 font-black text-red-500 transition-all hover:bg-red-500 hover:text-white"><Trash2 size={18}/> {isRecurringSchedule(selectedSchedule) ? '일정 취소' : '일정 삭제'}</button>
               <button onClick={() => { setSelectedSchedule(null); setRecurrenceScope('this'); }} className="col-span-3 rounded-2xl bg-slate-900 py-4 font-black text-white transition-all hover:bg-black">닫기</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {pendingRecurrenceMove && (
+        <div className="fixed inset-0 z-[240] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="recurrence-move-title">
+          <div className="w-full max-w-md rounded-[28px] bg-white p-6 shadow-2xl sm:p-7">
+            <div className="mb-5 flex items-start gap-3">
+              <div className="rounded-2xl bg-blue-50 p-3 text-blue-600"><CalendarDays size={22}/></div>
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-[0.16em] text-blue-600">반복 일정 이동</p>
+                <h3 id="recurrence-move-title" className="mt-1 text-xl font-black text-slate-900">어느 범위까지 변경하시겠습니까?</h3>
+                <p className="mt-2 text-sm font-bold text-slate-500">{pendingRecurrenceMove.schedule.date} → {pendingRecurrenceMove.targetDate}</p>
+              </div>
+            </div>
+            <div className="space-y-2.5">
+              <button type="button" onClick={() => void confirmRecurrenceMove('this')} className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left transition-colors hover:border-blue-300 hover:bg-blue-50">
+                <span className="block text-sm font-black text-slate-900">이번 일정만 이동</span>
+                <span className="mt-1 block text-[11px] font-bold text-slate-400">선택한 회차만 새 날짜로 옮깁니다.</span>
+              </button>
+              <button type="button" onClick={() => void confirmRecurrenceMove('all')} className="w-full rounded-2xl bg-blue-600 px-4 py-4 text-left text-white shadow-lg transition-colors hover:bg-blue-700">
+                <span className="block text-sm font-black">전체 반복 일정 이동</span>
+                <span className="mt-1 block text-[11px] font-bold text-blue-100">모든 회차를 {Math.abs(getDateDifference(pendingRecurrenceMove.schedule.date, pendingRecurrenceMove.targetDate))}일씩 함께 {getDateDifference(pendingRecurrenceMove.schedule.date, pendingRecurrenceMove.targetDate) > 0 ? '뒤로' : '앞으로'} 옮깁니다.</span>
+              </button>
+            </div>
+            <button type="button" onClick={() => setPendingRecurrenceMove(null)} className="mt-3 w-full rounded-2xl bg-slate-100 py-3.5 text-sm font-black text-slate-600 hover:bg-slate-200">취소</button>
           </div>
         </div>
       )}
