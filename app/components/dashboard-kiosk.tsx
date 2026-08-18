@@ -69,6 +69,7 @@ const getAvailableScreenBounds = () => {
 export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = false }: DashboardKioskProps) {
   const [now, setNow] = useState(() => new Date());
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const today = dateKey(now);
   const tomorrow = dateKey(addDays(now, 1));
   const thisWeekEnd = dateKey(endOfThisWeek(now));
@@ -93,6 +94,7 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
     };
     const onFullscreenChange = () => {
       const nextIsFullscreen = Boolean(document.fullscreenElement);
+      setIsFullscreen(nextIsFullscreen);
       if (nextIsFullscreen) enteredFullscreen = true;
       else if (enteredFullscreen && !dedicatedWindow) onClose();
     };
@@ -140,10 +142,6 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
     window.moveTo(bounds.left, bounds.top);
     window.resizeTo(bounds.width, bounds.height);
     setIsCollapsed(false);
-    if (dedicatedWindow && navigator.userAgent.includes('Windows')) {
-      window.location.href = 'dphskiosk://open';
-      return;
-    }
     void document.documentElement.requestFullscreen?.().catch(() => undefined);
   };
 
@@ -179,9 +177,8 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
                 <span className="text-2xl lg:text-4xl 2xl:text-5xl">{now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
                 <span key={now.getSeconds()} className="kiosk-second-tick inline-block min-w-[1.45em] text-lg text-blue-200 lg:text-2xl 2xl:text-3xl">:{String(now.getSeconds()).padStart(2, '0')}</span>
               </p>
-              <p className="text-[9px] font-bold text-slate-400 lg:text-[10px]">실시간 자동 반영</p>
             </div>
-            {!dedicatedWindow && <button onClick={() => void document.documentElement.requestFullscreen?.()} aria-label="전체 화면" className="rounded-xl bg-white/10 p-2.5 text-slate-200 hover:bg-white/20"><MonitorUp size={18} /></button>}
+            {!isFullscreen && <button onClick={() => void document.documentElement.requestFullscreen?.()} aria-label="전체 화면" title="전체 화면" className="rounded-xl bg-white/10 p-2.5 text-slate-200 hover:bg-white/20"><MonitorUp size={18} /></button>}
             <button onClick={closeKiosk} aria-label="전광판 닫기" className="rounded-xl bg-white/10 p-2.5 text-slate-200 hover:bg-red-500"><X size={18} /></button>
           </div>
         </header>

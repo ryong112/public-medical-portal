@@ -118,7 +118,6 @@ export default function IntegratedPortal() {
 
   const [schedules, setSchedules] = useState<any[]>([]);
   const [currentMonth, setCurrentMonth] = useState(new Date());
-  const [calendarDensity, setCalendarDensity] = useState<'comfortable' | 'compact'>('comfortable');
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(() => getLocalDateKey());
   const [koreanHolidays, setKoreanHolidays] = useState<Record<string, string[]>>({});
   const [selectedSchedule, setSelectedSchedule] = useState<any | null>(null);
@@ -958,12 +957,12 @@ export default function IntegratedPortal() {
   };
 
   const openKioskWindow = () => {
-    if (!navigator.userAgent.includes('Windows')) {
-      setIsKioskOpen(true);
-      return;
+    // 사용자 클릭 안에서 바로 전체 화면을 요청해야 브라우저가 허용합니다.
+    // 로컬 EXE나 사용자 지정 프로토콜을 거치지 않아 공공기관 보안 프로그램과 충돌하지 않습니다.
+    setIsKioskOpen(true);
+    if (!document.fullscreenElement) {
+      void document.documentElement.requestFullscreen?.().catch(() => undefined);
     }
-    // Edge 팝업 정책에 의존하지 않고, 사용자가 한 번 등록한 Windows 전광판 실행기를 호출합니다.
-    window.location.href = 'dphskiosk://open';
   };
 
   const selectedCalendarSchedules = getCalendarSchedulesForDate(selectedCalendarDate);
@@ -1244,7 +1243,6 @@ export default function IntegratedPortal() {
                       </div>
                     </div>
                     <div className="flex items-center justify-end gap-1.5 sm:ml-auto sm:gap-2">
-                      <button type="button" onClick={() => setCalendarDensity((current) => current === 'comfortable' ? 'compact' : 'comfortable')} aria-pressed={calendarDensity === 'compact'} className="hidden rounded-xl bg-slate-100 px-3 py-2.5 text-[10px] font-black text-slate-600 transition-colors hover:bg-slate-200 sm:block md:text-xs" title="일정 카드 보기 밀도 변경">{calendarDensity === 'comfortable' ? '촘촘히' : '기본 보기'}</button>
                       <button onClick={() => setIsWhiteboardImportOpen(true)} className="flex items-center gap-1.5 rounded-xl bg-blue-600 px-2.5 py-2.5 text-[9px] font-black text-white shadow-md transition-colors hover:bg-blue-700 sm:gap-2 sm:px-3 sm:text-[10px] md:px-4 md:text-xs"><ScanLine size={15} /> <span className="hidden sm:inline">화이트보드 가져오기</span><span className="sm:hidden">사진 분석</span></button>
                     </div>
                   </div>
@@ -1269,7 +1267,7 @@ export default function IntegratedPortal() {
                             const day = i + 1;
                             const dateStr = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                             const daySchedules = getCalendarSchedulesForDate(dateStr);
-                            const visibleLimit = calendarDensity === 'compact' ? 3 : 2;
+                            const visibleLimit = 3;
                             const visibleSchedules = daySchedules.slice(0, visibleLimit);
                             const hiddenScheduleCount = Math.max(0, daySchedules.length - visibleSchedules.length);
                             const isToday = dateStr === todayStr;
@@ -1295,11 +1293,12 @@ export default function IntegratedPortal() {
                                   setSelectedCalendarDate(dateStr);
                                   void onDayDrop(dateStr);
                                 }}
-                                className={`group relative flex min-h-0 cursor-pointer flex-col border-b border-r border-slate-100 p-1 outline-none transition-all hover:bg-blue-50/50 focus-visible:z-20 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 sm:p-1.5 md:p-2 ${calendarDensity === 'compact' ? 'sm:p-1' : ''} ${isToday ? 'z-10 bg-blue-50/80 ring-2 ring-inset ring-blue-500' : isSelectedDay ? 'z-[9] bg-sky-50/70 ring-2 ring-inset ring-sky-300' : isHoliday ? 'bg-red-50/25' : 'bg-white'}`}
+                                className={`group relative flex min-h-0 cursor-pointer flex-col border-b border-r border-slate-100 p-1 outline-none transition-all hover:bg-blue-50/50 focus-visible:z-20 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 ${isToday ? 'z-10 bg-blue-50/80 ring-2 ring-inset ring-blue-500' : isSelectedDay ? 'z-[9] bg-sky-50/70 ring-2 ring-inset ring-sky-300' : isHoliday ? 'bg-red-50/25' : 'bg-white'}`}
                               >
                                 <div className="mb-1 flex shrink-0 items-start justify-between gap-0.5 sm:gap-1">
                                   <div className="flex min-w-0 items-center gap-1 sm:gap-1.5">
                                     <span className={`flex h-5 min-w-5 items-center justify-center rounded-md px-0.5 text-[10px] font-black sm:h-6 sm:min-w-6 sm:rounded-lg sm:px-1 sm:text-xs md:h-7 md:min-w-7 md:text-sm ${isToday ? 'bg-blue-600 text-white shadow-md' : isHoliday || daySchedules.some((schedule) => schedule.is_notice) ? 'bg-red-50 text-red-600' : new Date(`${dateStr}T00:00:00`).getDay() === 0 ? 'text-red-500' : new Date(`${dateStr}T00:00:00`).getDay() === 6 ? 'text-blue-500' : 'text-slate-800'}`}>{day}</span>
+                                    {daySchedules.length > 0 && <span className={`rounded-md px-1.5 py-0.5 text-[8px] font-black tabular-nums md:text-[9px] ${isToday ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>{daySchedules.length}건</span>}
                                     {isToday && <span className="hidden rounded-md bg-blue-100 px-1.5 py-0.5 text-[8px] font-black text-blue-700 sm:inline md:text-[9px]">오늘</span>}
                                     {isHoliday && <span title={holidayNames.join(', ')} className="hidden truncate text-[8px] font-extrabold text-red-500 lg:block md:text-[9px]">{holidayNames.join(' · ')}</span>}
                                   </div>
@@ -1346,7 +1345,7 @@ export default function IntegratedPortal() {
                                           event.stopPropagation();
                                           setSelectedCalendarDate(dateStr);
                                         }}
-                                        className={`relative z-[1] grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1 border text-left font-bold text-slate-800 shadow-sm transition-all lg:grid-cols-[auto_minmax(0,1fr)_auto] xl:grid-cols-[minmax(0,1fr)_auto] 2xl:grid-cols-[auto_minmax(0,1fr)_auto] ${calendarDensity === 'compact' ? 'min-h-6 px-1 py-0.5' : 'min-h-7 px-1.5 py-1'} ${rangeEdges} ${schedule.is_notice ? 'border-red-200 bg-red-50/95 hover:border-red-400' : isRange ? 'border-indigo-200 bg-indigo-50/95 hover:bg-indigo-100' : 'border-blue-100 bg-white hover:border-blue-400'}`}
+                                        className={`relative z-[1] grid min-h-6 min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1 border px-1 py-0.5 text-left font-bold text-slate-800 shadow-sm transition-all lg:grid-cols-[auto_minmax(0,1fr)_auto] xl:grid-cols-[minmax(0,1fr)_auto] 2xl:grid-cols-[auto_minmax(0,1fr)_auto] ${rangeEdges} ${schedule.is_notice ? 'border-red-200 bg-red-50/95 hover:border-red-400' : isRange ? 'border-indigo-200 bg-indigo-50/95 hover:bg-indigo-100' : 'border-blue-100 bg-white hover:border-blue-400'}`}
                                       >
                                         <span className={`hidden max-w-[68px] truncate text-[9px] font-black tabular-nums lg:block xl:hidden 2xl:block ${schedule.is_notice ? 'text-red-500' : isRange ? 'text-indigo-600' : 'text-blue-600'}`}>{formatCalendarScheduleTime(schedule, dateStr)}</span>
                                         <span className={`min-w-0 truncate text-[9px] font-extrabold ${schedule.is_notice ? 'text-red-900' : ''} ${schedule.is_completed ? 'text-slate-400 line-through opacity-60' : ''}`}>{formatScheduleTitle(schedule)}</span>

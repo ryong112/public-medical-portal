@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { AlertTriangle, BellRing, CalendarPlus, CalendarRange, CheckSquare2, ChevronDown, Clock3, RotateCcw, Siren, X } from 'lucide-react';
+import { AlertTriangle, CalendarPlus, CalendarRange, ChevronDown, Clock3, RotateCcw, X } from 'lucide-react';
 
 export type ScheduleType = 'meeting' | 'business_trip' | 'internal' | 'leave' | 'unclassified';
 export type AbsenceType = 'annual' | 'early' | 'outing';
@@ -225,11 +225,6 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
     setSavedDraft(null);
   };
 
-  const applyDuration = (minutes: number) => {
-    setEndTime(addMinutes(startTime, minutes));
-    setError('');
-  };
-
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!title.trim()) {
@@ -340,11 +335,9 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
               </label>
             </div>
           )}
-          <p className="mt-2 text-[10px] font-bold text-slate-400">{dateMode === 'range' ? '시작일과 종료일을 선택하면 하나의 일정으로 이어서 등록합니다.' : '하루만 선택하면 해당 날짜에만 등록합니다.'}</p>
         </div>
 
         <label className="block">
-          <span className="mb-2 block text-xs font-black text-slate-600">일정 제목</span>
           <input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="일정 제목을 입력해 주십시오." className="w-full rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 py-3.5 text-sm font-bold text-slate-900 outline-none transition-all focus:border-blue-500 focus:bg-white" />
         </label>
 
@@ -400,37 +393,29 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
               <input type="time" disabled={timeMode === 'start' || timeMode === 'none'} value={timeMode === 'start' || timeMode === 'none' ? '' : endTime} onChange={(event) => { setEndTime(event.target.value); setError(''); }} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-black text-slate-800 outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:bg-slate-100" />
             </label>
           </div>
-          {timeMode === 'both' && <div className="mt-3 flex flex-wrap gap-2">
-            {[{ label: '30분', minutes: 30 }, { label: '1시간', minutes: 60 }, { label: '2시간', minutes: 120 }, { label: '업무시간', minutes: 480 }].map((duration) => (
-              <button key={duration.label} type="button" onClick={() => applyDuration(duration.minutes)} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-black text-slate-500 transition-colors hover:border-blue-300 hover:text-blue-600">{duration.label}</button>
-            ))}
-          </div>}
         </div>
 
         {!initialSchedule && dateMode === 'single' && (
-          <div className="mt-5 rounded-2xl border border-blue-100 bg-blue-50/40 p-4">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-black text-slate-700">정기 일정</p>
-                <p className="mt-1 text-[10px] font-bold text-slate-400">선택한 날짜부터 {parseLocalDate(dateValue).getFullYear()}년 12월 31일까지만 등록합니다.</p>
-              </div>
+          <div className="mt-5 rounded-2xl border border-blue-100 bg-blue-50/40 p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="min-w-0 text-[10px] font-bold text-slate-400"><strong className="mr-2 text-xs font-black text-slate-700">정기 일정</strong>{parseLocalDate(dateValue).getFullYear()}년 말까지 등록</p>
               {recurrenceMode !== 'none' && <span className="shrink-0 rounded-lg bg-blue-600 px-2.5 py-1 text-[10px] font-black text-white">{createRecurringDates(dateValue, recurrenceMode, monthlyWeek).length}건</span>}
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-4 gap-1.5">
               {[
                 { value: 'none' as const, label: '반복 안 함' },
                 { value: 'weekly' as const, label: `매주 ${weekdayNames[parseLocalDate(dateValue).getDay()]}요일` },
                 { value: 'biweekly' as const, label: `2주마다 ${weekdayNames[parseLocalDate(dateValue).getDay()]}요일` },
               ].map((option) => (
-                <button key={option.value} type="button" onClick={() => { setRecurrenceMode(option.value); setIsMonthlyWeekOpen(false); }} className={`rounded-xl px-3 py-2.5 text-[10px] font-black transition-all ${recurrenceMode === option.value ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-slate-500 hover:bg-blue-100'}`}>{option.label}</button>
+                <button key={option.value} type="button" onClick={() => { setRecurrenceMode(option.value); setIsMonthlyWeekOpen(false); }} className={`min-w-0 rounded-xl px-1 py-2.5 text-[9px] font-black tracking-tight transition-all sm:px-2 sm:text-[10px] ${recurrenceMode === option.value ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-slate-500 hover:bg-blue-100'}`}>{option.label}</button>
               ))}
               <div className="relative">
-                <button type="button" onClick={() => { setRecurrenceMode('monthly'); setIsMonthlyWeekOpen((current) => !current); }} className={`flex w-full items-center justify-center gap-1.5 rounded-xl px-3 py-2.5 text-[10px] font-black transition-all ${recurrenceMode === 'monthly' ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-slate-500 hover:bg-blue-100'}`}>
-                  <span>매월 {monthlyWeekLabels[monthlyWeek]} {weekdayNames[parseLocalDate(dateValue).getDay()]}요일</span>
-                  <ChevronDown size={13} className={`shrink-0 transition-transform ${isMonthlyWeekOpen ? 'rotate-180' : ''}`} />
+                <button type="button" onClick={() => { setRecurrenceMode('monthly'); setIsMonthlyWeekOpen((current) => !current); }} className={`flex h-full w-full min-w-0 items-center justify-center gap-0.5 rounded-xl px-1 py-2.5 text-[9px] font-black tracking-tight transition-all sm:px-2 sm:text-[10px] ${recurrenceMode === 'monthly' ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-slate-500 hover:bg-blue-100'}`}>
+                  <span className="truncate">매월 {monthlyWeekLabels[monthlyWeek]} {weekdayNames[parseLocalDate(dateValue).getDay()]}요일</span>
+                  <ChevronDown size={11} className={`shrink-0 transition-transform ${isMonthlyWeekOpen ? 'rotate-180' : ''}`} />
                 </button>
                 {isMonthlyWeekOpen && (
-                  <div className="absolute bottom-full left-0 z-20 mb-2 w-full overflow-hidden rounded-xl border border-blue-100 bg-white p-1.5 shadow-xl">
+                  <div className="absolute bottom-full right-0 z-20 mb-2 w-44 overflow-hidden rounded-xl border border-blue-100 bg-white p-1.5 shadow-xl">
                     {(Object.keys(monthlyWeekLabels) as MonthlyWeek[]).map((week) => (
                       <button key={week} type="button" onClick={() => { setMonthlyWeek(week); setRecurrenceMode('monthly'); setIsMonthlyWeekOpen(false); }} className={`block w-full rounded-lg px-3 py-2 text-left text-[10px] font-black transition-colors ${monthlyWeek === week ? 'bg-blue-50 text-blue-600' : 'text-slate-500 hover:bg-slate-50'}`}>
                         매월 {monthlyWeekLabels[week]} {weekdayNames[parseLocalDate(dateValue).getDay()]}요일
@@ -442,31 +427,6 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
             </div>
           </div>
         )}
-
-        <div className="mt-5 rounded-2xl border border-slate-100 p-4">
-          <div className="mb-3 flex items-center gap-2 text-xs font-black text-slate-700"><BellRing size={15} className="text-violet-500" /> 이 일정을 공지사항에 추가하시겠습니까?</div>
-          <div className="grid grid-cols-2 gap-2">
-            <button type="button" onClick={() => setIsNotice(true)} className={`rounded-xl py-2.5 text-xs font-black transition-all ${isNotice ? 'bg-violet-600 text-white shadow-md' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>네</button>
-            <button type="button" onClick={() => setIsNotice(false)} className={`rounded-xl py-2.5 text-xs font-black transition-all ${!isNotice ? 'bg-slate-800 text-white shadow-md' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>아니오</button>
-          </div>
-        </div>
-
-        <div className="mt-3 rounded-2xl border border-slate-100 p-4">
-          <div className="mb-3 flex items-center gap-2 text-xs font-black text-slate-700"><CheckSquare2 size={15} className="text-blue-500" /> 이 일정을 TO DO LIST에 추가하시겠습니까?</div>
-          <div className="grid grid-cols-2 gap-2">
-            <button type="button" onClick={() => setIsTodo(true)} className={`rounded-xl py-2.5 text-xs font-black transition-all ${isTodo ? 'bg-blue-600 text-white shadow-md' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>네</button>
-            <button type="button" onClick={() => setIsTodo(false)} className={`rounded-xl py-2.5 text-xs font-black transition-all ${!isTodo ? 'bg-slate-800 text-white shadow-md' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>아니오</button>
-          </div>
-        </div>
-
-        <button type="button" onClick={() => setIsUrgent((current) => !current)} className={`mt-3 flex w-full items-center gap-3 rounded-2xl border p-4 text-left transition-all ${isUrgent ? 'border-red-300 bg-red-50 text-red-700' : 'border-slate-100 bg-white text-slate-600 hover:bg-slate-50'}`}>
-          <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${isUrgent ? 'bg-red-500 text-white' : 'bg-slate-100 text-slate-400'}`}><Siren size={19} /></span>
-          <span className="flex-1">
-            <span className="block text-xs font-black">긴급 일정으로 표시</span>
-            <span className="mt-1 block text-[10px] font-bold opacity-60">브리핑과 공지사항에 사이렌 아이콘을 표시합니다.</span>
-          </span>
-          <span className={`h-5 w-9 rounded-full p-0.5 transition-colors ${isUrgent ? 'bg-red-500' : 'bg-slate-900'}`}><span className={`block h-4 w-4 rounded-full bg-white shadow transition-transform ${isUrgent ? 'translate-x-4' : ''}`} /></span>
-        </button>
 
         {conflicts.length > 0 && (
           <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
