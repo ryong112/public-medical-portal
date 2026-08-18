@@ -80,6 +80,11 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
     if (!dedicatedWindow) return;
     const previousTitle = document.title;
     document.title = '공공의료지원과 전광판';
+    // `window.open(..., 'fullscreen')`을 지원하지 않는 환경에서도 사이트에
+    // 자동 전체 화면 권한이 부여되어 있다면 바로 전체 화면으로 전환합니다.
+    if (!document.fullscreenElement) {
+      void document.documentElement.requestFullscreen?.().catch(() => undefined);
+    }
     return () => { document.title = previousTitle; };
   }, [dedicatedWindow]);
 

@@ -37,6 +37,19 @@ const getLocalDateKey = (date = new Date()) => `${date.getFullYear()}-${String(d
 const isDedicatedKioskLocation = () => typeof window !== 'undefined'
   && new URLSearchParams(window.location.search).get('kiosk') === '1';
 
+type ManagedScreen = Screen & {
+  availLeft?: number;
+  availTop?: number;
+};
+
+type ScreenDetails = {
+  currentScreen: ManagedScreen;
+};
+
+type WindowWithScreenDetails = Window & {
+  getScreenDetails?: () => Promise<ScreenDetails>;
+};
+
 const normalizeCategoryLinkName = (name: string) => name
   .replace(/\s*\([^)]*\)\s*$/u, '')
   .replace(/^\s*\d{2,4}년(?:도)?\s*/u, '')
@@ -956,13 +969,53 @@ export default function IntegratedPortal() {
     window.location.assign('about:blank');
   };
 
-  const openKioskWindow = () => {
-    // 사용자 클릭 안에서 바로 전체 화면을 요청해야 브라우저가 허용합니다.
-    // 로컬 EXE나 사용자 지정 프로토콜을 거치지 않아 공공기관 보안 프로그램과 충돌하지 않습니다.
-    setIsKioskOpen(true);
-    if (!document.fullscreenElement) {
-      void document.documentElement.requestFullscreen?.().catch(() => undefined);
+  const openKioskWindow = async () => {
+    const openInlineKiosk = () => {
+      setIsKioskOpen(true);
+      if (!document.fullscreenElement) {
+        void document.documentElement.requestFullscreen?.().catch(() => undefined);
+      }
+    };
+
+    // 모바일 브라우저는 별도 창의 크기 조절을 지원하지 않으므로 현재 화면에서 엽니다.
+    if (window.matchMedia('(max-width: 767px)').matches) {
+      openInlineKiosk();
+      return;
     }
+
+    let targetScreen = window.screen as ManagedScreen;
+    const screenDetailsWindow = window as WindowWithScreenDetails;
+    if (screenDetailsWindow.getScreenDetails) {
+      try {
+        // Chromium의 창 관리 권한을 한 번 허용하면 전용 창을 한 번의 클릭으로
+        // 현재 모니터 전체 화면에 열 수 있습니다.
+        const details = await screenDetailsWindow.getScreenDetails();
+        targetScreen = details.currentScreen;
+      } catch {
+        // 권한을 허용하지 않아도 일반 팝업 창으로 계속 사용할 수 있습니다.
+      }
+    }
+
+    const kioskUrl = new URL(window.location.href);
+    kioskUrl.searchParams.set('kiosk', '1');
+    kioskUrl.hash = '';
+
+    const left = targetScreen.availLeft ?? 0;
+    const top = targetScreen.availTop ?? 0;
+    const width = targetScreen.availWidth || window.screen.availWidth;
+    const height = targetScreen.availHeight || window.screen.availHeight;
+    const kioskWindow = window.open(
+      kioskUrl.toString(),
+      'dphs-dashboard-kiosk',
+      `popup,fullscreen,left=${left},top=${top},width=${width},height=${height}`,
+    );
+
+    if (!kioskWindow) {
+      openInlineKiosk();
+      return;
+    }
+
+    kioskWindow.focus();
   };
 
   const selectedCalendarSchedules = getCalendarSchedulesForDate(selectedCalendarDate);
