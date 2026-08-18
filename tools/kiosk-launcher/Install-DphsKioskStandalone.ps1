@@ -7,9 +7,10 @@ Add-Type -AssemblyName System.Windows.Forms
 
 $appDirectory = Join-Path $env:LOCALAPPDATA 'DPHSKiosk'
 $installedLauncher = Join-Path $appDirectory 'Start-DphsKiosk.ps1'
+$installedBootstrap = Join-Path $appDirectory 'DPHS-Kiosk-Launcher.exe'
 $sourceLauncher = Join-Path $PSScriptRoot 'Start-DphsKiosk.ps1'
+$sourceBootstrap = Join-Path $PSScriptRoot 'DPHS-Kiosk-Launcher.exe'
 $protocolRoot = 'HKCU:\Software\Classes\dphskiosk'
-$powershellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 
 function Stop-PreviousKioskLauncher {
   Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe' OR Name = 'pwsh.exe'" -ErrorAction SilentlyContinue |
@@ -26,29 +27,32 @@ function Stop-PreviousKioskLauncher {
 function New-KioskShortcut([string]$ShortcutPath) {
   $shell = New-Object -ComObject WScript.Shell
   $shortcut = $shell.CreateShortcut($ShortcutPath)
-  $shortcut.TargetPath = $powershellPath
-  $shortcut.Arguments = ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -STA -File "{0}"' -f $installedLauncher)
+  $shortcut.TargetPath = $installedBootstrap
+  $shortcut.Arguments = ''
   $shortcut.WorkingDirectory = $appDirectory
   $shortcut.Description = '공공의료지원과 전광판 열기'
-  $shortcut.IconLocation = "$powershellPath,0"
+  $shortcut.IconLocation = "$installedBootstrap,0"
   $shortcut.Save()
 }
 
 try {
-  if (-not (Test-Path -LiteralPath $sourceLauncher)) {
-    throw "설치 파일 안에서 전광판 실행기를 찾지 못했습니다: $sourceLauncher"
+  foreach ($sourcePath in @($sourceLauncher, $sourceBootstrap)) {
+    if (-not (Test-Path -LiteralPath $sourcePath)) {
+      throw "설치 파일 안에서 전광판 실행기를 찾지 못했습니다: $sourcePath"
+    }
   }
 
   Stop-PreviousKioskLauncher
   New-Item -ItemType Directory -Path $appDirectory -Force | Out-Null
   Copy-Item -LiteralPath $sourceLauncher -Destination $installedLauncher -Force
+  Copy-Item -LiteralPath $sourceBootstrap -Destination $installedBootstrap -Force
 
-  $protocolCommand = ('"{0}" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -STA -File "{1}" "%1"' -f $powershellPath, $installedLauncher)
+  $protocolCommand = ('"{0}" "%1"' -f $installedBootstrap)
   New-Item -Path $protocolRoot -Force | Out-Null
   Set-Item -Path $protocolRoot -Value 'URL:DPHS Kiosk Launcher'
   New-ItemProperty -Path $protocolRoot -Name 'URL Protocol' -Value '' -PropertyType String -Force | Out-Null
   New-Item -Path "$protocolRoot\DefaultIcon" -Force | Out-Null
-  Set-Item -Path "$protocolRoot\DefaultIcon" -Value "$powershellPath,0"
+  Set-Item -Path "$protocolRoot\DefaultIcon" -Value "$installedBootstrap,0"
   New-Item -Path "$protocolRoot\shell\open\command" -Force | Out-Null
   Set-Item -Path "$protocolRoot\shell\open\command" -Value $protocolCommand
 
@@ -60,19 +64,12 @@ try {
   New-KioskShortcut -ShortcutPath (Join-Path $startMenuDirectory '전광판.lnk')
 
   [System.Windows.Forms.MessageBox]::Show(
-    "설치가 완료되었습니다.`n`n지금 전광판을 열어 기기 승인을 요청할 수 있습니다.`n다음부터는 포털의 전광판 버튼 또는 바탕화면 바로가기를 사용해 주십시오.",
-    '공공의료지원과 전광판 설치',
+    '공공의료지원과 공유 문서함 전광판과 연결되었습니다.',
+    '전광판 연결 완료',
     [System.Windows.Forms.MessageBoxButtons]::OK,
     [System.Windows.Forms.MessageBoxIcon]::Information
   ) | Out-Null
 
-  Start-Process -FilePath $powershellPath -WindowStyle Hidden -ArgumentList @(
-    '-NoProfile',
-    '-ExecutionPolicy', 'Bypass',
-    '-WindowStyle', 'Hidden',
-    '-STA',
-    '-File', ('"{0}"' -f $installedLauncher)
-  ) | Out-Null
 }
 catch {
   [System.Windows.Forms.MessageBox]::Show(

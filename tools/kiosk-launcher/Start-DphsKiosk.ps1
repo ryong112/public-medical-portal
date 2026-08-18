@@ -181,9 +181,11 @@ function Open-KioskWindow {
 
   $script:kioskHandle = [IntPtr]$existing.MainWindowHandle
   if (-not $script:targetScreen) { $script:targetScreen = Get-PreferredScreen }
-  1..3 | ForEach-Object {
+  # Edge가 시작 직후 한 번 창 프레임을 다시 적용하는 경우가 있어
+  # 초기 로딩 동안 여러 번 borderless 상태를 고정합니다.
+  1..20 | ForEach-Object {
     [DphsKioskNativeWindow]::ShowBorderless($script:kioskHandle, $script:targetScreen.Bounds)
-    Start-Sleep -Milliseconds 250
+    Start-Sleep -Milliseconds 150
   }
   Write-KioskLog "Kiosk ready: $($script:targetScreen.DeviceName)"
 }
@@ -191,7 +193,10 @@ function Open-KioskWindow {
 function Show-KioskWindow {
   if (-not (Test-KioskWindow)) { Open-KioskWindow }
   else {
-    [DphsKioskNativeWindow]::ShowBorderless($script:kioskHandle, $script:targetScreen.Bounds)
+    1..8 | ForEach-Object {
+      [DphsKioskNativeWindow]::ShowBorderless($script:kioskHandle, $script:targetScreen.Bounds)
+      Start-Sleep -Milliseconds 120
+    }
   }
 }
 

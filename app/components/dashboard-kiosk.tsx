@@ -83,7 +83,7 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
   }, [dedicatedWindow]);
 
   useEffect(() => {
-    const clock = window.setInterval(() => setNow(new Date()), 30_000);
+    const clock = window.setInterval(() => setNow(new Date()), 250);
     let enteredFullscreen = Boolean(document.fullscreenElement);
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
@@ -174,23 +174,29 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
             <h1 className="mt-1.5 truncate text-2xl font-black tracking-tight sm:text-3xl lg:text-4xl 2xl:text-5xl">{now.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}</h1>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            <div className="mr-1 hidden text-right sm:block"><p className="text-2xl font-black tabular-nums lg:text-4xl 2xl:text-5xl">{now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</p><p className="text-[9px] font-bold text-slate-400 lg:text-[10px]">실시간 자동 반영</p></div>
+            <div className="mr-1 hidden text-right sm:block">
+              <p className="flex items-baseline justify-end gap-1 font-black tabular-nums">
+                <span className="text-2xl lg:text-4xl 2xl:text-5xl">{now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
+                <span key={now.getSeconds()} className="kiosk-second-tick inline-block min-w-[1.45em] text-lg text-blue-200 lg:text-2xl 2xl:text-3xl">:{String(now.getSeconds()).padStart(2, '0')}</span>
+              </p>
+              <p className="text-[9px] font-bold text-slate-400 lg:text-[10px]">실시간 자동 반영</p>
+            </div>
             {!dedicatedWindow && <button onClick={() => void document.documentElement.requestFullscreen?.()} aria-label="전체 화면" className="rounded-xl bg-white/10 p-2.5 text-slate-200 hover:bg-white/20"><MonitorUp size={18} /></button>}
             <button onClick={closeKiosk} aria-label="전광판 닫기" className="rounded-xl bg-white/10 p-2.5 text-slate-200 hover:bg-red-500"><X size={18} /></button>
           </div>
         </header>
 
-        <main className="grid min-h-0 flex-1 gap-2.5 overflow-y-auto pt-3 sm:gap-3 lg:grid-cols-12 lg:grid-rows-[minmax(0,1.35fr)_minmax(0,0.65fr)] lg:gap-3 lg:overflow-hidden lg:pt-4 2xl:gap-4">
-          <Panel title="오늘 일정" count={data.today.length} tone="blue" className="lg:col-span-4">
+        <main className="grid min-h-0 flex-1 gap-2.5 overflow-y-auto pt-3 sm:gap-3 lg:grid-cols-12 lg:grid-rows-[minmax(0,1.25fr)_minmax(0,0.75fr)] lg:gap-3 lg:overflow-hidden lg:pt-4 2xl:gap-4">
+          <Panel title="오늘 일정" count={data.today.length} tone="blue" className="lg:col-span-3">
             <ScheduleList items={data.today} empty="오늘 등록된 일정이 없습니다." />
           </Panel>
 
           <Panel title="이번 주 일정" count={data.thisWeek.length} tone="violet" className="lg:col-span-4">
-            <ScheduleList items={data.thisWeek} empty="이번 주 남은 일정이 없습니다." showDate />
+            <ScheduleList items={data.thisWeek} empty="이번 주 남은 일정이 없습니다." showDate allowColumns />
           </Panel>
 
-          <Panel title="다음 주 일정" count={data.nextWeek.length} tone="violet" className="lg:col-span-4">
-            <ScheduleList items={data.nextWeek} empty="다음 주 등록된 일정이 없습니다." showDate />
+          <Panel title="다음 주 일정" count={data.nextWeek.length} tone="violet" className="lg:col-span-5">
+            <ScheduleList items={data.nextWeek} empty="다음 주 등록된 일정이 없습니다." showDate allowColumns />
           </Panel>
 
           <Panel title="진행 중인 공지" count={data.notices.length} icon={<BellRing size={17} />} tone="red" className="lg:col-span-4">
@@ -227,9 +233,22 @@ function Panel({ title, count, tone, icon, className = '', children }: { title: 
   );
 }
 
-function ScheduleList({ items, empty, showDate = false }: { items: KioskSchedule[]; empty: string; showDate?: boolean }) {
+function ScheduleList({ items, empty, showDate = false, allowColumns = false }: { items: KioskSchedule[]; empty: string; showDate?: boolean; allowColumns?: boolean }) {
   if (items.length === 0) return <Empty label={empty} />;
-  return <div className="grid h-full min-h-0 gap-1 overflow-hidden lg:gap-1.5" style={{ gridTemplateRows: `repeat(${items.length}, minmax(0, 1fr))` }}>{items.map((schedule) => <ScheduleRow key={schedule.id} schedule={schedule} showDate={showDate} />)}</div>;
+  const columnCount = allowColumns ? Math.max(1, Math.ceil(items.length / 6)) : 1;
+  const rowCount = Math.ceil(items.length / columnCount);
+  return (
+    <div
+      className="grid h-full min-h-0 gap-1 overflow-hidden lg:gap-1.5"
+      style={{
+        gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))`,
+        gridTemplateRows: `repeat(${rowCount}, minmax(0, 1fr))`,
+        gridAutoFlow: 'column',
+      }}
+    >
+      {items.map((schedule) => <ScheduleRow key={schedule.id} schedule={schedule} showDate={showDate} />)}
+    </div>
+  );
 }
 
 function ScheduleRow({ schedule, showDate = false }: { schedule: KioskSchedule; showDate?: boolean }) {

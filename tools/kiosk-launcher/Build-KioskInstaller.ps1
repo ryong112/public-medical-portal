@@ -24,13 +24,68 @@ $resolvedOutput = [IO.Path]::GetFullPath($OutputPath)
 $outputDirectory = Split-Path $resolvedOutput -Parent
 $buildDirectory = Join-Path $PSScriptRoot '.package'
 $sourcePath = Join-Path $buildDirectory 'DphsKioskSetup.cs'
+$bootstrapSourcePath = Join-Path $buildDirectory 'DphsKioskLauncher.cs'
+$bootstrapOutputPath = Join-Path $buildDirectory 'DPHS-Kiosk-Launcher.exe'
 New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
 if (Test-Path -LiteralPath $buildDirectory) { Remove-Item -LiteralPath $buildDirectory -Recurse -Force }
 New-Item -ItemType Directory -Path $buildDirectory -Force | Out-Null
 if (Test-Path -LiteralPath $resolvedOutput) { Remove-Item -LiteralPath $resolvedOutput -Force }
 
+$bootstrapSource = @'
+using System;
+using System.Diagnostics;
+using System.IO;
+
+internal static class DphsKioskLauncher
+{
+    [STAThread]
+    private static int Main(string[] args)
+    {
+        try
+        {
+            string appDirectory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "DPHSKiosk");
+            string launcherScript = Path.Combine(appDirectory, "Start-DphsKiosk.ps1");
+            if (!File.Exists(launcherScript)) return 2;
+
+            string powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+                "System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+            string arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -STA -File \"" + launcherScript + "\"";
+            if (args.Length > 0 && !String.IsNullOrWhiteSpace(args[0]))
+                arguments += " \"" + args[0].Replace("\"", "\\\"") + "\"";
+
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = powershell,
+                Arguments = arguments,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden
+            });
+            return 0;
+        }
+        catch { return 1; }
+    }
+}
+'@
+[IO.File]::WriteAllText($bootstrapSourcePath, $bootstrapSource, [Text.UTF8Encoding]::new($true))
+$bootstrapArguments = @(
+  '/nologo',
+  '/target:winexe',
+  '/optimize+',
+  "/out:$bootstrapOutputPath",
+  '/reference:System.dll',
+  $bootstrapSourcePath
+)
+$bootstrapProcess = Start-Process -FilePath $compilerPath -ArgumentList $bootstrapArguments -Wait -PassThru -NoNewWindow
+if ($bootstrapProcess.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $bootstrapOutputPath)) {
+  throw "숨은 전광판 실행기 생성에 실패했습니다. C# 컴파일러 종료 코드: $($bootstrapProcess.ExitCode)"
+}
+
 $installerBase64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($installerScript))
 $launcherBase64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($launcherScript))
+$bootstrapBase64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($bootstrapOutputPath))
 $source = @"
 using System;
 using System.Diagnostics;
@@ -41,6 +96,7 @@ internal static class DphsKioskSetup
 {
     private const string InstallerBase64 = "$installerBase64";
     private const string LauncherBase64 = "$launcherBase64";
+    private const string BootstrapBase64 = "$bootstrapBase64";
 
     [STAThread]
     private static int Main()
@@ -51,8 +107,10 @@ internal static class DphsKioskSetup
             Directory.CreateDirectory(packageDirectory);
             string installerPath = Path.Combine(packageDirectory, "Install-DphsKioskStandalone.ps1");
             string launcherPath = Path.Combine(packageDirectory, "Start-DphsKiosk.ps1");
+            string bootstrapPath = Path.Combine(packageDirectory, "DPHS-Kiosk-Launcher.exe");
             File.WriteAllBytes(installerPath, Convert.FromBase64String(InstallerBase64));
             File.WriteAllBytes(launcherPath, Convert.FromBase64String(LauncherBase64));
+            File.WriteAllBytes(bootstrapPath, Convert.FromBase64String(BootstrapBase64));
 
             string powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),
                 "System32\\WindowsPowerShell\\v1.0\\powershell.exe");
