@@ -972,8 +972,11 @@ export default function IntegratedPortal() {
         `height=${currentScreen.availHeight}`,
       ].join(','),
     );
-    if (kioskWindow) kioskWindow.focus();
-    else setIsKioskOpen(true);
+    if (kioskWindow) {
+      kioskWindow.focus();
+      return;
+    }
+    alert('전광판 전용 창이 차단되었습니다. 주소창 오른쪽의 팝업 차단 아이콘에서 이 사이트의 팝업을 허용한 뒤 다시 눌러 주십시오.');
   };
 
   const selectedCalendarSchedules = getCalendarSchedulesForDate(selectedCalendarDate);

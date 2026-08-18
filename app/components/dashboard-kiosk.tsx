@@ -26,12 +26,15 @@ interface DashboardKioskProps {
 
 const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const addDays = (date: Date, days: number) => { const next = new Date(date); next.setDate(next.getDate() + days); return next; };
+const endOfThisWeek = (date: Date) => addDays(date, (7 - date.getDay()) % 7);
+const startOfNextWeek = (date: Date) => addDays(endOfThisWeek(date), 1);
 const endOfNextWeek = (date: Date) => {
   const daysUntilThisSunday = (7 - date.getDay()) % 7;
   return addDays(date, daysUntilThisSunday + 7);
 };
 const scheduleEnd = (schedule: KioskSchedule) => schedule.end_date && schedule.end_date >= schedule.date ? schedule.end_date : schedule.date;
 const happensOn = (schedule: KioskSchedule, day: string) => schedule.date <= day && scheduleEnd(schedule) >= day;
+const overlapsRange = (schedule: KioskSchedule, start: string, end: string) => schedule.date <= end && scheduleEnd(schedule) >= start;
 const cleanTitle = (title: string) => title.replace(/^(?:회의|출장|내부일정|휴가|조퇴|외출)\s*[)）]\s*/u, '').trim();
 const formatTime = (schedule: KioskSchedule) => schedule.start_time && schedule.end_time
   ? `${schedule.start_time}–${schedule.end_time}`
@@ -70,6 +73,8 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
   const isCollapsingRef = useRef(false);
   const today = dateKey(now);
   const tomorrow = dateKey(addDays(now, 1));
+  const thisWeekEnd = dateKey(endOfThisWeek(now));
+  const nextWeekStart = dateKey(startOfNextWeek(now));
   const nextWeekEnd = dateKey(endOfNextWeek(now));
 
   useEffect(() => {
@@ -103,12 +108,15 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
       .sort((left, right) => `${left.date}-${left.start_time ?? '99:99'}`.localeCompare(`${right.date}-${right.start_time ?? '99:99'}`));
     return {
       today: active.filter((schedule) => happensOn(schedule, today) && schedule.schedule_type !== 'leave'),
-      upcoming: active.filter((schedule) => schedule.schedule_type !== 'leave' && !happensOn(schedule, today) && scheduleEnd(schedule) >= tomorrow && schedule.date <= nextWeekEnd),
+      thisWeek: tomorrow <= thisWeekEnd
+        ? active.filter((schedule) => schedule.schedule_type !== 'leave' && overlapsRange(schedule, tomorrow, thisWeekEnd))
+        : [],
+      nextWeek: active.filter((schedule) => schedule.schedule_type !== 'leave' && overlapsRange(schedule, nextWeekStart, nextWeekEnd)),
       absences: active.filter((schedule) => schedule.schedule_type === 'leave' && scheduleEnd(schedule) >= today && schedule.date <= nextWeekEnd),
       notices: active.filter((schedule) => schedule.is_notice),
       todos: active.filter((schedule) => schedule.is_todo && !schedule.is_completed),
     };
-  }, [nextWeekEnd, schedules, today, tomorrow]);
+  }, [nextWeekEnd, nextWeekStart, schedules, thisWeekEnd, today, tomorrow]);
 
   const closeKiosk = () => {
     if (document.fullscreenElement) void document.exitFullscreen().finally(onClose);
@@ -166,25 +174,29 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
           </div>
         </header>
 
-        <main className="grid min-h-0 flex-1 gap-2.5 overflow-y-auto pt-3 sm:gap-3 lg:grid-cols-12 lg:grid-rows-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:gap-4 lg:overflow-hidden lg:pt-4">
-          <Panel title="오늘 일정" count={data.today.length} tone="blue" className="lg:col-span-7">
-            <ScheduleList items={data.today} limit={6} empty="오늘 등록된 일정이 없습니다." />
+        <main className="grid min-h-0 flex-1 gap-2.5 overflow-y-auto pt-3 sm:gap-3 lg:grid-cols-12 lg:grid-rows-[minmax(0,1.35fr)_minmax(0,0.65fr)] lg:gap-3 lg:overflow-hidden lg:pt-4 2xl:gap-4">
+          <Panel title="오늘 일정" count={data.today.length} tone="blue" className="lg:col-span-4">
+            <ScheduleList items={data.today} empty="오늘 등록된 일정이 없습니다." />
           </Panel>
 
-          <Panel title="이번 주·다음 주 일정" count={data.upcoming.length} tone="violet" className="lg:col-span-5">
-            <ScheduleList items={data.upcoming} limit={7} empty="다음 주까지 등록된 일정이 없습니다." showDate />
+          <Panel title="이번 주 일정" count={data.thisWeek.length} tone="violet" className="lg:col-span-4">
+            <ScheduleList items={data.thisWeek} empty="이번 주 남은 일정이 없습니다." showDate />
+          </Panel>
+
+          <Panel title="다음 주 일정" count={data.nextWeek.length} tone="violet" className="lg:col-span-4">
+            <ScheduleList items={data.nextWeek} empty="다음 주 등록된 일정이 없습니다." showDate />
           </Panel>
 
           <Panel title="진행 중인 공지" count={data.notices.length} icon={<BellRing size={17} />} tone="red" className="lg:col-span-4">
-            <CompactList items={data.notices} limit={4} empty="진행 중인 공지가 없습니다." />
+            <CompactList items={data.notices} empty="진행 중인 공지가 없습니다." />
           </Panel>
 
           <Panel title="미완료 TO DO" count={data.todos.length} icon={<CheckCircle2 size={17} />} tone="emerald" className="lg:col-span-4">
-            <CompactList items={data.todos} limit={4} empty="미완료 항목이 없습니다." />
+            <CompactList items={data.todos} empty="미완료 항목이 없습니다." />
           </Panel>
 
           <Panel title="이번 주·다음 주 휴가" count={data.absences.length} icon={<CalendarDays size={17} />} tone="amber" className="lg:col-span-4">
-            <AbsenceList items={data.absences} limit={5} />
+            <AbsenceList items={data.absences} />
           </Panel>
         </main>
       </div>
@@ -209,9 +221,9 @@ function Panel({ title, count, tone, icon, className = '', children }: { title: 
   );
 }
 
-function ScheduleList({ items, limit, empty, showDate = false }: { items: KioskSchedule[]; limit: number; empty: string; showDate?: boolean }) {
+function ScheduleList({ items, empty, showDate = false }: { items: KioskSchedule[]; empty: string; showDate?: boolean }) {
   if (items.length === 0) return <Empty label={empty} />;
-  return <div className="flex h-full min-h-0 flex-col gap-1.5 overflow-hidden lg:gap-2">{items.slice(0, limit).map((schedule) => <ScheduleRow key={schedule.id} schedule={schedule} showDate={showDate} />)}<MoreCount count={items.length - limit} /></div>;
+  return <div className="grid h-full min-h-0 gap-1 overflow-hidden lg:gap-1.5" style={{ gridTemplateRows: `repeat(${items.length}, minmax(0, 1fr))` }}>{items.map((schedule) => <ScheduleRow key={schedule.id} schedule={schedule} showDate={showDate} />)}</div>;
 }
 
 function ScheduleRow({ schedule, showDate = false }: { schedule: KioskSchedule; showDate?: boolean }) {
@@ -229,18 +241,14 @@ function ScheduleRow({ schedule, showDate = false }: { schedule: KioskSchedule; 
   );
 }
 
-function CompactList({ items, limit, empty }: { items: KioskSchedule[]; limit: number; empty: string }) {
+function CompactList({ items, empty }: { items: KioskSchedule[]; empty: string }) {
   if (items.length === 0) return <Empty label={empty} />;
-  return <div className="space-y-1.5 overflow-hidden">{items.slice(0, limit).map((schedule) => <div key={schedule.id} className="flex items-center gap-2 rounded-xl bg-slate-950/25 px-3 py-2"><span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400" /><span className="min-w-0 flex-1 truncate text-xs font-black lg:text-sm">{cleanTitle(schedule.title)}</span><span className="shrink-0 text-[9px] font-bold text-slate-400">{schedule.date.slice(5).replace('-', '.')}</span></div>)}<MoreCount count={items.length - limit} /></div>;
+  return <div className="grid h-full min-h-0 gap-1 overflow-hidden lg:gap-1.5" style={{ gridTemplateRows: `repeat(${items.length}, minmax(0, 1fr))` }}>{items.map((schedule) => <div key={schedule.id} className="flex min-h-0 items-center gap-2 rounded-xl bg-slate-950/25 px-3 py-1.5"><span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400" /><span className="min-w-0 flex-1 truncate text-xs font-black lg:text-sm">{cleanTitle(schedule.title)}</span><span className="shrink-0 text-[9px] font-bold text-slate-400">{schedule.date.slice(5).replace('-', '.')}</span></div>)}</div>;
 }
 
-function AbsenceList({ items, limit }: { items: KioskSchedule[]; limit: number }) {
+function AbsenceList({ items }: { items: KioskSchedule[] }) {
   if (items.length === 0) return <Empty label="예정된 휴가·조퇴·외출이 없습니다." />;
-  return <div className="space-y-1.5 overflow-hidden">{items.slice(0, limit).map((schedule) => <div key={schedule.id} className="flex items-center gap-2 rounded-xl bg-amber-300/10 px-3 py-2"><span className="rounded-md bg-amber-300/15 px-2 py-1 text-[9px] font-black text-amber-300">{absenceLabel(schedule)}</span><span className="shrink-0 text-xs font-black tracking-tight text-amber-100 lg:text-sm 2xl:text-base">{schedule.end_date && schedule.end_date > schedule.date ? `${formatAbsenceDate(schedule.date)}–${formatAbsenceDate(schedule.end_date)}` : formatAbsenceDate(schedule.date)}</span><span className="min-w-0 flex-1 truncate text-xs font-black text-white lg:text-sm 2xl:text-base">{cleanTitle(schedule.title)}</span></div>)}<MoreCount count={items.length - limit} /></div>;
-}
-
-function MoreCount({ count }: { count: number }) {
-  return count > 0 ? <p className="pt-0.5 text-center text-[9px] font-black text-slate-500">외 {count}건</p> : null;
+  return <div className="grid h-full min-h-0 gap-1 overflow-hidden lg:gap-1.5" style={{ gridTemplateRows: `repeat(${items.length}, minmax(0, 1fr))` }}>{items.map((schedule) => <div key={schedule.id} className="flex min-h-0 items-center gap-2 rounded-xl bg-amber-300/10 px-3 py-1.5"><span className="rounded-md bg-amber-300/15 px-2 py-1 text-[9px] font-black text-amber-300">{absenceLabel(schedule)}</span><span className="shrink-0 text-xs font-black tracking-tight text-amber-100 lg:text-sm 2xl:text-base">{schedule.end_date && schedule.end_date > schedule.date ? `${formatAbsenceDate(schedule.date)}–${formatAbsenceDate(schedule.end_date)}` : formatAbsenceDate(schedule.date)}</span><span className="min-w-0 flex-1 truncate text-xs font-black text-white lg:text-sm 2xl:text-base">{cleanTitle(schedule.title)}</span></div>)}</div>;
 }
 
 function Empty({ label }: { label: string }) {
