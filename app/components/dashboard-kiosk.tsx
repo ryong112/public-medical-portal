@@ -21,6 +21,7 @@ interface KioskSchedule {
 interface DashboardKioskProps {
   schedules: KioskSchedule[];
   onClose: () => void;
+  dedicatedWindow?: boolean;
 }
 
 const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -47,7 +48,7 @@ const formatAbsenceDate = (value: string) => {
   return `${month}월 ${day}일(${weekday})`;
 };
 
-export default function DashboardKiosk({ schedules, onClose }: DashboardKioskProps) {
+export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = false }: DashboardKioskProps) {
   const [now, setNow] = useState(() => new Date());
   const today = dateKey(now);
   const tomorrow = dateKey(addDays(now, 1));
@@ -57,14 +58,14 @@ export default function DashboardKiosk({ schedules, onClose }: DashboardKioskPro
     const clock = window.setInterval(() => setNow(new Date()), 30_000);
     let enteredFullscreen = Boolean(document.fullscreenElement);
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
+      if (event.key !== 'Escape' || dedicatedWindow) return;
       event.stopPropagation();
       onClose();
       if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
     };
     const onFullscreenChange = () => {
       if (document.fullscreenElement) enteredFullscreen = true;
-      else if (enteredFullscreen) onClose();
+      else if (enteredFullscreen && !dedicatedWindow) onClose();
     };
     document.addEventListener('keydown', onKeyDown, true);
     document.addEventListener('fullscreenchange', onFullscreenChange);
@@ -73,7 +74,7 @@ export default function DashboardKiosk({ schedules, onClose }: DashboardKioskPro
       document.removeEventListener('keydown', onKeyDown, true);
       document.removeEventListener('fullscreenchange', onFullscreenChange);
     };
-  }, [onClose]);
+  }, [dedicatedWindow, onClose]);
 
   const data = useMemo(() => {
     const active = schedules
@@ -104,8 +105,8 @@ export default function DashboardKiosk({ schedules, onClose }: DashboardKioskPro
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <div className="mr-1 hidden text-right sm:block"><p className="text-2xl font-black tabular-nums lg:text-4xl 2xl:text-5xl">{now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</p><p className="text-[9px] font-bold text-slate-400 lg:text-[10px]">실시간 자동 반영</p></div>
-            <button onClick={() => void document.documentElement.requestFullscreen?.()} aria-label="전체 화면" className="rounded-xl bg-white/10 p-2.5 text-slate-200 hover:bg-white/20"><Maximize2 size={18} /></button>
-            <button onClick={closeKiosk} aria-label="전광판 닫기" className="rounded-xl bg-white/10 p-2.5 text-slate-200 hover:bg-red-500"><X size={18} /></button>
+            {!dedicatedWindow && <button onClick={() => void document.documentElement.requestFullscreen?.()} aria-label="전체 화면" className="rounded-xl bg-white/10 p-2.5 text-slate-200 hover:bg-white/20"><Maximize2 size={18} /></button>}
+            {!dedicatedWindow && <button onClick={closeKiosk} aria-label="전광판 닫기" className="rounded-xl bg-white/10 p-2.5 text-slate-200 hover:bg-red-500"><X size={18} /></button>}
           </div>
         </header>
 
