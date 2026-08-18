@@ -21,6 +21,7 @@ interface KioskSchedule {
 interface DashboardKioskProps {
   schedules: KioskSchedule[];
   onClose: () => void;
+  dedicatedWindow?: boolean;
 }
 
 const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -47,9 +48,25 @@ const formatAbsenceDate = (value: string) => {
   return `${month}월 ${day}일(${weekday})`;
 };
 
-export default function DashboardKiosk({ schedules, onClose }: DashboardKioskProps) {
+type ExtendedScreen = Screen & {
+  availLeft?: number;
+  availTop?: number;
+};
+
+const getAvailableScreenBounds = () => {
+  const currentScreen = window.screen as ExtendedScreen;
+  return {
+    left: currentScreen.availLeft ?? 0,
+    top: currentScreen.availTop ?? 0,
+    width: currentScreen.availWidth,
+    height: currentScreen.availHeight,
+  };
+};
+
+export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = false }: DashboardKioskProps) {
   const [now, setNow] = useState(() => new Date());
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const isCollapsingRef = useRef(false);
   const today = dateKey(now);
   const tomorrow = dateKey(addDays(now, 1));
@@ -65,9 +82,11 @@ export default function DashboardKiosk({ schedules, onClose }: DashboardKioskPro
       if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
     };
     const onFullscreenChange = () => {
-      if (document.fullscreenElement) enteredFullscreen = true;
+      const nextIsFullscreen = Boolean(document.fullscreenElement);
+      setIsFullscreen(nextIsFullscreen);
+      if (nextIsFullscreen) enteredFullscreen = true;
       else if (enteredFullscreen && isCollapsingRef.current) isCollapsingRef.current = false;
-      else if (enteredFullscreen) onClose();
+      else if (enteredFullscreen && !dedicatedWindow) onClose();
     };
     document.addEventListener('keydown', onKeyDown, true);
     document.addEventListener('fullscreenchange', onFullscreenChange);
@@ -76,7 +95,7 @@ export default function DashboardKiosk({ schedules, onClose }: DashboardKioskPro
       document.removeEventListener('keydown', onKeyDown, true);
       document.removeEventListener('fullscreenchange', onFullscreenChange);
     };
-  }, [onClose]);
+  }, [dedicatedWindow, onClose]);
 
   const data = useMemo(() => {
     const active = schedules
@@ -96,27 +115,37 @@ export default function DashboardKiosk({ schedules, onClose }: DashboardKioskPro
     else onClose();
   };
 
-  const collapseKiosk = () => {
+  const collapseKiosk = async () => {
+    if (!dedicatedWindow || !document.fullscreenElement) return;
     setIsCollapsed(true);
-    if (document.fullscreenElement) {
-      isCollapsingRef.current = true;
-      void document.exitFullscreen().catch(() => {
-        isCollapsingRef.current = false;
-      });
-    }
+    isCollapsingRef.current = true;
+    await document.exitFullscreen().catch(() => undefined);
+    const bounds = getAvailableScreenBounds();
+    window.resizeTo(360, 180);
+    window.moveTo(bounds.left + Math.max(0, bounds.width - 360), bounds.top + Math.max(0, Math.round((bounds.height - 180) / 2)));
+  };
+
+  const expandKiosk = () => {
+    const bounds = getAvailableScreenBounds();
+    window.moveTo(bounds.left, bounds.top);
+    window.resizeTo(bounds.width, bounds.height);
+    setIsCollapsed(false);
+    void document.documentElement.requestFullscreen?.().catch(() => undefined);
   };
 
   if (isCollapsed) {
     return (
-      <button
-        type="button"
-        onClick={() => setIsCollapsed(false)}
-        aria-label="전광판 다시 크게 펼치기"
-        className="group fixed right-0 top-1/2 z-[400] flex -translate-y-1/2 flex-col items-center gap-2 rounded-l-2xl border border-r-0 border-blue-400/40 bg-[#071022] px-2.5 py-4 text-white shadow-2xl transition-all hover:bg-blue-700 sm:px-3"
-      >
-        <MonitorUp size={19} className="text-blue-300 group-hover:text-white" />
-        <span className="[writing-mode:vertical-rl] text-[10px] font-black tracking-[0.12em] sm:text-xs">전광판 열기</span>
-      </button>
+      <div className="fixed inset-0 z-[400] flex items-center justify-center bg-[#071022] p-3 text-white">
+        <button
+          type="button"
+          onClick={expandKiosk}
+          aria-label="전광판 다시 전체 화면으로 펼치기"
+          className="group flex w-full items-center justify-center gap-3 rounded-2xl border border-blue-400/40 bg-blue-600 px-5 py-4 font-black shadow-2xl transition-colors hover:bg-blue-500"
+        >
+          <MonitorUp size={21} className="text-blue-100" />
+          <span>전광판 열기</span>
+        </button>
+      </div>
     );
   }
 
@@ -124,7 +153,7 @@ export default function DashboardKiosk({ schedules, onClose }: DashboardKioskPro
     <div className="fixed inset-0 z-[400] overflow-hidden bg-[#071022] text-white">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(37,99,235,0.28),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(124,58,237,0.18),transparent_30%)]" />
       <div className="relative flex h-full flex-col p-3 sm:p-5 lg:p-7 2xl:p-9">
-        <button type="button" onClick={collapseKiosk} aria-label="전광판을 가장자리로 접기" className="absolute right-0 top-1/2 z-20 flex -translate-y-1/2 flex-col items-center gap-1 rounded-l-xl bg-blue-600 px-2 py-3 text-[9px] font-black text-white shadow-xl transition-colors hover:bg-blue-500"><Minimize2 size={15}/><span className="[writing-mode:vertical-rl] tracking-wider">접기</span></button>
+        {dedicatedWindow && isFullscreen && <button type="button" onClick={() => void collapseKiosk()} aria-label="전광판을 작은 창으로 접기" className="absolute right-0 top-1/2 z-20 flex -translate-y-1/2 flex-col items-center gap-1 rounded-l-xl bg-blue-600 px-2 py-3 text-[9px] font-black text-white shadow-xl transition-colors hover:bg-blue-500"><Minimize2 size={15}/><span className="[writing-mode:vertical-rl] tracking-wider">접기</span></button>}
         <header className="flex shrink-0 items-start justify-between gap-4 border-b border-white/10 pb-3 lg:pb-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-blue-300"><MonitorUp size={18} /><span className="text-[10px] font-black tracking-[0.18em] lg:text-xs">공공의료지원과 공유 현황</span></div>

@@ -34,6 +34,8 @@ const EXTERNAL_CALENDAR_URL = 'https://my-calendar-eta.vercel.app';
 const EXTERNAL_CALENDAR_EMBED_URL = `${EXTERNAL_CALENDAR_URL}/?embed=1`;
 
 const getLocalDateKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+const isDedicatedKioskLocation = () => typeof window !== 'undefined'
+  && new URLSearchParams(window.location.search).get('kiosk') === '1';
 
 const normalizeCategoryLinkName = (name: string) => name
   .replace(/\s*\([^)]*\)\s*$/u, '')
@@ -127,7 +129,8 @@ export default function IntegratedPortal() {
   const [isWhiteboardImportOpen, setIsWhiteboardImportOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isActivityHistoryOpen, setIsActivityHistoryOpen] = useState(false);
-  const [isKioskOpen, setIsKioskOpen] = useState(false);
+  const [isKioskOpen, setIsKioskOpen] = useState(isDedicatedKioskLocation);
+  const [isDedicatedKiosk] = useState(isDedicatedKioskLocation);
   const [isAbsenceBoardOpen, setIsAbsenceBoardOpen] = useState(false);
   const [isQuickScheduleOpen, setIsQuickScheduleOpen] = useState(false);
   const [isYearlyCleanupOpen, setIsYearlyCleanupOpen] = useState(false);
@@ -954,6 +957,25 @@ export default function IntegratedPortal() {
     window.location.assign('about:blank');
   };
 
+  const openKioskWindow = () => {
+    const currentScreen = window.screen as Screen & { availLeft?: number; availTop?: number };
+    const kioskUrl = new URL(window.location.href);
+    kioskUrl.searchParams.set('kiosk', '1');
+    const kioskWindow = window.open(
+      kioskUrl.toString(),
+      'dphs-dashboard-kiosk',
+      [
+        'popup=yes',
+        `left=${currentScreen.availLeft ?? 0}`,
+        `top=${currentScreen.availTop ?? 0}`,
+        `width=${currentScreen.availWidth}`,
+        `height=${currentScreen.availHeight}`,
+      ].join(','),
+    );
+    if (kioskWindow) kioskWindow.focus();
+    else setIsKioskOpen(true);
+  };
+
   const selectedCalendarSchedules = getCalendarSchedulesForDate(selectedCalendarDate);
   const selectedCalendarHolidayNames = koreanHolidays[selectedCalendarDate] ?? [];
 
@@ -1066,7 +1088,7 @@ export default function IntegratedPortal() {
             <History size={18} />
             <span className="pointer-events-none absolute left-1/2 top-full z-[120] mt-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-bold text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 xl:block">변경 이력</span>
           </button>}
-          <button onClick={() => setIsKioskOpen(true)} aria-label="전광판 모드" className="group relative shrink-0 rounded-xl p-2 text-slate-300 transition-colors hover:bg-white/10 hover:text-white">
+          <button onClick={openKioskWindow} aria-label="전광판 모드" className="group relative shrink-0 rounded-xl p-2 text-slate-300 transition-colors hover:bg-white/10 hover:text-white">
             <MonitorPlay size={18} />
             <span className="pointer-events-none absolute left-1/2 top-full z-[120] mt-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-bold text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 xl:block">전광판 모드</span>
           </button>
@@ -1481,7 +1503,10 @@ export default function IntegratedPortal() {
         />
       )}
 
-      {isKioskOpen && <DashboardKiosk schedules={schedules} onClose={() => setIsKioskOpen(false)} />}
+      {isKioskOpen && <DashboardKiosk schedules={schedules} dedicatedWindow={isDedicatedKiosk} onClose={() => {
+        if (isDedicatedKiosk) window.close();
+        else setIsKioskOpen(false);
+      }} />}
 
       <MonthlyAbsenceBoard
         open={isAbsenceBoardOpen}
