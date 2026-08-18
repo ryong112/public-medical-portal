@@ -25,7 +25,8 @@ try {
     exit 0
   }
 
-  $launcherPath = Join-Path ([System.IO.Path]::GetFullPath($ProjectRoot)) 'tools\kiosk-launcher\Start-DphsKiosk.ps1'
+  $cleanProjectRoot = $ProjectRoot.Trim().Trim('"').TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+  $launcherPath = Join-Path ([System.IO.Path]::GetFullPath($cleanProjectRoot)) 'tools\kiosk-launcher\Start-DphsKiosk.ps1'
   if (-not (Test-Path -LiteralPath $launcherPath)) {
     throw "전광판 실행 파일을 찾지 못했습니다: $launcherPath"
   }

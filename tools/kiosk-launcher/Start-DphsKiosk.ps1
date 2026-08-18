@@ -118,14 +118,7 @@ if (-not $createdNew) {
 }
 
 $script:kioskHandle = [IntPtr]::Zero
-$script:originalStyle = 0L
-$script:boardVisible = $false
 $script:targetScreen = $null
-$script:handleSide = 'Right'
-$script:lastHandleTop = $null
-$script:dragging = $false
-$script:dragMoved = $false
-$script:dragOffsetY = 0
 
 function Get-EdgePath {
   $candidates = @(
@@ -187,158 +180,31 @@ function Open-KioskWindow {
   }
 
   $script:kioskHandle = [IntPtr]$existing.MainWindowHandle
-  $script:originalStyle = [DphsKioskNativeWindow]::CaptureStyle($script:kioskHandle)
   if (-not $script:targetScreen) { $script:targetScreen = Get-PreferredScreen }
-  [DphsKioskNativeWindow]::ShowBorderless($script:kioskHandle, $script:targetScreen.Bounds)
-  $script:boardVisible = $true
+  1..3 | ForEach-Object {
+    [DphsKioskNativeWindow]::ShowBorderless($script:kioskHandle, $script:targetScreen.Bounds)
+    Start-Sleep -Milliseconds 250
+  }
   Write-KioskLog "Kiosk ready: $($script:targetScreen.DeviceName)"
-}
-
-function Set-HandleAppearance {
-  if (-not $script:handleButton) { return }
-  if ($script:boardVisible) {
-    $script:handleButton.Text = "바탕화면`n보기"
-    $script:handleButton.BackColor = [System.Drawing.Color]::FromArgb(15, 23, 42)
-    if ($script:toggleMenuItem) { $script:toggleMenuItem.Text = '전광판 숨기기' }
-  } else {
-    $script:handleButton.Text = "전광판`n열기"
-    $script:handleButton.BackColor = [System.Drawing.Color]::FromArgb(37, 99, 235)
-    if ($script:toggleMenuItem) { $script:toggleMenuItem.Text = '전광판 표시하기' }
-  }
-}
-
-function Set-HandlePosition {
-  if (-not $script:handleForm -or -not $script:targetScreen) { return }
-  $bounds = $script:targetScreen.Bounds
-  $x = if ($script:handleSide -eq 'Left') { $bounds.Left } else { $bounds.Right - $script:handleForm.Width }
-  $minimumTop = $bounds.Top + 24
-  $maximumTop = $bounds.Bottom - $script:handleForm.Height - 24
-  $top = if ($null -eq $script:lastHandleTop) {
-    $bounds.Top + [Math]::Floor(($bounds.Height - $script:handleForm.Height) / 2)
-  } else {
-    [Math]::Max($minimumTop, [Math]::Min($maximumTop, [int]$script:lastHandleTop))
-  }
-  $script:lastHandleTop = $top
-  $script:handleForm.Location = [System.Drawing.Point]::new($x, $top)
 }
 
 function Show-KioskWindow {
   if (-not (Test-KioskWindow)) { Open-KioskWindow }
   else {
     [DphsKioskNativeWindow]::ShowBorderless($script:kioskHandle, $script:targetScreen.Bounds)
-    $script:boardVisible = $true
   }
-  Set-HandleAppearance
-}
-
-function Toggle-KioskWindow {
-  if ($script:boardVisible -and (Test-KioskWindow)) {
-    [DphsKioskNativeWindow]::Hide($script:kioskHandle)
-    $script:boardVisible = $false
-    Write-KioskLog 'Kiosk hidden'
-  } else {
-    Show-KioskWindow
-    Write-KioskLog 'Kiosk restored'
-  }
-  Set-HandleAppearance
 }
 
 try {
   Write-KioskLog "START protocol=$ProtocolUri"
   Open-KioskWindow
-
-  $script:handleForm = New-Object System.Windows.Forms.Form
-  $script:handleForm.Text = '공공의료지원과 전광판 손잡이'
-  $script:handleForm.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
-  $script:handleForm.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
-  $script:handleForm.ShowInTaskbar = $false
-  $script:handleForm.TopMost = $true
-  $script:handleForm.Width = 52
-  $script:handleForm.Height = 112
-
-  $script:handleButton = New-Object System.Windows.Forms.Button
-  $script:handleButton.Dock = [System.Windows.Forms.DockStyle]::Fill
-  $script:handleButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-  $script:handleButton.FlatAppearance.BorderSize = 0
-  $script:handleButton.ForeColor = [System.Drawing.Color]::White
-  $script:handleButton.Font = New-Object System.Drawing.Font('Malgun Gothic', 9, [System.Drawing.FontStyle]::Bold)
-  $script:handleButton.Cursor = [System.Windows.Forms.Cursors]::Hand
-  $script:handleButton.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
-  $script:handleForm.Controls.Add($script:handleButton)
-
-  $toolTip = New-Object System.Windows.Forms.ToolTip
-  $toolTip.SetToolTip($script:handleButton, '클릭: 전광판 숨김/복귀 · 드래그: 위치 조정')
-
-  $contextMenu = New-Object System.Windows.Forms.ContextMenuStrip
-  $script:toggleMenuItem = $contextMenu.Items.Add('전광판 숨기기')
-  $leftMenuItem = $contextMenu.Items.Add('손잡이를 왼쪽에 배치')
-  $rightMenuItem = $contextMenu.Items.Add('손잡이를 오른쪽에 배치')
-  $moveMonitorMenuItem = $contextMenu.Items.Add('다른 모니터로 이동')
-  [void]$contextMenu.Items.Add('-')
-  $exitMenuItem = $contextMenu.Items.Add('전광판 도우미 종료')
-  $script:handleButton.ContextMenuStrip = $contextMenu
-
-  $script:handleButton.Add_MouseDown({
-    param($sender, $eventArgs)
-    if ($eventArgs.Button -ne [System.Windows.Forms.MouseButtons]::Left) { return }
-    $script:dragging = $true
-    $script:dragMoved = $false
-    $script:dragOffsetY = [System.Windows.Forms.Cursor]::Position.Y - $script:handleForm.Top
-  })
-  $script:handleButton.Add_MouseMove({
-    if (-not $script:dragging) { return }
-    $bounds = $script:targetScreen.Bounds
-    $nextTop = [System.Windows.Forms.Cursor]::Position.Y - $script:dragOffsetY
-    $nextTop = [Math]::Max($bounds.Top + 24, [Math]::Min($bounds.Bottom - $script:handleForm.Height - 24, $nextTop))
-    if ([Math]::Abs($nextTop - $script:handleForm.Top) -gt 2) { $script:dragMoved = $true }
-    $script:handleForm.Top = $nextTop
-    $script:lastHandleTop = $nextTop
-  })
-  $script:handleButton.Add_MouseUp({ $script:dragging = $false })
-  $script:handleButton.Add_Click({
-    if ($script:dragMoved) { $script:dragMoved = $false; return }
-    try { Toggle-KioskWindow } catch { [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, '전광판 오류') | Out-Null }
-  })
-
-  $script:toggleMenuItem.Add_Click({ Toggle-KioskWindow })
-  $leftMenuItem.Add_Click({ $script:handleSide = 'Left'; Set-HandlePosition })
-  $rightMenuItem.Add_Click({ $script:handleSide = 'Right'; Set-HandlePosition })
-  $moveMonitorMenuItem.Add_Click({
-    $screens = @([System.Windows.Forms.Screen]::AllScreens)
-    if ($screens.Count -le 1) { return }
-    $currentIndex = [Array]::IndexOf($screens, $script:targetScreen)
-    $script:targetScreen = $screens[($currentIndex + 1) % $screens.Count]
-    $script:lastHandleTop = $null
-    if ($script:boardVisible -and (Test-KioskWindow)) {
-      [DphsKioskNativeWindow]::ShowBorderless($script:kioskHandle, $script:targetScreen.Bounds)
+  while (Test-KioskWindow) {
+    if ($openEvent.WaitOne(500)) {
+      Show-KioskWindow
+      Write-KioskLog 'Kiosk expanded'
     }
-    Set-HandlePosition
-  })
-  $exitMenuItem.Add_Click({ $script:handleForm.Close() })
-
-  $timer = New-Object System.Windows.Forms.Timer
-  $timer.Interval = 500
-  $timer.Add_Tick({
-    if ($openEvent.WaitOne(0)) {
-      try { Show-KioskWindow } catch { [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, '전광판 오류') | Out-Null }
-    }
-    if (-not (Test-KioskWindow)) {
-      $script:boardVisible = $false
-      Set-HandleAppearance
-    }
-  })
-  $timer.Start()
-
-  $script:handleForm.Add_FormClosing({
-    $timer.Stop()
-    if (Test-KioskWindow) {
-      [DphsKioskNativeWindow]::Restore($script:kioskHandle, $script:originalStyle, $script:targetScreen.WorkingArea)
-    }
-  })
-
-  Set-HandleAppearance
-  Set-HandlePosition
-  [System.Windows.Forms.Application]::Run($script:handleForm)
+  }
+  Write-KioskLog 'Kiosk window closed; launcher stopped'
 }
 catch {
   Write-KioskLog "ERROR $($_.Exception.Message)"

@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { BellRing, CalendarDays, CheckCircle2, Clock3, Maximize2, Minimize2, MonitorUp, Siren, X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { BellRing, CalendarDays, CheckCircle2, Clock3, Minimize2, MonitorUp, Siren, X } from 'lucide-react';
 
 interface KioskSchedule {
   id: number | string;
@@ -69,8 +69,6 @@ const getAvailableScreenBounds = () => {
 export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = false }: DashboardKioskProps) {
   const [now, setNow] = useState(() => new Date());
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const isCollapsingRef = useRef(false);
   const today = dateKey(now);
   const tomorrow = dateKey(addDays(now, 1));
   const thisWeekEnd = dateKey(endOfThisWeek(now));
@@ -95,9 +93,7 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
     };
     const onFullscreenChange = () => {
       const nextIsFullscreen = Boolean(document.fullscreenElement);
-      setIsFullscreen(nextIsFullscreen);
       if (nextIsFullscreen) enteredFullscreen = true;
-      else if (enteredFullscreen && isCollapsingRef.current) isCollapsingRef.current = false;
       else if (enteredFullscreen && !dedicatedWindow) onClose();
     };
     document.addEventListener('keydown', onKeyDown, true);
@@ -131,10 +127,9 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
   };
 
   const collapseKiosk = async () => {
-    if (!dedicatedWindow || !document.fullscreenElement) return;
+    if (!dedicatedWindow) return;
     setIsCollapsed(true);
-    isCollapsingRef.current = true;
-    await document.exitFullscreen().catch(() => undefined);
+    if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
     const bounds = getAvailableScreenBounds();
     window.resizeTo(360, 180);
     window.moveTo(bounds.left + Math.max(0, bounds.width - 360), bounds.top + Math.max(0, Math.round((bounds.height - 180) / 2)));
@@ -145,6 +140,10 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
     window.moveTo(bounds.left, bounds.top);
     window.resizeTo(bounds.width, bounds.height);
     setIsCollapsed(false);
+    if (dedicatedWindow && navigator.userAgent.includes('Windows')) {
+      window.location.href = 'dphskiosk://open';
+      return;
+    }
     void document.documentElement.requestFullscreen?.().catch(() => undefined);
   };
 
@@ -168,7 +167,7 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
     <div className="fixed inset-0 z-[400] overflow-hidden bg-[#071022] text-white">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(37,99,235,0.28),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(124,58,237,0.18),transparent_30%)]" />
       <div className="relative flex h-full flex-col p-3 sm:p-5 lg:p-7 2xl:p-9">
-        {dedicatedWindow && isFullscreen && <button type="button" onClick={() => void collapseKiosk()} aria-label="전광판을 작은 창으로 접기" className="absolute right-0 top-1/2 z-20 flex -translate-y-1/2 flex-col items-center gap-1 rounded-l-xl bg-blue-600 px-2 py-3 text-[9px] font-black text-white shadow-xl transition-colors hover:bg-blue-500"><Minimize2 size={15}/><span className="[writing-mode:vertical-rl] tracking-wider">접기</span></button>}
+        {dedicatedWindow && <button type="button" onClick={() => void collapseKiosk()} aria-label="전광판을 작은 창으로 접기" className="absolute right-0 top-1/2 z-20 flex -translate-y-1/2 flex-col items-center gap-1 rounded-l-xl bg-blue-600 px-2 py-3 text-[9px] font-black text-white shadow-xl transition-colors hover:bg-blue-500"><Minimize2 size={15}/><span className="[writing-mode:vertical-rl] tracking-wider">접기</span></button>}
         <header className="flex shrink-0 items-start justify-between gap-4 border-b border-white/10 pb-3 lg:pb-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-blue-300"><MonitorUp size={18} /><span className="text-[10px] font-black tracking-[0.18em] lg:text-xs">공공의료지원과 공유 현황</span></div>
@@ -176,7 +175,7 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <div className="mr-1 hidden text-right sm:block"><p className="text-2xl font-black tabular-nums lg:text-4xl 2xl:text-5xl">{now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</p><p className="text-[9px] font-bold text-slate-400 lg:text-[10px]">실시간 자동 반영</p></div>
-            <button onClick={() => void document.documentElement.requestFullscreen?.()} aria-label="전체 화면" className="rounded-xl bg-white/10 p-2.5 text-slate-200 hover:bg-white/20"><Maximize2 size={18} /></button>
+            {!dedicatedWindow && <button onClick={() => void document.documentElement.requestFullscreen?.()} aria-label="전체 화면" className="rounded-xl bg-white/10 p-2.5 text-slate-200 hover:bg-white/20"><MonitorUp size={18} /></button>}
             <button onClick={closeKiosk} aria-label="전광판 닫기" className="rounded-xl bg-white/10 p-2.5 text-slate-200 hover:bg-red-500"><X size={18} /></button>
           </div>
         </header>
