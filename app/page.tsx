@@ -961,18 +961,13 @@ export default function IntegratedPortal() {
     const currentScreen = window.screen as Screen & { availLeft?: number; availTop?: number };
     const kioskUrl = new URL(window.location.href);
     kioskUrl.searchParams.set('kiosk', '1');
-    const kioskWindow = window.open(
-      kioskUrl.toString(),
-      'dphs-dashboard-kiosk',
-      [
-        'popup=yes',
-        `left=${currentScreen.availLeft ?? 0}`,
-        `top=${currentScreen.availTop ?? 0}`,
-        `width=${currentScreen.availWidth}`,
-        `height=${currentScreen.availHeight}`,
-      ].join(','),
-    );
+    const kioskWindow = window.open('about:blank', 'dphs-dashboard-kiosk', 'popup');
     if (kioskWindow) {
+      kioskWindow.document.title = '공공의료지원과 전광판 불러오는 중';
+      kioskWindow.document.body.innerHTML = '<p style="font:700 16px system-ui;padding:24px">전광판을 불러오고 있습니다.</p>';
+      kioskWindow.moveTo(currentScreen.availLeft ?? 0, currentScreen.availTop ?? 0);
+      kioskWindow.resizeTo(currentScreen.availWidth, currentScreen.availHeight);
+      kioskWindow.location.replace(kioskUrl.toString());
       kioskWindow.focus();
       return;
     }
