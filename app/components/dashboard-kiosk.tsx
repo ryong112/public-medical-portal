@@ -78,6 +78,13 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
   const nextWeekEnd = dateKey(endOfNextWeek(now));
 
   useEffect(() => {
+    if (!dedicatedWindow) return;
+    const previousTitle = document.title;
+    document.title = '공공의료지원과 전광판';
+    return () => { document.title = previousTitle; };
+  }, [dedicatedWindow]);
+
+  useEffect(() => {
     const clock = window.setInterval(() => setNow(new Date()), 30_000);
     let enteredFullscreen = Boolean(document.fullscreenElement);
     const onKeyDown = (event: KeyboardEvent) => {

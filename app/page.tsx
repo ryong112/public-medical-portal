@@ -958,20 +958,12 @@ export default function IntegratedPortal() {
   };
 
   const openKioskWindow = () => {
-    const currentScreen = window.screen as Screen & { availLeft?: number; availTop?: number };
-    const kioskUrl = new URL(window.location.href);
-    kioskUrl.searchParams.set('kiosk', '1');
-    const kioskWindow = window.open('about:blank', 'dphs-dashboard-kiosk', 'popup');
-    if (kioskWindow) {
-      kioskWindow.document.title = '공공의료지원과 전광판 불러오는 중';
-      kioskWindow.document.body.innerHTML = '<p style="font:700 16px system-ui;padding:24px">전광판을 불러오고 있습니다.</p>';
-      kioskWindow.moveTo(currentScreen.availLeft ?? 0, currentScreen.availTop ?? 0);
-      kioskWindow.resizeTo(currentScreen.availWidth, currentScreen.availHeight);
-      kioskWindow.location.replace(kioskUrl.toString());
-      kioskWindow.focus();
+    if (!navigator.userAgent.includes('Windows')) {
+      setIsKioskOpen(true);
       return;
     }
-    alert('전광판 전용 창이 차단되었습니다. 주소창 오른쪽의 팝업 차단 아이콘에서 이 사이트의 팝업을 허용한 뒤 다시 눌러 주십시오.');
+    // Edge 팝업 정책에 의존하지 않고, 사용자가 한 번 등록한 Windows 전광판 실행기를 호출합니다.
+    window.location.href = 'dphskiosk://open';
   };
 
   const selectedCalendarSchedules = getCalendarSchedulesForDate(selectedCalendarDate);
