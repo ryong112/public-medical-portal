@@ -128,7 +128,6 @@ export default function IntegratedPortal() {
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isActivityHistoryOpen, setIsActivityHistoryOpen] = useState(false);
   const [isKioskOpen, setIsKioskOpen] = useState(false);
-  const [isDedicatedKiosk, setIsDedicatedKiosk] = useState(false);
   const [isAbsenceBoardOpen, setIsAbsenceBoardOpen] = useState(false);
   const [isQuickScheduleOpen, setIsQuickScheduleOpen] = useState(false);
   const [isYearlyCleanupOpen, setIsYearlyCleanupOpen] = useState(false);
@@ -143,23 +142,6 @@ export default function IntegratedPortal() {
 
   useEffect(() => {
     setIsMounted(true);
-  }, []);
-
-  useEffect(() => {
-    const isDedicated = new URLSearchParams(window.location.search).get('kiosk') === '1';
-    if (!isDedicated) return;
-
-    const previousTitle = document.title;
-    document.title = '공공의료지원과 전광판';
-    const openTimer = window.setTimeout(() => {
-      setIsDedicatedKiosk(true);
-      setIsKioskOpen(true);
-    }, 0);
-
-    return () => {
-      window.clearTimeout(openTimer);
-      document.title = previousTitle;
-    };
   }, []);
 
   useEffect(() => {
@@ -1499,7 +1481,7 @@ export default function IntegratedPortal() {
         />
       )}
 
-      {isKioskOpen && <DashboardKiosk schedules={schedules} dedicatedWindow={isDedicatedKiosk} onClose={() => setIsKioskOpen(false)} />}
+      {isKioskOpen && <DashboardKiosk schedules={schedules} onClose={() => setIsKioskOpen(false)} />}
 
       <MonthlyAbsenceBoard
         open={isAbsenceBoardOpen}

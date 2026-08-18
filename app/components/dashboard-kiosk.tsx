@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { BellRing, CalendarDays, CheckCircle2, Clock3, Maximize2, MonitorUp, Siren, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { BellRing, CalendarDays, CheckCircle2, Clock3, Maximize2, Minimize2, MonitorUp, Siren, X } from 'lucide-react';
 
 interface KioskSchedule {
   id: number | string;
@@ -21,7 +21,6 @@ interface KioskSchedule {
 interface DashboardKioskProps {
   schedules: KioskSchedule[];
   onClose: () => void;
-  dedicatedWindow?: boolean;
 }
 
 const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -48,8 +47,10 @@ const formatAbsenceDate = (value: string) => {
   return `${month}월 ${day}일(${weekday})`;
 };
 
-export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = false }: DashboardKioskProps) {
+export default function DashboardKiosk({ schedules, onClose }: DashboardKioskProps) {
   const [now, setNow] = useState(() => new Date());
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const isCollapsingRef = useRef(false);
   const today = dateKey(now);
   const tomorrow = dateKey(addDays(now, 1));
   const nextWeekEnd = dateKey(endOfNextWeek(now));
@@ -58,14 +59,15 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
     const clock = window.setInterval(() => setNow(new Date()), 30_000);
     let enteredFullscreen = Boolean(document.fullscreenElement);
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || dedicatedWindow) return;
+      if (event.key !== 'Escape') return;
       event.stopPropagation();
       onClose();
       if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
     };
     const onFullscreenChange = () => {
       if (document.fullscreenElement) enteredFullscreen = true;
-      else if (enteredFullscreen && !dedicatedWindow) onClose();
+      else if (enteredFullscreen && isCollapsingRef.current) isCollapsingRef.current = false;
+      else if (enteredFullscreen) onClose();
     };
     document.addEventListener('keydown', onKeyDown, true);
     document.addEventListener('fullscreenchange', onFullscreenChange);
@@ -74,7 +76,7 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
       document.removeEventListener('keydown', onKeyDown, true);
       document.removeEventListener('fullscreenchange', onFullscreenChange);
     };
-  }, [dedicatedWindow, onClose]);
+  }, [onClose]);
 
   const data = useMemo(() => {
     const active = schedules
@@ -94,10 +96,35 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
     else onClose();
   };
 
+  const collapseKiosk = () => {
+    setIsCollapsed(true);
+    if (document.fullscreenElement) {
+      isCollapsingRef.current = true;
+      void document.exitFullscreen().catch(() => {
+        isCollapsingRef.current = false;
+      });
+    }
+  };
+
+  if (isCollapsed) {
+    return (
+      <button
+        type="button"
+        onClick={() => setIsCollapsed(false)}
+        aria-label="전광판 다시 크게 펼치기"
+        className="group fixed right-0 top-1/2 z-[400] flex -translate-y-1/2 flex-col items-center gap-2 rounded-l-2xl border border-r-0 border-blue-400/40 bg-[#071022] px-2.5 py-4 text-white shadow-2xl transition-all hover:bg-blue-700 sm:px-3"
+      >
+        <MonitorUp size={19} className="text-blue-300 group-hover:text-white" />
+        <span className="[writing-mode:vertical-rl] text-[10px] font-black tracking-[0.12em] sm:text-xs">전광판 열기</span>
+      </button>
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-[400] overflow-hidden bg-[#071022] text-white">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(37,99,235,0.28),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(124,58,237,0.18),transparent_30%)]" />
       <div className="relative flex h-full flex-col p-3 sm:p-5 lg:p-7 2xl:p-9">
+        <button type="button" onClick={collapseKiosk} aria-label="전광판을 가장자리로 접기" className="absolute right-0 top-1/2 z-20 flex -translate-y-1/2 flex-col items-center gap-1 rounded-l-xl bg-blue-600 px-2 py-3 text-[9px] font-black text-white shadow-xl transition-colors hover:bg-blue-500"><Minimize2 size={15}/><span className="[writing-mode:vertical-rl] tracking-wider">접기</span></button>
         <header className="flex shrink-0 items-start justify-between gap-4 border-b border-white/10 pb-3 lg:pb-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-blue-300"><MonitorUp size={18} /><span className="text-[10px] font-black tracking-[0.18em] lg:text-xs">공공의료지원과 공유 현황</span></div>
@@ -105,8 +132,8 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <div className="mr-1 hidden text-right sm:block"><p className="text-2xl font-black tabular-nums lg:text-4xl 2xl:text-5xl">{now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</p><p className="text-[9px] font-bold text-slate-400 lg:text-[10px]">실시간 자동 반영</p></div>
-            {!dedicatedWindow && <button onClick={() => void document.documentElement.requestFullscreen?.()} aria-label="전체 화면" className="rounded-xl bg-white/10 p-2.5 text-slate-200 hover:bg-white/20"><Maximize2 size={18} /></button>}
-            {!dedicatedWindow && <button onClick={closeKiosk} aria-label="전광판 닫기" className="rounded-xl bg-white/10 p-2.5 text-slate-200 hover:bg-red-500"><X size={18} /></button>}
+            <button onClick={() => void document.documentElement.requestFullscreen?.()} aria-label="전체 화면" className="rounded-xl bg-white/10 p-2.5 text-slate-200 hover:bg-white/20"><Maximize2 size={18} /></button>
+            <button onClick={closeKiosk} aria-label="전광판 닫기" className="rounded-xl bg-white/10 p-2.5 text-slate-200 hover:bg-red-500"><X size={18} /></button>
           </div>
         </header>
 
