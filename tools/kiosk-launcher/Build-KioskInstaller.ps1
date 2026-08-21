@@ -38,6 +38,7 @@ $arguments = @(
   '/reference:System.dll',
   '/reference:System.Core.dll',
   '/reference:System.Drawing.dll',
+  '/reference:System.Management.dll',
   '/reference:System.Windows.Forms.dll',
   $sourcePath
 )

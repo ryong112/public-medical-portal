@@ -118,6 +118,7 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
   const [isPictureInPictureOpen, setIsPictureInPictureOpen] = useState(false);
   const collapseRequestedRef = useRef(false);
   const pictureInPictureWindowRef = useRef<Window | null>(null);
+  const nativeCommandResetTimerRef = useRef<number | null>(null);
   const today = dateKey(now);
   const tomorrow = dateKey(addDays(now, 1));
   const thisWeekEnd = dateKey(endOfThisWeek(now));
@@ -129,27 +130,24 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
     document.title = collapsed ? '전광판 제어' : '공공의료지원과 전광판';
   };
 
-  const signalNativeLauncher = (action: 'open' | 'collapse') => {
-    if (!nativeLauncher) return;
-    const link = document.createElement('a');
-    link.href = `dphskiosk://${action}`;
-    link.hidden = true;
-    document.body.append(link);
-    link.click();
-    link.remove();
+  const setNativeCommandTitle = (command: 'collapse' | 'exit' | null) => {
+    if (!dedicatedWindow || !nativeLauncher) return;
+    document.title = command
+      ? `DPHS_KIOSK_COMMAND_${command.toUpperCase()}_${Date.now()}`
+      : '공공의료지원과 전광판';
   };
 
   useEffect(() => {
     if (!dedicatedWindow) return;
     const previousTitle = document.title;
     document.title = '공공의료지원과 전광판';
-    // `window.open(..., 'fullscreen')`을 지원하지 않는 환경에서도 사이트에
-    // 자동 전체 화면 권한이 부여되어 있다면 바로 전체 화면으로 전환합니다.
-    if (!document.fullscreenElement) {
+    // 설치형 전광판의 전체화면은 전용 Edge 키오스크가 단독으로 관리합니다.
+    // 브라우저 전용 창에서만 DOM Fullscreen API를 사용합니다.
+    if (!nativeLauncher && !document.fullscreenElement) {
       void document.documentElement.requestFullscreen?.({ navigationUI: 'hide' }).catch(() => undefined);
     }
     return () => { document.title = previousTitle; };
-  }, [dedicatedWindow]);
+  }, [dedicatedWindow, nativeLauncher]);
 
   useEffect(() => {
     const clock = window.setInterval(() => setNow(new Date()), 250);
@@ -178,6 +176,10 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
   useEffect(() => () => {
     pictureInPictureWindowRef.current?.close();
     pictureInPictureWindowRef.current = null;
+    if (nativeCommandResetTimerRef.current !== null) {
+      window.clearTimeout(nativeCommandResetTimerRef.current);
+      nativeCommandResetTimerRef.current = null;
+    }
   }, []);
 
   const data = useMemo(() => {
@@ -197,6 +199,10 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
   }, [nextWeekEnd, nextWeekStart, schedules, thisWeekEnd, today, tomorrow]);
 
   const closeKiosk = () => {
+    if (dedicatedWindow && nativeLauncher) {
+      setNativeCommandTitle('exit');
+      return;
+    }
     pictureInPictureWindowRef.current?.close();
     pictureInPictureWindowRef.current = null;
     setIsPictureInPictureOpen(false);
@@ -285,17 +291,20 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
     collapseRequestedRef.current = true;
 
     if (dedicatedWindow) {
-      if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
       if (nativeLauncher) {
-        signalNativeLauncher('collapse');
-        // 네이티브 창이 축소를 시작하기 전에 전체 화면용 제어 버튼이 크게
-        // 렌더링되지 않도록 아주 짧게 늦춰 작은 창에서 바로 표시합니다.
-        window.setTimeout(() => {
-          setDedicatedWindowTitle(true);
-          setIsCollapsed(true);
-        }, 160);
+        // Edge 키오스크는 전체화면 상태 그대로 숨고, 작은 제어창은 실행기가
+        // 별도 네이티브 창으로 즉시 표시합니다. React 화면은 접지 않습니다.
+        setNativeCommandTitle('collapse');
+        if (nativeCommandResetTimerRef.current !== null) {
+          window.clearTimeout(nativeCommandResetTimerRef.current);
+        }
+        nativeCommandResetTimerRef.current = window.setTimeout(() => {
+          setNativeCommandTitle(null);
+          nativeCommandResetTimerRef.current = null;
+        }, 800);
         return;
       }
+      if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
       setDedicatedWindowTitle(true);
       setIsCollapsed(true);
       const bounds = getAvailableScreenBounds();
@@ -325,16 +334,17 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
   const expandKiosk = async () => {
     collapseRequestedRef.current = false;
     if (dedicatedWindow) {
+      if (nativeLauncher) {
+        if (nativeCommandResetTimerRef.current !== null) {
+          window.clearTimeout(nativeCommandResetTimerRef.current);
+          nativeCommandResetTimerRef.current = null;
+        }
+        setNativeCommandTitle(null);
+        return;
+      }
       setDedicatedWindowTitle(false);
       setIsCollapsed(false);
       window.focus();
-
-      // 설치형 전광판은 실행기가 창 프레임과 모니터 크기를 직접 관리합니다.
-      // F11/웹 전체화면 API와 섞지 않아 최초 실행과 이후 복귀가 같은 상태가 됩니다.
-      if (nativeLauncher) {
-        signalNativeLauncher('open');
-        return;
-      }
 
       // 접힌 전용 창 안에서 누른 버튼/F8의 사용자 동작을 바로 사용해야
       // 브라우저가 전체 화면 요청을 허용할 가능성이 가장 높습니다.

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Management;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -11,36 +12,36 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 
 [assembly: AssemblyTitle("공공의료지원과 전광판")]
-[assembly: AssemblyDescription("공공의료지원과 전광판 네이티브 실행기")]
+[assembly: AssemblyDescription("공공의료지원과 전광판 전용 실행기")]
 [assembly: AssemblyCompany("공공의료지원과")]
 [assembly: AssemblyProduct("공공의료지원과 전광판")]
 [assembly: AssemblyCopyright("Copyright © 2026")]
-[assembly: AssemblyVersion("2.3.1.0")]
-[assembly: AssemblyFileVersion("2.3.1.0")]
+[assembly: AssemblyVersion("4.1.2.0")]
+[assembly: AssemblyFileVersion("4.1.2.0")]
 
 internal static class Program
 {
-    private const string InstalledFileName = "DPHS-Kiosk-Launcher.exe";
     private const string ProtocolPrefix = "dphskiosk://";
 
     [STAThread]
     private static int Main(string[] args)
     {
+        string argument = args.Length > 0 ? args[0].Trim() : String.Empty;
+
+        // 실행 중인 런처에 보내는 명령은 UI나 레지스트리를 초기화하지 않고
+        // 이름 있는 커널 이벤트로 곧바로 전달합니다.
+        if (argument.StartsWith(ProtocolPrefix, StringComparison.OrdinalIgnoreCase) &&
+            KioskController.TrySignalExisting(ParseAction(argument)))
+            return 0;
+
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
+
         try
         {
-            string argument = args.Length > 0 ? args[0].Trim() : String.Empty;
-
-            // 이미 실행 중인 런처에 보내는 open/collapse 신호는 WinForms 초기화,
-            // 레지스트리 확인, 뮤텍스 생성을 거치지 않고 즉시 전달합니다.
-            if (argument.StartsWith(ProtocolPrefix, StringComparison.OrdinalIgnoreCase) &&
-                KioskController.TrySignalExisting(ParseAction(argument)))
-                return 0;
-
-            Application.EnableVisualStyles();
-            Application.SetCompatibleTextRenderingDefault(false);
-
+            bool silentInstall = String.Equals(argument, "--install-silent", StringComparison.OrdinalIgnoreCase);
             if (String.Equals(argument, "--self-test", StringComparison.OrdinalIgnoreCase))
-                return NativeWindow.SelfTest() ? 0 : 1;
+                return SelfTest.Run() ? 0 : 1;
 
             if (String.Equals(argument, "--uninstall", StringComparison.OrdinalIgnoreCase))
             {
@@ -53,45 +54,44 @@ internal static class Program
                 return 0;
             }
 
-            string installedPath = KioskInstallation.InstalledExecutablePath;
             string currentPath = Path.GetFullPath(Application.ExecutablePath);
-            bool isInstalledCopy = String.Equals(
+            bool installedCopy = String.Equals(
                 currentPath,
-                Path.GetFullPath(installedPath),
+                Path.GetFullPath(KioskPaths.InstalledExecutable),
                 StringComparison.OrdinalIgnoreCase);
 
-            if (!isInstalledCopy)
+            if (!installedCopy)
             {
                 KioskInstallation.Install(currentPath);
-                MessageBox.Show(
-                    "전광판 실행기를 연결했습니다.\n\n이제 포털 또는 바탕화면의 전광판 아이콘으로 실행할 수 있습니다.",
-                    "전광판 연결 완료",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
-
-                string forwardedArgument = argument.StartsWith(ProtocolPrefix, StringComparison.OrdinalIgnoreCase)
-                    ? argument
-                    : "dphskiosk://open";
+                if (!silentInstall)
+                {
+                    MessageBox.Show(
+                        "전광판 실행기를 연결했습니다.\n\n" +
+                        "전광판은 다른 Edge 창과 완전히 분리된 전용 전체화면으로 실행됩니다.",
+                        "전광판 연결 완료",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                }
                 Process.Start(new ProcessStartInfo
                 {
-                    FileName = installedPath,
-                    Arguments = Quote(forwardedArgument),
-                    UseShellExecute = true,
-                    WorkingDirectory = KioskInstallation.InstallDirectory
+                    FileName = KioskPaths.InstalledExecutable,
+                    Arguments = "\"dphskiosk://open\"",
+                    WorkingDirectory = KioskPaths.InstallDirectory,
+                    UseShellExecute = true
                 });
                 return 0;
             }
 
             KioskInstallation.EnsureRegistration();
-            KioskAction initialAction = ParseAction(argument);
-            using (KioskController controller = new KioskController(initialAction))
+            using (KioskController controller = new KioskController(ParseAction(argument)))
                 return controller.Run();
         }
         catch (Exception error)
         {
-            KioskLog.Write("ERROR " + error);
+            KioskLog.Write("FATAL " + error);
             MessageBox.Show(
-                error.Message + "\n\n실행 기록: " + KioskLog.Path,
+                "전광판 실행기를 시작하지 못했습니다.\n\n" + error.Message +
+                "\n\n실행 기록: " + KioskLog.FilePath,
                 "공공의료지원과 전광판 오류",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
@@ -107,11 +107,6 @@ internal static class Program
             return KioskAction.Exit;
         return KioskAction.Open;
     }
-
-    private static string Quote(string value)
-    {
-        return "\"" + value.Replace("\"", "\\\"") + "\"";
-    }
 }
 
 internal enum KioskAction
@@ -121,10 +116,15 @@ internal enum KioskAction
     Exit
 }
 
-internal static class KioskInstallation
+internal enum KioskViewState
 {
-    private const string ProtocolKeyPath = @"Software\Classes\dphskiosk";
-    private const string ShortcutFileName = "공공의료지원과 전광판.lnk";
+    Expanded,
+    Collapsed
+}
+
+internal static class KioskPaths
+{
+    internal const string PortalUrl = "https://dphs2023.vercel.app/kiosk?launcher=1";
 
     internal static string InstallDirectory
     {
@@ -136,42 +136,81 @@ internal static class KioskInstallation
         }
     }
 
-    internal static string InstalledExecutablePath
+    internal static string InstalledExecutable
     {
         get { return Path.Combine(InstallDirectory, "DPHS-Kiosk-Launcher.exe"); }
     }
 
+    internal static string EdgeProfileDirectory
+    {
+        get { return Path.Combine(InstallDirectory, "EdgeProfile"); }
+    }
+}
+
+internal static class KioskInstallation
+{
+    private const string ProtocolKeyPath = @"Software\Classes\dphskiosk";
+
     internal static void Install(string sourcePath)
     {
-        Directory.CreateDirectory(InstallDirectory);
+        Directory.CreateDirectory(KioskPaths.InstallDirectory);
+        Directory.CreateDirectory(KioskPaths.EdgeProfileDirectory);
 
-        if (File.Exists(InstalledExecutablePath))
-        {
-            try
-            {
-                using (EventWaitHandle exitEvent = EventWaitHandle.OpenExisting(KioskController.ExitEventName))
-                    exitEvent.Set();
-                Thread.Sleep(600);
-            }
-            catch (WaitHandleCannotBeOpenedException)
-            {
-            }
+        StopInstalledLauncher();
+        WindowFinder.CloseAllLegacyKioskWindows();
+        WindowFinder.StopDedicatedEdgeProcesses(KioskPaths.EdgeProfileDirectory);
+        Thread.Sleep(250);
 
-            // 이전 버전이 오류 MessageBox에서 멈춘 경우 이벤트를 처리할 수 없으므로
-            // 설치된 경로의 런처 프로세스만 종료해 새 파일로 확실히 교체합니다.
-            StopInstalledLauncherProcesses();
-        }
-
-        File.Copy(sourcePath, InstalledExecutablePath, true);
+        File.Copy(sourcePath, KioskPaths.InstalledExecutable, true);
+        DeleteLegacyFiles();
         EnsureRegistration();
         CreateShortcuts();
-        KioskLog.Write("Native launcher installed from " + sourcePath);
+        KioskLog.Write("Launcher 4.1.2 installed from " + sourcePath);
     }
 
-    private static void StopInstalledLauncherProcesses()
+    internal static void EnsureRegistration()
     {
-        string processName = Path.GetFileNameWithoutExtension(InstalledExecutablePath);
-        Process[] processes = Process.GetProcessesByName(processName);
+        string command = "\"" + KioskPaths.InstalledExecutable + "\" \"%1\"";
+        using (RegistryKey protocol = Registry.CurrentUser.CreateSubKey(ProtocolKeyPath))
+        {
+            if (protocol == null) throw new InvalidOperationException("전광판 프로토콜을 등록하지 못했습니다.");
+            protocol.SetValue(null, "URL:DPHS Kiosk Launcher", RegistryValueKind.String);
+            protocol.SetValue("URL Protocol", String.Empty, RegistryValueKind.String);
+        }
+        using (RegistryKey icon = Registry.CurrentUser.CreateSubKey(ProtocolKeyPath + @"\DefaultIcon"))
+        {
+            if (icon != null) icon.SetValue(null, KioskPaths.InstalledExecutable + ",0", RegistryValueKind.String);
+        }
+        using (RegistryKey commandKey = Registry.CurrentUser.CreateSubKey(ProtocolKeyPath + @"\shell\open\command"))
+        {
+            if (commandKey == null) throw new InvalidOperationException("전광판 실행 명령을 등록하지 못했습니다.");
+            commandKey.SetValue(null, command, RegistryValueKind.String);
+        }
+    }
+
+    internal static void Uninstall()
+    {
+        KioskController.TrySignalExisting(KioskAction.Exit);
+        Thread.Sleep(250);
+        WindowFinder.CloseDedicatedKioskWindow(KioskPaths.EdgeProfileDirectory);
+        try { Registry.CurrentUser.DeleteSubKeyTree(ProtocolKeyPath, false); }
+        catch (ArgumentException) { }
+        DeleteShortcut(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+            "공공의료지원과 전광판.lnk"));
+        DeleteShortcut(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.Programs),
+            "공공의료지원과",
+            "전광판.lnk"));
+        DeleteLegacyFiles();
+        KioskLog.Write("Launcher unregistered");
+    }
+
+    private static void StopInstalledLauncher()
+    {
+        KioskController.TrySignalExisting(KioskAction.Exit);
+        Thread.Sleep(350);
+        Process[] processes = Process.GetProcessesByName("DPHS-Kiosk-Launcher");
         for (int index = 0; index < processes.Length; index++)
         {
             using (Process process = processes[index])
@@ -179,10 +218,8 @@ internal static class KioskInstallation
                 if (process.Id == Process.GetCurrentProcess().Id) continue;
                 try
                 {
-                    string runningPath = process.MainModule == null ? String.Empty : process.MainModule.FileName;
-                    if (!String.Equals(
-                        Path.GetFullPath(runningPath),
-                        Path.GetFullPath(InstalledExecutablePath),
+                    string path = process.MainModule == null ? String.Empty : process.MainModule.FileName;
+                    if (!String.Equals(Path.GetFullPath(path), Path.GetFullPath(KioskPaths.InstalledExecutable),
                         StringComparison.OrdinalIgnoreCase))
                         continue;
                     process.Kill();
@@ -194,89 +231,48 @@ internal static class KioskInstallation
         }
     }
 
-    internal static void EnsureRegistration()
+    private static void DeleteLegacyFiles()
     {
-        string command = "\"" + InstalledExecutablePath + "\" \"%1\"";
-
-        using (RegistryKey protocol = Registry.CurrentUser.CreateSubKey(ProtocolKeyPath))
-        {
-            if (protocol == null) throw new InvalidOperationException("전광판 프로토콜을 등록하지 못했습니다.");
-            protocol.SetValue(null, "URL:DPHS Kiosk Launcher", RegistryValueKind.String);
-            protocol.SetValue("URL Protocol", String.Empty, RegistryValueKind.String);
-        }
-
-        using (RegistryKey icon = Registry.CurrentUser.CreateSubKey(ProtocolKeyPath + @"\DefaultIcon"))
-        {
-            if (icon != null) icon.SetValue(null, InstalledExecutablePath + ",0", RegistryValueKind.String);
-        }
-
-        using (RegistryKey openCommand = Registry.CurrentUser.CreateSubKey(ProtocolKeyPath + @"\shell\open\command"))
-        {
-            if (openCommand == null) throw new InvalidOperationException("전광판 실행 명령을 등록하지 못했습니다.");
-            openCommand.SetValue(null, command, RegistryValueKind.String);
-        }
-    }
-
-    internal static void Uninstall()
-    {
-        try
-        {
-            using (EventWaitHandle exitEvent = EventWaitHandle.OpenExisting(KioskController.ExitEventName))
-                exitEvent.Set();
-        }
-        catch (WaitHandleCannotBeOpenedException)
-        {
-        }
-
-        try { Registry.CurrentUser.DeleteSubKeyTree(ProtocolKeyPath, false); }
-        catch (ArgumentException) { }
-
-        DeleteShortcut(Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
-            ShortcutFileName));
-        DeleteShortcut(Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.Programs),
-            "공공의료지원과",
-            "전광판.lnk"));
-        KioskLog.Write("Native launcher unregistered");
+        string legacyScript = Path.Combine(KioskPaths.InstallDirectory, "Start-DphsKiosk.ps1");
+        try { if (File.Exists(legacyScript)) File.Delete(legacyScript); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     private static void CreateShortcuts()
     {
-        string desktopShortcut = Path.Combine(
+        CreateShortcut(Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
-            ShortcutFileName);
-        CreateShortcut(desktopShortcut);
-
-        string startMenuDirectory = Path.Combine(
+            "공공의료지원과 전광판.lnk"));
+        string startMenu = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.Programs),
             "공공의료지원과");
-        Directory.CreateDirectory(startMenuDirectory);
-        CreateShortcut(Path.Combine(startMenuDirectory, "전광판.lnk"));
+        Directory.CreateDirectory(startMenu);
+        CreateShortcut(Path.Combine(startMenu, "전광판.lnk"));
     }
 
     private static void CreateShortcut(string shortcutPath)
     {
         Type shellType = Type.GetTypeFromProgID("WScript.Shell");
         if (shellType == null) return;
-
         object shell = null;
         object shortcut = null;
         try
         {
             shell = Activator.CreateInstance(shellType);
-            shortcut = shellType.InvokeMember(
-                "CreateShortcut",
-                BindingFlags.InvokeMethod,
-                null,
-                shell,
-                new object[] { shortcutPath });
+            shortcut = shellType.InvokeMember("CreateShortcut", BindingFlags.InvokeMethod,
+                null, shell, new object[] { shortcutPath });
             Type shortcutType = shortcut.GetType();
-            shortcutType.InvokeMember("TargetPath", BindingFlags.SetProperty, null, shortcut, new object[] { InstalledExecutablePath });
-            shortcutType.InvokeMember("Arguments", BindingFlags.SetProperty, null, shortcut, new object[] { "dphskiosk://open" });
-            shortcutType.InvokeMember("WorkingDirectory", BindingFlags.SetProperty, null, shortcut, new object[] { InstallDirectory });
-            shortcutType.InvokeMember("Description", BindingFlags.SetProperty, null, shortcut, new object[] { "공공의료지원과 전광판 열기" });
-            shortcutType.InvokeMember("IconLocation", BindingFlags.SetProperty, null, shortcut, new object[] { InstalledExecutablePath + ",0" });
+            shortcutType.InvokeMember("TargetPath", BindingFlags.SetProperty, null, shortcut,
+                new object[] { KioskPaths.InstalledExecutable });
+            shortcutType.InvokeMember("Arguments", BindingFlags.SetProperty, null, shortcut,
+                new object[] { "dphskiosk://open" });
+            shortcutType.InvokeMember("WorkingDirectory", BindingFlags.SetProperty, null, shortcut,
+                new object[] { KioskPaths.InstallDirectory });
+            shortcutType.InvokeMember("Description", BindingFlags.SetProperty, null, shortcut,
+                new object[] { "공공의료지원과 전광판 열기" });
+            shortcutType.InvokeMember("IconLocation", BindingFlags.SetProperty, null, shortcut,
+                new object[] { KioskPaths.InstalledExecutable + ",0" });
             shortcutType.InvokeMember("Save", BindingFlags.InvokeMethod, null, shortcut, null);
         }
         finally
@@ -296,11 +292,10 @@ internal static class KioskInstallation
 
 internal sealed class KioskController : IDisposable
 {
-    internal const string ExitEventName = @"Local\DPHS-Kiosk-Native-Exit";
-    private const string MutexName = @"Local\DPHS-Kiosk-Native-Launcher";
     internal const string OpenEventName = @"Local\DPHS-Kiosk-Native-Open";
     internal const string CollapseEventName = @"Local\DPHS-Kiosk-Native-Collapse";
-    private const string PortalUrl = "https://dphs2023.vercel.app/kiosk?launcher=1";
+    internal const string ExitEventName = @"Local\DPHS-Kiosk-Native-Exit";
+    private const string MutexName = @"Local\DPHS-Kiosk-Native-Launcher";
 
     private readonly KioskAction initialAction;
     private readonly Mutex mutex;
@@ -308,17 +303,14 @@ internal sealed class KioskController : IDisposable
     private readonly EventWaitHandle collapseEvent;
     private readonly EventWaitHandle exitEvent;
     private readonly bool ownsMutex;
-    private IntPtr kioskWindow;
-    private Screen targetScreen;
-    private bool browserFullscreen;
     private bool disposed;
 
     internal KioskController(KioskAction initialAction)
     {
         this.initialAction = initialAction;
-        bool createdNew;
-        mutex = new Mutex(true, MutexName, out createdNew);
-        ownsMutex = createdNew;
+        bool created;
+        mutex = new Mutex(true, MutexName, out created);
+        ownsMutex = created;
         openEvent = new EventWaitHandle(false, EventResetMode.AutoReset, OpenEventName);
         collapseEvent = new EventWaitHandle(false, EventResetMode.AutoReset, CollapseEventName);
         exitEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ExitEventName);
@@ -331,38 +323,16 @@ internal sealed class KioskController : IDisposable
             Signal(initialAction);
             return 0;
         }
-
         if (initialAction == KioskAction.Exit) return 0;
 
-        OpenKioskWindow();
-        if (initialAction == KioskAction.Collapse) CollapseKioskWindow();
-
-        WaitHandle[] events = new WaitHandle[] { openEvent, collapseEvent, exitEvent };
-        while (NativeWindow.IsWindow(kioskWindow))
+        using (KioskApplicationContext context = new KioskApplicationContext(
+            initialAction,
+            openEvent,
+            collapseEvent,
+            exitEvent))
         {
-            int signal = WaitHandle.WaitAny(events, 350);
-            if (signal == 0)
-            {
-                ShowKioskWindow();
-                KioskLog.Write("Kiosk expanded");
-            }
-            else if (signal == 1)
-            {
-                CollapseKioskWindow();
-                KioskLog.Write("Kiosk collapsed");
-            }
-            else if (signal == 2)
-            {
-                KioskLog.Write("Launcher exit requested");
-                break;
-            }
-            else
-            {
-                MaintainWindowState();
-            }
+            Application.Run(context);
         }
-
-        KioskLog.Write("Kiosk window closed; native launcher stopped");
         return 0;
     }
 
@@ -370,14 +340,12 @@ internal sealed class KioskController : IDisposable
     {
         string eventName = action == KioskAction.Collapse
             ? CollapseEventName
-            : action == KioskAction.Exit
-                ? ExitEventName
-                : OpenEventName;
+            : action == KioskAction.Exit ? ExitEventName : OpenEventName;
         try
         {
-            using (EventWaitHandle signalEvent = EventWaitHandle.OpenExisting(eventName))
+            using (EventWaitHandle signal = EventWaitHandle.OpenExisting(eventName))
             {
-                signalEvent.Set();
+                signal.Set();
                 return true;
             }
         }
@@ -392,136 +360,6 @@ internal sealed class KioskController : IDisposable
         if (action == KioskAction.Collapse) collapseEvent.Set();
         else if (action == KioskAction.Exit) exitEvent.Set();
         else openEvent.Set();
-    }
-
-    private void OpenKioskWindow()
-    {
-        kioskWindow = WindowFinder.FindKioskWindow();
-        if (kioskWindow == IntPtr.Zero)
-        {
-            HashSet<IntPtr> windowsBeforeLaunch = WindowFinder.GetVisibleWindows();
-            string edgePath = EdgeLocator.Find();
-            KioskLog.Write("Launching Edge: " + PortalUrl);
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = edgePath,
-                Arguments = "--app=\"" + PortalUrl + "\" --new-window --no-first-run",
-                UseShellExecute = true
-            });
-
-            DateTime deadline = DateTime.UtcNow.AddSeconds(30);
-            while (DateTime.UtcNow < deadline)
-            {
-                Thread.Sleep(300);
-                kioskWindow = WindowFinder.FindKioskWindow(windowsBeforeLaunch);
-                if (kioskWindow != IntPtr.Zero) break;
-            }
-        }
-
-        if (kioskWindow == IntPtr.Zero)
-            throw new InvalidOperationException("전광판 창을 찾지 못했습니다. Edge 실행을 확인한 뒤 다시 시도해 주십시오.");
-
-        targetScreen = GetPreferredScreen();
-
-        // 창을 보조 모니터에 먼저 배치한 뒤 실제 Edge F11 전체화면으로 진입합니다.
-        // 최초 실행과 접기 후 복귀가 모두 이 한 경로를 사용합니다.
-        browserFullscreen = false;
-        EnterBrowserFullscreen();
-
-        KioskLog.Write("Kiosk ready on " + targetScreen.DeviceName);
-    }
-
-    private void ShowKioskWindow()
-    {
-        if (!NativeWindow.IsWindow(kioskWindow)) OpenKioskWindow();
-        EnterBrowserFullscreen();
-    }
-
-    private void CollapseKioskWindow()
-    {
-        if (!NativeWindow.IsWindow(kioskWindow)) return;
-        ExitBrowserFullscreen();
-        NativeWindow.ShowCompact(kioskWindow, targetScreen.Bounds);
-        Thread.Sleep(90);
-        NativeWindow.ShowCompact(kioskWindow, targetScreen.Bounds);
-        Thread.Sleep(160);
-        NativeWindow.ShowCompact(kioskWindow, targetScreen.Bounds);
-    }
-
-    private void MaintainWindowState()
-    {
-        if (!NativeWindow.IsWindow(kioskWindow)) return;
-        string title = NativeWindow.GetTitle(kioskWindow);
-        bool controller = title.IndexOf("전광판 제어", StringComparison.OrdinalIgnoreCase) >= 0;
-        if (!controller && !NativeWindow.IsCompact(kioskWindow) && browserFullscreen &&
-            !NativeWindow.IsBorderlessAtBounds(kioskWindow, targetScreen.Bounds))
-        {
-            browserFullscreen = false;
-            EnterBrowserFullscreen();
-            KioskLog.Write("Kiosk F11 fullscreen state restored");
-        }
-    }
-
-    private void EnterBrowserFullscreen()
-    {
-        if (!NativeWindow.IsWindow(kioskWindow)) return;
-        if (browserFullscreen && NativeWindow.IsBorderlessAtBounds(kioskWindow, targetScreen.Bounds))
-            return;
-
-        NativeWindow.ShowWindowedOnScreen(kioskWindow, targetScreen.Bounds);
-        Thread.Sleep(250);
-
-        for (int attempt = 0; attempt < 3; attempt++)
-        {
-            NativeWindow.SendF11(kioskWindow);
-            if (WaitForFullscreenState(true, 1800))
-            {
-                browserFullscreen = true;
-                KioskLog.Write("Edge entered actual F11 fullscreen");
-                return;
-            }
-            Thread.Sleep(250);
-        }
-
-        // 포커스 정책으로 F11 입력이 거절되는 예외 상황에서도 전광판 화면은
-        // 비어 보이지 않도록 무테 전체화면을 마지막 안전장치로 적용합니다.
-        NativeWindow.ShowBorderless(kioskWindow, targetScreen.Bounds);
-        browserFullscreen = false;
-        KioskLog.Write("WARNING Edge rejected F11; borderless fallback applied");
-    }
-
-    private void ExitBrowserFullscreen()
-    {
-        if (!NativeWindow.IsWindow(kioskWindow)) return;
-        if (browserFullscreen)
-        {
-            NativeWindow.SendF11(kioskWindow);
-            // Edge의 전체화면 종료 애니메이션을 기다리지 않고 바로 축소합니다.
-            // ShowCompact를 직후와 90ms 후에 다시 적용해 최초 F8도 즉시 반응합니다.
-            Thread.Sleep(35);
-        }
-        browserFullscreen = false;
-    }
-
-    private bool WaitForFullscreenState(bool expectedFullscreen, int timeoutMilliseconds)
-    {
-        DateTime deadline = DateTime.UtcNow.AddMilliseconds(timeoutMilliseconds);
-        while (DateTime.UtcNow < deadline && NativeWindow.IsWindow(kioskWindow))
-        {
-            bool isFullscreen = NativeWindow.IsBorderlessAtBounds(kioskWindow, targetScreen.Bounds);
-            if (isFullscreen == expectedFullscreen) return true;
-            Thread.Sleep(60);
-        }
-        return false;
-    }
-
-    private static Screen GetPreferredScreen()
-    {
-        Screen[] screens = Screen.AllScreens;
-        if (screens.Length == 0) return Screen.PrimaryScreen;
-        for (int index = 0; index < screens.Length; index++)
-            if (!screens[index].Primary) return screens[index];
-        return screens[0];
     }
 
     public void Dispose()
@@ -540,65 +378,492 @@ internal sealed class KioskController : IDisposable
     }
 }
 
+internal sealed class KioskApplicationContext : ApplicationContext, IDisposable
+{
+    private readonly EventWaitHandle openEvent;
+    private readonly EventWaitHandle collapseEvent;
+    private readonly EventWaitHandle exitEvent;
+    private readonly KioskControllerForm controllerForm;
+    private readonly System.Windows.Forms.Timer timer;
+    private readonly Screen targetScreen;
+    private KioskViewState desiredState;
+    private KioskViewState appliedState;
+    private bool hasAppliedState;
+    private IntPtr edgeWindow;
+    private bool launchRequested;
+    private DateTime launchStarted;
+    private DateTime lastWindowSearch = DateTime.MinValue;
+    private string handledWebCommand = String.Empty;
+    private DateTime lastToggle = DateTime.MinValue;
+    private bool exiting;
+    private bool disposed;
+
+    internal KioskApplicationContext(
+        KioskAction initialAction,
+        EventWaitHandle openEvent,
+        EventWaitHandle collapseEvent,
+        EventWaitHandle exitEvent)
+    {
+        this.openEvent = openEvent;
+        this.collapseEvent = collapseEvent;
+        this.exitEvent = exitEvent;
+        desiredState = initialAction == KioskAction.Collapse
+            ? KioskViewState.Collapsed
+            : KioskViewState.Expanded;
+        targetScreen = SelectTargetScreen();
+
+        controllerForm = new KioskControllerForm();
+        controllerForm.OpenRequested += delegate { SetDesiredState(KioskViewState.Expanded, "controller button"); };
+        controllerForm.ToggleRequested += delegate { Toggle("F8"); };
+        controllerForm.ExitRequested += ExitApplication;
+        controllerForm.EnsureHandleAndHotKey();
+
+        timer = new System.Windows.Forms.Timer();
+        timer.Interval = 40;
+        timer.Tick += OnTick;
+        timer.Start();
+
+        if (desiredState == KioskViewState.Collapsed)
+            controllerForm.ShowAt(GetCompactBounds(targetScreen.Bounds));
+        StartEdgeIfNeeded();
+    }
+
+    private void OnTick(object sender, EventArgs eventArgs)
+    {
+        if (exiting) return;
+        if (exitEvent.WaitOne(0))
+        {
+            ExitApplication();
+            return;
+        }
+
+        bool collapseRequested = collapseEvent.WaitOne(0);
+        bool openRequested = openEvent.WaitOne(0);
+        if (collapseRequested) SetDesiredState(KioskViewState.Collapsed, "protocol");
+        if (openRequested) SetDesiredState(KioskViewState.Expanded, "protocol");
+
+        if (edgeWindow == IntPtr.Zero || !NativeWindow.IsWindow(edgeWindow))
+        {
+            if ((DateTime.UtcNow - lastWindowSearch).TotalMilliseconds < 180) return;
+            lastWindowSearch = DateTime.UtcNow;
+            edgeWindow = WindowFinder.FindDedicatedKioskWindow(KioskPaths.EdgeProfileDirectory);
+            if (edgeWindow != IntPtr.Zero)
+            {
+                hasAppliedState = false;
+                KioskLog.Write("Dedicated Edge attached: hwnd=" + edgeWindow.ToInt64());
+            }
+            else
+            {
+                StartEdgeIfNeeded();
+                return;
+            }
+        }
+
+        HandleWebCommandMarker();
+        ApplyDesiredState();
+    }
+
+    private void StartEdgeIfNeeded()
+    {
+        if (launchRequested && (DateTime.UtcNow - launchStarted).TotalSeconds < 30) return;
+        launchRequested = true;
+        launchStarted = DateTime.UtcNow;
+        string edge = EdgeLocator.Find();
+        Rectangle bounds = targetScreen.Bounds;
+        string arguments =
+            "--user-data-dir=\"" + KioskPaths.EdgeProfileDirectory + "\" " +
+            "--app=\"" + KioskPaths.PortalUrl + "\" " +
+            "--start-fullscreen --new-window --no-first-run --disable-session-crashed-bubble " +
+            "--window-position=" + bounds.X + "," + bounds.Y + " " +
+            "--window-size=" + bounds.Width + "," + bounds.Height;
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = edge,
+            Arguments = arguments,
+            UseShellExecute = true
+        });
+        KioskLog.Write("Dedicated Edge kiosk launch requested on " + targetScreen.DeviceName);
+    }
+
+    private void Toggle(string source)
+    {
+        if ((DateTime.UtcNow - lastToggle).TotalMilliseconds < 250) return;
+        lastToggle = DateTime.UtcNow;
+        SetDesiredState(
+            desiredState == KioskViewState.Expanded ? KioskViewState.Collapsed : KioskViewState.Expanded,
+            source);
+    }
+
+    private void SetDesiredState(KioskViewState state, string source)
+    {
+        if (exiting) return;
+        desiredState = state;
+        KioskLog.Write("Desired state=" + state + " source=" + source);
+        ApplyDesiredState();
+    }
+
+    private void ApplyDesiredState()
+    {
+        if (desiredState == KioskViewState.Collapsed)
+        {
+            if (edgeWindow != IntPtr.Zero && NativeWindow.IsWindow(edgeWindow))
+                NativeWindow.Hide(edgeWindow);
+            controllerForm.ShowAt(GetCompactBounds(targetScreen.Bounds));
+        }
+        else
+        {
+            controllerForm.HideController();
+            if (edgeWindow != IntPtr.Zero && NativeWindow.IsWindow(edgeWindow))
+                NativeWindow.ShowFullscreenWindow(edgeWindow, targetScreen.Bounds);
+        }
+
+        if (!hasAppliedState || appliedState != desiredState)
+        {
+            KioskLog.Write("Applied state=" + desiredState + " hwnd=" + edgeWindow.ToInt64());
+            appliedState = desiredState;
+            hasAppliedState = true;
+        }
+    }
+
+    private void HandleWebCommandMarker()
+    {
+        string title = NativeWindow.GetTitle(edgeWindow);
+        string command = String.Empty;
+        if (title.IndexOf("DPHS_KIOSK_COMMAND_COLLAPSE", StringComparison.OrdinalIgnoreCase) >= 0)
+            command = "collapse";
+        else if (title.IndexOf("DPHS_KIOSK_COMMAND_EXIT", StringComparison.OrdinalIgnoreCase) >= 0)
+            command = "exit";
+
+        if (String.IsNullOrEmpty(command))
+        {
+            handledWebCommand = String.Empty;
+            return;
+        }
+        if (String.Equals(title, handledWebCommand, StringComparison.Ordinal)) return;
+        handledWebCommand = title;
+        if (command == "collapse") SetDesiredState(KioskViewState.Collapsed, "web marker");
+        else ExitApplication();
+    }
+
+    private void ExitApplication()
+    {
+        if (exiting) return;
+        exiting = true;
+        timer.Stop();
+        if (edgeWindow != IntPtr.Zero && NativeWindow.IsWindow(edgeWindow))
+            NativeWindow.Close(edgeWindow);
+        controllerForm.CloseForExit();
+        KioskLog.Write("Launcher exit completed");
+        ExitThread();
+    }
+
+    private static Rectangle GetCompactBounds(Rectangle screen)
+    {
+        const int width = 430;
+        const int height = 190;
+        return new Rectangle(
+            screen.X + Math.Max(0, screen.Width - width - 18),
+            screen.Y + Math.Max(0, (screen.Height - height) / 2),
+            width,
+            height);
+    }
+
+    private static Screen SelectTargetScreen()
+    {
+        Screen[] screens = Screen.AllScreens;
+        if (screens.Length == 0) return Screen.PrimaryScreen;
+        for (int index = 0; index < screens.Length; index++)
+            if (!screens[index].Primary) return screens[index];
+        return screens[0];
+    }
+
+    protected override void ExitThreadCore()
+    {
+        if (!exiting) ExitApplication();
+        base.ExitThreadCore();
+    }
+
+    public new void Dispose()
+    {
+        if (disposed) return;
+        disposed = true;
+        timer.Dispose();
+        controllerForm.Dispose();
+        base.Dispose();
+    }
+}
+
+internal sealed class KioskControllerForm : Form
+{
+    private const int WmHotKey = 0x0312;
+    private const int HotKeyId = 0x4450;
+    private const uint ModNoRepeat = 0x4000;
+    private const uint VirtualKeyF8 = 0x77;
+    private bool hotKeyRegistered;
+    private bool closingForExit;
+
+    internal event Action OpenRequested;
+    internal event Action ToggleRequested;
+    internal event Action ExitRequested;
+
+    internal KioskControllerForm()
+    {
+        Text = "전광판 제어";
+        StartPosition = FormStartPosition.Manual;
+        FormBorderStyle = FormBorderStyle.FixedSingle;
+        MaximizeBox = false;
+        MinimizeBox = true;
+        ShowInTaskbar = true;
+        TopMost = true;
+        BackColor = Color.FromArgb(7, 16, 34);
+        ForeColor = Color.White;
+        KeyPreview = true;
+        MinimumSize = new Size(430, 190);
+        BuildInterface();
+        KeyDown += delegate(object sender, KeyEventArgs args)
+        {
+            if (args.KeyCode != Keys.F8) return;
+            args.Handled = true;
+            if (ToggleRequested != null) ToggleRequested();
+        };
+    }
+
+    internal void EnsureHandleAndHotKey()
+    {
+        IntPtr handle = Handle;
+        hotKeyRegistered = RegisterHotKey(handle, HotKeyId, ModNoRepeat, VirtualKeyF8);
+        KioskLog.Write("Global F8 registered=" + hotKeyRegistered);
+    }
+
+    internal void ShowAt(Rectangle bounds)
+    {
+        Bounds = bounds;
+        if (!Visible) Show();
+        Bounds = bounds;
+        BringToFront();
+        Activate();
+    }
+
+    internal void HideController()
+    {
+        if (Visible) Hide();
+    }
+
+    internal void CloseForExit()
+    {
+        closingForExit = true;
+        Close();
+    }
+
+    protected override void WndProc(ref Message message)
+    {
+        if (message.Msg == WmHotKey && message.WParam.ToInt32() == HotKeyId)
+        {
+            if (ToggleRequested != null) ToggleRequested();
+            return;
+        }
+        base.WndProc(ref message);
+    }
+
+    protected override void OnFormClosing(FormClosingEventArgs eventArgs)
+    {
+        if (!closingForExit)
+        {
+            eventArgs.Cancel = true;
+            if (ExitRequested != null) ExitRequested();
+            return;
+        }
+        base.OnFormClosing(eventArgs);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (hotKeyRegistered)
+        {
+            UnregisterHotKey(Handle, HotKeyId);
+            hotKeyRegistered = false;
+        }
+        base.Dispose(disposing);
+    }
+
+    private void BuildInterface()
+    {
+        TableLayoutPanel root = new TableLayoutPanel();
+        root.Dock = DockStyle.Fill;
+        root.Padding = new Padding(14, 12, 14, 14);
+        root.ColumnCount = 1;
+        root.RowCount = 3;
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.BackColor = BackColor;
+
+        Label eyebrow = new Label();
+        eyebrow.AutoSize = true;
+        eyebrow.Text = "공공의료지원과 공유 현황";
+        eyebrow.ForeColor = Color.FromArgb(147, 197, 253);
+        eyebrow.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
+        root.Controls.Add(eyebrow, 0, 0);
+
+        Label guide = new Label();
+        guide.AutoSize = true;
+        guide.Text = "F8을 누르면 전체화면으로 바로 돌아갑니다.";
+        guide.ForeColor = Color.FromArgb(148, 163, 184);
+        guide.Font = new Font("맑은 고딕", 8.5f, FontStyle.Regular);
+        root.Controls.Add(guide, 0, 1);
+
+        TableLayoutPanel actions = new TableLayoutPanel();
+        actions.Dock = DockStyle.Fill;
+        actions.ColumnCount = 2;
+        actions.RowCount = 1;
+        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 52));
+
+        Button openButton = new Button();
+        openButton.Dock = DockStyle.Fill;
+        openButton.Margin = new Padding(0, 2, 8, 0);
+        openButton.Text = "▣  전광판 다시 열기   ·   F8";
+        openButton.Font = new Font("맑은 고딕", 10.5f, FontStyle.Bold);
+        openButton.BackColor = Color.FromArgb(37, 99, 235);
+        openButton.ForeColor = Color.White;
+        openButton.FlatStyle = FlatStyle.Flat;
+        openButton.FlatAppearance.BorderSize = 0;
+        openButton.Click += delegate { if (OpenRequested != null) OpenRequested(); };
+        actions.Controls.Add(openButton, 0, 0);
+
+        Button exitButton = new Button();
+        exitButton.Dock = DockStyle.Fill;
+        exitButton.Margin = new Padding(0, 2, 0, 0);
+        exitButton.Text = "×";
+        exitButton.Font = new Font("Segoe UI", 15f, FontStyle.Bold);
+        exitButton.BackColor = Color.FromArgb(30, 41, 59);
+        exitButton.ForeColor = Color.FromArgb(203, 213, 225);
+        exitButton.FlatStyle = FlatStyle.Flat;
+        exitButton.FlatAppearance.BorderSize = 0;
+        exitButton.Click += delegate { if (ExitRequested != null) ExitRequested(); };
+        actions.Controls.Add(exitButton, 1, 0);
+
+        root.Controls.Add(actions, 0, 2);
+        Controls.Add(root);
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool RegisterHotKey(IntPtr window, int id, uint modifiers, uint virtualKey);
+
+    [DllImport("user32.dll")]
+    private static extern bool UnregisterHotKey(IntPtr window, int id);
+}
+
 internal static class EdgeLocator
 {
     internal static string Find()
     {
-        string programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
-        string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-        string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         string[] candidates = new string[]
         {
-            Path.Combine(programFilesX86, @"Microsoft\Edge\Application\msedge.exe"),
-            Path.Combine(programFiles, @"Microsoft\Edge\Application\msedge.exe"),
-            Path.Combine(localAppData, @"Microsoft\Edge\Application\msedge.exe")
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+                @"Microsoft\Edge\Application\msedge.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                @"Microsoft\Edge\Application\msedge.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                @"Microsoft\Edge\Application\msedge.exe")
         };
-
         for (int index = 0; index < candidates.Length; index++)
             if (File.Exists(candidates[index])) return candidates[index];
-
         throw new FileNotFoundException("Microsoft Edge를 찾지 못했습니다.");
     }
 }
 
 internal static class WindowFinder
 {
-    internal static IntPtr FindKioskWindow()
+    internal static IntPtr FindDedicatedKioskWindow(string profileDirectory)
     {
-        return FindKioskWindow(null);
-    }
-
-    internal static IntPtr FindKioskWindow(HashSet<IntPtr> preferredWindows)
-    {
-        IntPtr match = IntPtr.Zero;
-        IntPtr preferredMatch = IntPtr.Zero;
+        HashSet<uint> processIds = GetDedicatedEdgeProcessIds(profileDirectory);
+        if (processIds.Count == 0) return IntPtr.Zero;
+        IntPtr visibleMatch = IntPtr.Zero;
+        IntPtr hiddenMatch = IntPtr.Zero;
         NativeWindow.EnumWindows(delegate(IntPtr window, IntPtr parameter)
         {
-            if (!NativeWindow.IsWindowVisible(window)) return true;
+            if (!NativeWindow.IsWindow(window)) return true;
+            if (!processIds.Contains(NativeWindow.GetProcessId(window))) return true;
+            if (!String.Equals(NativeWindow.GetClassName(window), "Chrome_WidgetWin_1", StringComparison.Ordinal))
+                return true;
             string title = NativeWindow.GetTitle(window);
-            bool titleMatches = title.IndexOf("공공의료지원과 전광판", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                title.IndexOf("전광판 제어", StringComparison.OrdinalIgnoreCase) >= 0;
-            if (!titleMatches) return true;
-
-            match = window;
-            if (preferredWindows != null && !preferredWindows.Contains(window))
+            if (title.IndexOf("공공의료지원과 전광판", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                title.IndexOf("DPHS_KIOSK_COMMAND_", StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                preferredMatch = window;
-                return false;
+                if (NativeWindow.IsWindowVisible(window))
+                {
+                    visibleMatch = window;
+                    return false;
+                }
+                if (hiddenMatch == IntPtr.Zero) hiddenMatch = window;
+                return true;
             }
             return true;
         }, IntPtr.Zero);
-        return preferredMatch != IntPtr.Zero ? preferredMatch : match;
+        if (visibleMatch != IntPtr.Zero) return visibleMatch;
+        return hiddenMatch;
     }
 
-    internal static HashSet<IntPtr> GetVisibleWindows()
+    internal static void CloseDedicatedKioskWindow(string profileDirectory)
     {
-        HashSet<IntPtr> result = new HashSet<IntPtr>();
+        IntPtr window = FindDedicatedKioskWindow(profileDirectory);
+        if (window != IntPtr.Zero) NativeWindow.Close(window);
+    }
+
+    internal static void CloseAllLegacyKioskWindows()
+    {
         NativeWindow.EnumWindows(delegate(IntPtr window, IntPtr parameter)
         {
-            if (NativeWindow.IsWindowVisible(window)) result.Add(window);
+            string title = NativeWindow.GetTitle(window);
+            if (String.Equals(title, "공공의료지원과 전광판", StringComparison.OrdinalIgnoreCase) ||
+                String.Equals(title, "전광판 제어", StringComparison.OrdinalIgnoreCase) ||
+                title.StartsWith("DPHS_KIOSK_COMMAND_", StringComparison.OrdinalIgnoreCase))
+                NativeWindow.Close(window);
             return true;
         }, IntPtr.Zero);
+    }
+
+    internal static void StopDedicatedEdgeProcesses(string profileDirectory)
+    {
+        HashSet<uint> processIds = GetDedicatedEdgeProcessIds(profileDirectory);
+        foreach (uint processId in processIds)
+        {
+            try
+            {
+                using (Process process = Process.GetProcessById((int)processId))
+                {
+                    process.Kill();
+                    process.WaitForExit(1200);
+                }
+            }
+            catch (ArgumentException) { }
+            catch (InvalidOperationException) { }
+            catch (System.ComponentModel.Win32Exception) { }
+        }
+    }
+
+    private static HashSet<uint> GetDedicatedEdgeProcessIds(string profileDirectory)
+    {
+        HashSet<uint> result = new HashSet<uint>();
+        try
+        {
+            using (ManagementObjectSearcher searcher = new ManagementObjectSearcher(
+                "SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name = 'msedge.exe'"))
+            using (ManagementObjectCollection processes = searcher.Get())
+            {
+                foreach (ManagementObject process in processes)
+                {
+                    string commandLine = Convert.ToString(process["CommandLine"]);
+                    if (commandLine.IndexOf(profileDirectory, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                    result.Add(Convert.ToUInt32(process["ProcessId"]));
+                }
+            }
+        }
+        catch (ManagementException error)
+        {
+            KioskLog.Write("Dedicated Edge query failed: " + error.Message);
+        }
         return result;
     }
 }
@@ -606,33 +871,11 @@ internal static class WindowFinder
 internal static class NativeWindow
 {
     internal delegate bool EnumWindowsCallback(IntPtr window, IntPtr parameter);
-
-    private const int GwlStyle = -16;
-    private const int GwlExStyle = -20;
-    private const long WsCaption = 0x00C00000L;
-    private const long WsThickFrame = 0x00040000L;
-    private const long WsMinimizeBox = 0x00020000L;
-    private const long WsMaximizeBox = 0x00010000L;
-    private const long WsSystemMenu = 0x00080000L;
-    private const long WsPopup = 0x80000000L;
-    private const long WsExWindowEdge = 0x00000100L;
-    private const long WsExClientEdge = 0x00000200L;
-    private const int SwRestore = 9;
-    private const uint SwpFrameChanged = 0x0020;
+    private const int SwHide = 0;
+    private const int SwShow = 5;
     private const uint SwpShowWindow = 0x0040;
-    private const byte VirtualKeyF11 = 0x7A;
-    private const uint KeyEventKeyUp = 0x0002;
-    private static readonly IntPtr HwndTopmost = new IntPtr(-1);
-    private static readonly IntPtr HwndNotTopmost = new IntPtr(-2);
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct Rect
-    {
-        internal int Left;
-        internal int Top;
-        internal int Right;
-        internal int Bottom;
-    }
+    private const uint WmClose = 0x0010;
+    private static readonly IntPtr HwndTop = IntPtr.Zero;
 
     [DllImport("user32.dll")]
     internal static extern bool EnumWindows(EnumWindowsCallback callback, IntPtr parameter);
@@ -646,23 +889,17 @@ internal static class NativeWindow
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern int GetWindowText(IntPtr window, StringBuilder text, int maximumCount);
 
-    [DllImport("user32.dll", EntryPoint = "GetWindowLong")]
-    private static extern int GetWindowLong32(IntPtr window, int index);
-
-    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtr")]
-    private static extern IntPtr GetWindowLongPtr64(IntPtr window, int index);
-
-    [DllImport("user32.dll", EntryPoint = "SetWindowLong")]
-    private static extern int SetWindowLong32(IntPtr window, int index, int value);
-
-    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtr")]
-    private static extern IntPtr SetWindowLongPtr64(IntPtr window, int index, IntPtr value);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(IntPtr window, StringBuilder className, int maximumCount);
 
     [DllImport("user32.dll")]
-    private static extern bool SetWindowPos(IntPtr window, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
+    private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
 
     [DllImport("user32.dll")]
     private static extern bool ShowWindow(IntPtr window, int command);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetWindowPos(IntPtr window, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
 
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr window);
@@ -671,27 +908,7 @@ internal static class NativeWindow
     private static extern bool BringWindowToTop(IntPtr window);
 
     [DllImport("user32.dll")]
-    private static extern IntPtr SetFocus(IntPtr window);
-
-    [DllImport("user32.dll")]
-    private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
-
-    [DllImport("kernel32.dll")]
-    private static extern uint GetCurrentThreadId();
-
-    [DllImport("user32.dll")]
-    private static extern bool AttachThreadInput(uint attachThread, uint attachToThread, bool attach);
-
-    [DllImport("user32.dll")]
-    private static extern void keybd_event(byte virtualKey, byte scanCode, uint flags, UIntPtr extraInfo);
-
-    [DllImport("user32.dll")]
-    private static extern bool GetWindowRect(IntPtr window, out Rect rectangle);
-
-    internal static bool SelfTest()
-    {
-        return IntPtr.Size == 4 || IntPtr.Size == 8;
-    }
+    private static extern bool PostMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
 
     internal static string GetTitle(IntPtr window)
     {
@@ -700,126 +917,48 @@ internal static class NativeWindow
         return title.ToString();
     }
 
-    internal static bool IsCompact(IntPtr window)
+    internal static string GetClassName(IntPtr window)
     {
-        Rect rectangle;
-        return GetWindowRect(window, out rectangle) &&
-               rectangle.Right - rectangle.Left <= 500 &&
-               rectangle.Bottom - rectangle.Top <= 320;
+        StringBuilder className = new StringBuilder(128);
+        GetClassName(window, className, className.Capacity);
+        return className.ToString();
     }
 
-    internal static bool IsBorderlessAtBounds(IntPtr window, Rectangle bounds)
+    internal static uint GetProcessId(IntPtr window)
     {
-        long style = GetStyle(window, GwlStyle);
-        if ((style & (WsCaption | WsThickFrame | WsMinimizeBox | WsMaximizeBox | WsSystemMenu)) != 0)
-            return false;
-
-        Rect rectangle;
-        if (!GetWindowRect(window, out rectangle)) return false;
-        return Math.Abs(rectangle.Left - bounds.X) <= 2 &&
-               Math.Abs(rectangle.Top - bounds.Y) <= 2 &&
-               Math.Abs((rectangle.Right - rectangle.Left) - bounds.Width) <= 2 &&
-               Math.Abs((rectangle.Bottom - rectangle.Top) - bounds.Height) <= 2;
+        uint processId;
+        GetWindowThreadProcessId(window, out processId);
+        return processId;
     }
 
-    internal static void ShowBorderless(IntPtr window, Rectangle bounds)
+    internal static void Hide(IntPtr window)
     {
-        long style = GetStyle(window, GwlStyle);
-        style &= ~(WsCaption | WsThickFrame | WsMinimizeBox | WsMaximizeBox | WsSystemMenu);
-        style |= WsPopup;
-        SetStyle(window, GwlStyle, style);
-
-        long extendedStyle = GetStyle(window, GwlExStyle);
-        extendedStyle &= ~(WsExWindowEdge | WsExClientEdge);
-        SetStyle(window, GwlExStyle, extendedStyle);
-
-        ShowWindow(window, SwRestore);
-        SetWindowPos(window, HwndTopmost, bounds.X, bounds.Y, bounds.Width, bounds.Height,
-            SwpFrameChanged | SwpShowWindow);
-        SetForegroundWindow(window);
+        if (IsWindow(window)) ShowWindow(window, SwHide);
     }
 
-    internal static void ShowWindowedOnScreen(IntPtr window, Rectangle bounds)
+    internal static void ShowFullscreenWindow(IntPtr window, Rectangle bounds)
     {
-        long style = GetStyle(window, GwlStyle);
-        style &= ~WsPopup;
-        style |= WsCaption | WsThickFrame | WsMinimizeBox | WsMaximizeBox | WsSystemMenu;
-        SetStyle(window, GwlStyle, style);
-
-        int horizontalMargin = Math.Min(80, Math.Max(20, bounds.Width / 12));
-        int verticalMargin = Math.Min(60, Math.Max(20, bounds.Height / 12));
-        int width = Math.Max(640, bounds.Width - horizontalMargin * 2);
-        int height = Math.Max(480, bounds.Height - verticalMargin * 2);
-        ShowWindow(window, SwRestore);
-        SetWindowPos(window, HwndNotTopmost,
-            bounds.X + horizontalMargin,
-            bounds.Y + verticalMargin,
-            width,
-            height,
-            SwpFrameChanged | SwpShowWindow);
+        if (!IsWindow(window)) return;
+        ShowWindow(window, SwShow);
+        SetWindowPos(window, HwndTop, bounds.X, bounds.Y, bounds.Width, bounds.Height, SwpShowWindow);
         BringWindowToTop(window);
         SetForegroundWindow(window);
     }
 
-    internal static void SendF11(IntPtr window)
+    internal static void Close(IntPtr window)
     {
-        ShowWindow(window, SwRestore);
-        ActivateWindow(window);
-        Thread.Sleep(120);
-        // SendInput은 일부 Edge/보안 환경에서 UIPI에 의해 0을 반환합니다.
-        // 반환값 때문에 실행기를 종료하지 않는 키 이벤트 방식으로 F11을 전달합니다.
-        keybd_event(VirtualKeyF11, 0, 0, UIntPtr.Zero);
-        keybd_event(VirtualKeyF11, 0, KeyEventKeyUp, UIntPtr.Zero);
+        if (IsWindow(window)) PostMessage(window, WmClose, IntPtr.Zero, IntPtr.Zero);
     }
+}
 
-    internal static void ShowCompact(IntPtr window, Rectangle bounds)
+internal static class SelfTest
+{
+    internal static bool Run()
     {
-        long style = GetStyle(window, GwlStyle);
-        style &= ~WsPopup;
-        style |= WsCaption | WsThickFrame | WsMinimizeBox | WsSystemMenu;
-        style &= ~WsMaximizeBox;
-        SetStyle(window, GwlStyle, style);
-
-        int width = 360;
-        int height = 180;
-        int x = bounds.X + Math.Max(0, bounds.Width - width);
-        int y = bounds.Y + Math.Max(0, (bounds.Height - height) / 2);
-        ShowWindow(window, SwRestore);
-        SetWindowPos(window, HwndTopmost, x, y, width, height,
-            SwpFrameChanged | SwpShowWindow);
-        SetForegroundWindow(window);
-    }
-
-    private static long GetStyle(IntPtr window, int index)
-    {
-        return IntPtr.Size == 8
-            ? GetWindowLongPtr64(window, index).ToInt64()
-            : GetWindowLong32(window, index);
-    }
-
-    private static void SetStyle(IntPtr window, int index, long style)
-    {
-        if (IntPtr.Size == 8) SetWindowLongPtr64(window, index, new IntPtr(style));
-        else SetWindowLong32(window, index, unchecked((int)style));
-    }
-
-    private static void ActivateWindow(IntPtr window)
-    {
-        uint processId;
-        uint targetThread = GetWindowThreadProcessId(window, out processId);
-        uint currentThread = GetCurrentThreadId();
-        bool attached = targetThread != 0 && targetThread != currentThread &&
-                        AttachThreadInput(currentThread, targetThread, true);
-        try
-        {
-            BringWindowToTop(window);
-            SetForegroundWindow(window);
-            SetFocus(window);
-        }
-        finally
-        {
-            if (attached) AttachThreadInput(currentThread, targetThread, false);
-        }
+        return (IntPtr.Size == 4 || IntPtr.Size == 8) &&
+               !String.IsNullOrWhiteSpace(KioskPaths.EdgeProfileDirectory) &&
+               typeof(Form).Assembly != null &&
+               typeof(ManagementObjectSearcher).Assembly != null;
     }
 }
 
@@ -827,9 +966,9 @@ internal static class KioskLog
 {
     private static readonly object Sync = new object();
 
-    internal static string Path
+    internal static string FilePath
     {
-        get { return System.IO.Path.Combine(KioskInstallation.InstallDirectory, "kiosk-launcher.log"); }
+        get { return Path.Combine(KioskPaths.InstallDirectory, "kiosk-launcher.log"); }
     }
 
     internal static void Write(string message)
@@ -838,10 +977,10 @@ internal static class KioskLog
         {
             lock (Sync)
             {
-                Directory.CreateDirectory(KioskInstallation.InstallDirectory);
+                Directory.CreateDirectory(KioskPaths.InstallDirectory);
                 File.AppendAllText(
-                    Path,
-                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " " + message + Environment.NewLine,
+                    FilePath,
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " " + message + Environment.NewLine,
                     new UTF8Encoding(false));
             }
         }
