@@ -160,6 +160,13 @@ export default function IntegratedPortal() {
   }, []);
 
   useEffect(() => {
+    if (!isDedicatedKiosk) return;
+    const kioskUrl = new URL('/kiosk', window.location.origin);
+    kioskUrl.searchParams.set('launcher', '1');
+    window.location.replace(kioskUrl.toString());
+  }, [isDedicatedKiosk]);
+
+  useEffect(() => {
     const interval = window.setInterval(() => {
       const nextToday = getLocalDateKey();
       setTodayStr((currentToday) => currentToday === nextToday ? currentToday : nextToday);
@@ -969,7 +976,7 @@ export default function IntegratedPortal() {
     window.location.assign('about:blank');
   };
 
-  const openKioskWindow = async () => {
+  const openKioskWindow = () => {
     const openInlineKiosk = () => {
       setIsKioskOpen(true);
       if (!document.fullscreenElement) {
@@ -983,23 +990,24 @@ export default function IntegratedPortal() {
       return;
     }
 
-    let targetScreen = window.screen as ManagedScreen;
-    const screenDetailsWindow = window as WindowWithScreenDetails;
-    if (screenDetailsWindow.getScreenDetails) {
-      try {
-        // Chromium의 창 관리 권한을 한 번 허용하면 전용 창을 한 번의 클릭으로
-        // 현재 모니터 전체 화면에 열 수 있습니다.
-        const details = await screenDetailsWindow.getScreenDetails();
-        targetScreen = details.currentScreen;
-      } catch {
-        // 권한을 허용하지 않아도 일반 팝업 창으로 계속 사용할 수 있습니다.
-      }
+    // Windows에서는 설치된 전용 실행기를 호출해 문서함 브라우저와 완전히
+    // 분리된 Edge 앱 창으로 엽니다. 실행기는 같은 창을 재사용하므로 중복으로
+    // 전광판이 열리지 않고 보조 모니터 전체 화면 상태도 직접 관리합니다.
+    if (/Windows/i.test(navigator.userAgent)) {
+      const launcherLink = document.createElement('a');
+      launcherLink.href = 'dphskiosk://open';
+      launcherLink.hidden = true;
+      document.body.append(launcherLink);
+      launcherLink.click();
+      launcherLink.remove();
+      return;
     }
 
-    const kioskUrl = new URL(window.location.href);
-    kioskUrl.searchParams.set('kiosk', '1');
-    kioskUrl.hash = '';
+    const kioskUrl = new URL('/kiosk', window.location.origin);
 
+    // 팝업은 클릭 이벤트와 같은 실행 흐름에서 즉시 열어야 브라우저가
+    // 사용자 동작으로 인식합니다. 화면 권한 확인은 창을 연 뒤 처리합니다.
+    const targetScreen = window.screen as ManagedScreen;
     const left = targetScreen.availLeft ?? 0;
     const top = targetScreen.availTop ?? 0;
     const width = targetScreen.availWidth || window.screen.availWidth;
@@ -1016,12 +1024,32 @@ export default function IntegratedPortal() {
     }
 
     kioskWindow.focus();
+
+    // 다중 모니터 창 관리 권한이 있으면 이미 열린 전광판 창을 현재
+    // 모니터의 작업 영역에 맞춥니다. 권한이 없어도 전광판은 그대로 열립니다.
+    const screenDetailsWindow = window as WindowWithScreenDetails;
+    if (screenDetailsWindow.getScreenDetails) {
+      void screenDetailsWindow.getScreenDetails()
+        .then(({ currentScreen }) => {
+          kioskWindow.moveTo(currentScreen.availLeft ?? 0, currentScreen.availTop ?? 0);
+          kioskWindow.resizeTo(
+            currentScreen.availWidth || window.screen.availWidth,
+            currentScreen.availHeight || window.screen.availHeight,
+          );
+          kioskWindow.focus();
+        })
+        .catch(() => undefined);
+    }
   };
 
   const selectedCalendarSchedules = getCalendarSchedulesForDate(selectedCalendarDate);
   const selectedCalendarHolidayNames = koreanHolidays[selectedCalendarDate] ?? [];
 
   if (!isMounted) return null;
+
+  if (isDedicatedKiosk) {
+    return <main className="min-h-dvh bg-[#071022]" aria-label="전광판 전용 화면으로 이동 중" />;
+  }
 
   if (!isAuthenticated) {
     return <DeviceAccessGate onApproved={handleDeviceApproved} />;

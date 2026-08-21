@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BellRing, CalendarDays, CheckCircle2, Clock3, Minimize2, MonitorUp, Siren, X } from 'lucide-react';
 
-interface KioskSchedule {
+export interface KioskSchedule {
   id: number | string;
   title: string;
   date: string;
@@ -22,7 +22,13 @@ interface DashboardKioskProps {
   schedules: KioskSchedule[];
   onClose: () => void;
   dedicatedWindow?: boolean;
+  nativeLauncher?: boolean;
 }
+
+type ScheduleBreakdownItem = {
+  label: string;
+  count: number;
+};
 
 const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const addDays = (date: Date, days: number) => { const next = new Date(date); next.setDate(next.getDate() + days); return next; };
@@ -39,7 +45,11 @@ const cleanTitle = (title: string) => title.replace(/^(?:회의|출장|내부일
 const formatTime = (schedule: KioskSchedule) => schedule.start_time && schedule.end_time
   ? `${schedule.start_time}–${schedule.end_time}`
   : schedule.start_time ? `${schedule.start_time}부터` : schedule.end_time ? `${schedule.end_time}까지` : '시간 미정';
-const absenceLabel = (schedule: KioskSchedule) => ({ annual: '연차', early: '조퇴', outing: '외출' }[schedule.absence_type ?? ''] ?? '휴가');
+const absenceLabel = (schedule: KioskSchedule) => {
+  if (['early', 'early_am', 'early_pm'].includes(schedule.absence_type ?? '') || schedule.title.includes('조퇴')) return '조퇴';
+  if (schedule.absence_type === 'outing' || schedule.title.includes('외출')) return '외출';
+  return '연차';
+};
 const formatShortDate = (value: string) => {
   const [year, month, day] = value.split('-').map(Number);
   const weekday = ['일', '월', '화', '수', '목', '금', '토'][new Date(year, month - 1, day).getDay()];
@@ -50,6 +60,33 @@ const formatAbsenceDate = (value: string) => {
   const weekday = ['일', '월', '화', '수', '목', '금', '토'][new Date(year, month - 1, day).getDay()];
   return `${month}월 ${day}일(${weekday})`;
 };
+
+const getScheduleCategory = (schedule: KioskSchedule) => {
+  if (schedule.schedule_type === 'leave') return 'leave';
+  if (schedule.schedule_type === 'internal' || /^내부일정\s*[)）]/u.test(schedule.title)) return 'internal';
+  if (schedule.schedule_type === 'business_trip' || /^출장\s*[)）]/u.test(schedule.title)) return 'business_trip';
+  if (schedule.schedule_type === 'meeting' || /^회의\s*[)）]/u.test(schedule.title)) return 'meeting';
+  return 'general';
+};
+
+const getScheduleBreakdown = (items: KioskSchedule[], includeLeave = false): ScheduleBreakdownItem[] => {
+  const counts = { general: 0, internal: 0, business_trip: 0, meeting: 0, leave: 0 };
+  for (const schedule of items) counts[getScheduleCategory(schedule)] += 1;
+  const result: ScheduleBreakdownItem[] = [
+    { label: '일반', count: counts.general },
+    { label: '내부일정', count: counts.internal },
+    { label: '출장', count: counts.business_trip },
+    { label: '회의', count: counts.meeting },
+  ];
+  if (includeLeave) result.push({ label: '휴가', count: counts.leave });
+  return result;
+};
+
+const getAbsenceBreakdown = (items: KioskSchedule[]): ScheduleBreakdownItem[] => [
+  { label: '연차', count: items.filter((schedule) => absenceLabel(schedule) === '연차').length },
+  { label: '조퇴', count: items.filter((schedule) => absenceLabel(schedule) === '조퇴').length },
+  { label: '외출', count: items.filter((schedule) => absenceLabel(schedule) === '외출').length },
+];
 
 type ExtendedScreen = Screen & {
   availLeft?: number;
@@ -74,7 +111,7 @@ const getAvailableScreenBounds = () => {
   };
 };
 
-export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = false }: DashboardKioskProps) {
+export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = false, nativeLauncher = false }: DashboardKioskProps) {
   const [now, setNow] = useState(() => new Date());
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -86,6 +123,21 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
   const thisWeekEnd = dateKey(endOfThisWeek(now));
   const nextWeekStart = dateKey(startOfNextWeek(now));
   const nextWeekEnd = dateKey(endOfNextWeek(now));
+
+  const setDedicatedWindowTitle = (collapsed: boolean) => {
+    if (!dedicatedWindow) return;
+    document.title = collapsed ? '전광판 제어' : '공공의료지원과 전광판';
+  };
+
+  const signalNativeFullscreenRestore = () => {
+    if (!nativeLauncher) return;
+    const link = document.createElement('a');
+    link.href = 'dphskiosk://open';
+    link.hidden = true;
+    document.body.append(link);
+    link.click();
+    link.remove();
+  };
 
   useEffect(() => {
     if (!dedicatedWindow) return;
@@ -133,12 +185,12 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
       .filter((schedule) => schedule.date && scheduleEnd(schedule) >= today)
       .sort((left, right) => `${left.date}-${left.start_time ?? '99:99'}`.localeCompare(`${right.date}-${right.start_time ?? '99:99'}`));
     return {
-      today: active.filter((schedule) => happensOn(schedule, today) && schedule.schedule_type !== 'leave'),
+      today: active.filter((schedule) => happensOn(schedule, today) && getScheduleCategory(schedule) !== 'leave'),
       thisWeek: tomorrow <= thisWeekEnd
-        ? active.filter((schedule) => schedule.schedule_type !== 'leave' && overlapsRange(schedule, tomorrow, thisWeekEnd))
+        ? active.filter((schedule) => getScheduleCategory(schedule) !== 'leave' && overlapsRange(schedule, tomorrow, thisWeekEnd))
         : [],
-      nextWeek: active.filter((schedule) => schedule.schedule_type !== 'leave' && overlapsRange(schedule, nextWeekStart, nextWeekEnd)),
-      absences: active.filter((schedule) => schedule.schedule_type === 'leave' && scheduleEnd(schedule) >= today && schedule.date <= nextWeekEnd),
+      nextWeek: active.filter((schedule) => getScheduleCategory(schedule) !== 'leave' && overlapsRange(schedule, nextWeekStart, nextWeekEnd)),
+      absences: active.filter((schedule) => getScheduleCategory(schedule) === 'leave' && scheduleEnd(schedule) >= today && schedule.date <= nextWeekEnd),
       notices: active.filter((schedule) => schedule.is_notice),
       todos: active.filter((schedule) => schedule.is_todo && !schedule.is_completed),
     };
@@ -231,6 +283,7 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
 
   const collapseKiosk = async () => {
     collapseRequestedRef.current = true;
+    setDedicatedWindowTitle(true);
     setIsCollapsed(true);
 
     if (dedicatedWindow) {
@@ -259,20 +312,39 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
   const expandKiosk = async () => {
     collapseRequestedRef.current = false;
     if (dedicatedWindow) {
-      const bounds = getAvailableScreenBounds();
-      window.moveTo(bounds.left, bounds.top);
-      window.resizeTo(bounds.width, bounds.height);
+      setDedicatedWindowTitle(false);
+      setIsCollapsed(false);
+      window.focus();
+
+      // 설치형 실행기에는 복원 신호도 함께 보내 작업표시줄이나 브라우저
+      // 프레임이 남지 않는 독립 전체 화면 상태를 다시 고정합니다.
+      signalNativeFullscreenRestore();
+
+      // 접힌 전용 창 안에서 누른 버튼/F8의 사용자 동작을 바로 사용해야
+      // 브라우저가 전체 화면 요청을 허용할 가능성이 가장 높습니다.
+      try {
+        await document.documentElement.requestFullscreen?.({ navigationUI: 'hide' });
+        return;
+      } catch {
+        // 전체 화면이 정책상 제한된 브라우저에서는 작업 영역을 꽉 채우는
+        // 독립 창으로 복원해 전광판 사용 흐름이 끊기지 않게 합니다.
+        const bounds = getAvailableScreenBounds();
+        window.moveTo(bounds.left, bounds.top);
+        window.resizeTo(bounds.width, bounds.height);
+        window.focus();
+        return;
+      }
     }
     setIsCollapsed(false);
     window.focus();
     // PIP 창을 먼저 닫으면 그 창에서 발생한 클릭 권한까지 함께 사라져
     // 전체 화면 요청이 거절될 수 있습니다. 클릭 권한이 살아 있을 때 요청을
     // 먼저 시작하고, 그 다음 작은 제어창을 정리합니다.
-    const fullscreenRequest = document.documentElement.requestFullscreen?.();
+    const fullscreenRequest = document.documentElement.requestFullscreen?.({ navigationUI: 'hide' });
+    await fullscreenRequest?.catch(() => undefined);
     pictureInPictureWindowRef.current?.close();
     pictureInPictureWindowRef.current = null;
     setIsPictureInPictureOpen(false);
-    await fullscreenRequest?.catch(() => undefined);
   };
 
   const shortcutActionRef = useRef<() => void>(() => undefined);
@@ -351,27 +423,27 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
         </header>
 
         <main className="grid min-h-0 flex-1 gap-2.5 overflow-y-auto pt-3 sm:gap-3 lg:grid-cols-12 lg:grid-rows-[minmax(0,1.25fr)_minmax(0,0.75fr)] lg:gap-3 lg:overflow-hidden lg:pt-4 2xl:gap-4">
-          <Panel title="오늘 일정" count={data.today.length} tone="blue" className="lg:col-span-3">
+          <Panel title="오늘 일정" count={data.today.length} breakdown={getScheduleBreakdown(data.today)} tone="blue" className="lg:col-span-3">
             <ScheduleList items={data.today} empty="오늘 등록된 일정이 없습니다." />
           </Panel>
 
-          <Panel title="이번 주 일정" count={data.thisWeek.length} tone="violet" className="lg:col-span-4">
+          <Panel title="이번 주 일정" count={data.thisWeek.length} breakdown={getScheduleBreakdown(data.thisWeek)} tone="violet" className="lg:col-span-4">
             <ScheduleList items={data.thisWeek} empty="이번 주 남은 일정이 없습니다." showDate allowColumns />
           </Panel>
 
-          <Panel title="다음 주 일정" count={data.nextWeek.length} tone="violet" className="lg:col-span-5">
+          <Panel title="다음 주 일정" count={data.nextWeek.length} breakdown={getScheduleBreakdown(data.nextWeek)} tone="violet" className="lg:col-span-5">
             <ScheduleList items={data.nextWeek} empty="다음 주 등록된 일정이 없습니다." showDate allowColumns />
           </Panel>
 
-          <Panel title="진행 중인 공지" count={data.notices.length} icon={<BellRing size={17} />} tone="red" className="lg:col-span-4">
+          <Panel title="진행 중인 공지" count={data.notices.length} breakdown={getScheduleBreakdown(data.notices, true)} icon={<BellRing size={17} />} tone="red" className="lg:col-span-4">
             <CompactList items={data.notices} empty="진행 중인 공지가 없습니다." />
           </Panel>
 
-          <Panel title="미완료 TO DO" count={data.todos.length} icon={<CheckCircle2 size={17} />} tone="emerald" className="lg:col-span-4">
+          <Panel title="미완료 TO DO" count={data.todos.length} breakdown={getScheduleBreakdown(data.todos, true)} icon={<CheckCircle2 size={17} />} tone="emerald" className="lg:col-span-4">
             <CompactList items={data.todos} empty="미완료 항목이 없습니다." />
           </Panel>
 
-          <Panel title="이번 주·다음 주 휴가" count={data.absences.length} icon={<CalendarDays size={17} />} tone="amber" className="lg:col-span-4">
+          <Panel title="이번 주·다음 주 휴가" count={data.absences.length} breakdown={getAbsenceBreakdown(data.absences)} icon={<CalendarDays size={17} />} tone="amber" className="lg:col-span-4">
             <AbsenceList items={data.absences} />
           </Panel>
         </main>
@@ -388,10 +460,19 @@ const toneClasses = {
   amber: 'bg-amber-400/15 text-amber-300',
 };
 
-function Panel({ title, count, tone, icon, className = '', children }: { title: string; count: number; tone: keyof typeof toneClasses; icon?: React.ReactNode; className?: string; children: React.ReactNode }) {
+function Panel({ title, count, breakdown, tone, icon, className = '', children }: { title: string; count: number; breakdown?: ScheduleBreakdownItem[]; tone: keyof typeof toneClasses; icon?: React.ReactNode; className?: string; children: React.ReactNode }) {
   return (
     <section className={`flex min-h-0 flex-col rounded-[20px] border border-white/10 bg-white/[0.06] p-3 backdrop-blur-sm sm:p-4 lg:rounded-[24px] lg:p-5 ${className}`}>
-      <div className="mb-2.5 flex shrink-0 items-center gap-2 lg:mb-3">{icon && <span className={toneClasses[tone].split(' ').at(-1)}>{icon}</span>}<h2 className="text-base font-black sm:text-lg lg:text-xl 2xl:text-2xl">{title}</h2><span className={`ml-auto rounded-lg px-2.5 py-1 text-[10px] font-black lg:text-xs ${toneClasses[tone]}`}>{count}건</span></div>
+      <div className="mb-2 flex shrink-0 items-center gap-2">{icon && <span className={toneClasses[tone].split(' ').at(-1)}>{icon}</span>}<h2 className="text-base font-black sm:text-lg lg:text-xl 2xl:text-2xl">{title}</h2><span className={`ml-auto rounded-lg px-2.5 py-1 text-[10px] font-black lg:text-xs ${toneClasses[tone]}`}>전체 {count}건</span></div>
+      {breakdown && (
+        <div className="mb-2.5 grid shrink-0 grid-flow-col auto-cols-fr gap-1 lg:mb-3">
+          {breakdown.map((item) => (
+            <div key={`${title}-${item.label}`} className={`flex min-w-0 items-center justify-center gap-1 rounded-lg bg-white/[0.055] px-1.5 py-1 text-[8px] font-black ring-1 ring-inset ring-white/[0.07] lg:text-[9px] ${item.count === 0 ? 'text-slate-600' : 'text-slate-300'}`}>
+              <span className="truncate">{item.label}</span><strong className={item.count === 0 ? 'text-slate-600' : toneClasses[tone].split(' ').at(-1)}>{item.count}</strong>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="min-h-0 flex-1">{children}</div>
     </section>
   );

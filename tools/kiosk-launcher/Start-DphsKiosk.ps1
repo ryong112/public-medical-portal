@@ -1,6 +1,6 @@
 ﻿param(
   [string]$ProtocolUri = 'dphskiosk://open',
-  [string]$PortalUrl = 'https://dphs2023.vercel.app/?kiosk=1',
+  [string]$PortalUrl = 'https://dphs2023.vercel.app/kiosk?launcher=1',
   [ValidateRange(10, 120)]
   [int]$WindowWaitSeconds = 30,
   [switch]$ValidateOnly

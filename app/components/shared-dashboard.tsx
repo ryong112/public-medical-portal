@@ -13,6 +13,7 @@ import {
 type DashboardView = 'files' | 'calendar' | 'external_calendar' | 'dashboard';
 type DailyScheduleFilter = 'all' | 'general' | 'internal' | 'business_trip' | 'meeting' | 'leave';
 type WeeklyScheduleFilter = Exclude<DailyScheduleFilter, 'leave'>;
+type ScheduleFilterCounts = Record<DailyScheduleFilter, number>;
 
 interface PortalFile {
   id: number;
@@ -173,13 +174,26 @@ const weeklyScheduleFilters: Array<{ value: WeeklyScheduleFilter; label: string 
 
 const getDailyScheduleCategory = (schedule: Schedule): Exclude<DailyScheduleFilter, 'all'> => {
   if (isAbsenceSchedule(schedule)) return 'leave';
-  if (schedule.schedule_type === 'internal') return 'internal';
-  if (schedule.schedule_type === 'business_trip') return 'business_trip';
-  if (schedule.schedule_type === 'meeting') return 'meeting';
+  if (schedule.schedule_type === 'internal' || /^내부일정\s*[)）]/u.test(schedule.title)) return 'internal';
+  if (schedule.schedule_type === 'business_trip' || /^출장\s*[)）]/u.test(schedule.title)) return 'business_trip';
+  if (schedule.schedule_type === 'meeting' || /^회의\s*[)）]/u.test(schedule.title)) return 'meeting';
   return 'general';
 };
 
 const matchesDailyScheduleFilter = (schedule: Schedule, filter: DailyScheduleFilter) => filter === 'all' || getDailyScheduleCategory(schedule) === filter;
+
+const countScheduleCategories = (schedules: Schedule[], excludeAbsencesFromAll = false): ScheduleFilterCounts => {
+  const counts: ScheduleFilterCounts = {
+    all: excludeAbsencesFromAll ? schedules.filter((schedule) => !isAbsenceSchedule(schedule)).length : schedules.length,
+    general: 0,
+    internal: 0,
+    business_trip: 0,
+    meeting: 0,
+    leave: 0,
+  };
+  for (const schedule of schedules) counts[getDailyScheduleCategory(schedule)] += 1;
+  return counts;
+};
 
 const getAbsencePeople = (schedule: Schedule) => {
   const names = schedule.title
@@ -263,41 +277,57 @@ export default function SharedDashboard({
     .filter((schedule) => scheduleOccursOn(schedule, todayKey))
     .sort((a, b) => getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
   const filteredTodaySchedules = todaySchedules.filter((schedule) => matchesDailyScheduleFilter(schedule, todayFilter));
-  const todayWorkSchedules = filteredTodaySchedules.filter((schedule) => !isAbsenceSchedule(schedule));
+  const todayWorkSchedules = todayFilter === 'leave'
+    ? filteredTodaySchedules
+    : filteredTodaySchedules.filter((schedule) => !isAbsenceSchedule(schedule));
+  const todayCategoryCounts = countScheduleCategories(todaySchedules, true);
   const todayAbsenceGroups = groupAbsenceSchedules(todaySchedules.filter(isAbsenceSchedule));
   const todayTodoSchedules = todaySchedules
     .filter((schedule) => schedule.is_todo)
     .sort((a, b) => Number(Boolean(a.is_completed)) - Number(Boolean(b.is_completed)) || getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
   const pendingTodoCount = todayTodoSchedules.filter((schedule) => !schedule.is_completed).length;
   const completedTodoCount = todayTodoSchedules.filter((schedule) => schedule.is_completed).length;
+  const pendingTodoCategoryCounts = countScheduleCategories(todayTodoSchedules.filter((schedule) => !schedule.is_completed));
   const tomorrowSchedules = schedules
     .filter((schedule) => scheduleOccursOn(schedule, tomorrowKey))
     .sort((a, b) => getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
   const filteredTomorrowSchedules = tomorrowSchedules.filter((schedule) => matchesDailyScheduleFilter(schedule, tomorrowFilter));
+  const tomorrowVisibleSchedules = tomorrowFilter === 'leave'
+    ? filteredTomorrowSchedules
+    : filteredTomorrowSchedules.filter((schedule) => !isAbsenceSchedule(schedule));
+  const tomorrowCategoryCounts = countScheduleCategories(tomorrowSchedules, true);
   const todayFilterLabel = dailyScheduleFilters.find((filter) => filter.value === todayFilter)?.label ?? '전체';
   const tomorrowFilterLabel = dailyScheduleFilters.find((filter) => filter.value === tomorrowFilter)?.label ?? '전체';
   const weeklySchedules = schedules
     .filter((schedule) => scheduleOverlaps(schedule, todayKey, weekEndKey))
     .sort((a, b) => a.date.localeCompare(b.date) || getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
+  const weeklyWorkSchedules = weeklySchedules.filter((schedule) => !isAbsenceSchedule(schedule));
+  const weeklyCategoryCounts = countScheduleCategories(weeklyWorkSchedules);
   const filteredWeeklySchedules = weeklySchedules.filter((schedule) => weeklyFilter === 'all'
     ? !isAbsenceSchedule(schedule)
     : getDailyScheduleCategory(schedule) === weeklyFilter);
   const allUpcomingNotices = schedules
     .filter((schedule) => schedule.is_notice && getScheduleEndDate(schedule) >= todayKey)
     .sort((a, b) => a.date.localeCompare(b.date));
+  const noticeCategoryCounts = countScheduleCategories(allUpcomingNotices);
   const monthlyAbsenceSchedules = schedules
     .filter((schedule) => scheduleOverlaps(schedule, todayKey, monthEndKey))
     .filter(isAbsenceSchedule)
     .sort((a, b) => a.date.localeCompare(b.date));
   const monthlyAbsenceGroups = groupAbsenceSchedules(monthlyAbsenceSchedules, todayKey, monthEndKey);
+  const monthlyAbsenceTypeCounts = {
+    annual: monthlyAbsenceGroups.filter((group) => group.schedules.some((schedule) => getAbsenceTypeLabel(schedule) === '연차')).length,
+    early: monthlyAbsenceGroups.filter((group) => group.schedules.some((schedule) => getAbsenceTypeLabel(schedule) === '조퇴')).length,
+    outing: monthlyAbsenceGroups.filter((group) => group.schedules.some((schedule) => getAbsenceTypeLabel(schedule) === '외출')).length,
+  };
   const recentFiles = [...files]
     .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
     .slice(0, 4);
   const summaryCards = [
-    { label: 'TO DO LIST', value: pendingTodoCount, unit: '개', color: 'text-blue-600', icon: <Check size={18} />, items: todayTodoSchedules, isTodoCard: true, completedValue: completedTodoCount, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[], todayAbsenceItems: [] as AbsenceGroup[], isWeeklyCard: false },
-    { label: '진행 중인 공지사항', value: allUpcomingNotices.length, unit: '건', color: 'text-red-500', icon: <BellRing size={18} />, items: allUpcomingNotices, isTodoCard: false, completedValue: 0, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[], todayAbsenceItems: [] as AbsenceGroup[], isWeeklyCard: false },
-    { label: '주간 일정', value: filteredWeeklySchedules.length, unit: '건', color: 'text-violet-600', icon: <CalendarDays size={18} />, items: filteredWeeklySchedules, isTodoCard: false, completedValue: 0, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[], todayAbsenceItems: [] as AbsenceGroup[], isWeeklyCard: true },
-    { label: '이번 달 휴가', value: monthlyAbsenceGroups.length, unit: '명', color: 'text-amber-500', icon: <CalendarDays size={18} />, items: [] as Schedule[], isTodoCard: false, completedValue: 0, isAbsenceCard: true, absenceItems: monthlyAbsenceGroups, todayAbsenceItems: todayAbsenceGroups, isWeeklyCard: false },
+    { label: 'TO DO LIST', value: pendingTodoCount, unit: '개', color: 'text-blue-600', icon: <Check size={18} />, items: todayTodoSchedules, categoryCounts: pendingTodoCategoryCounts, isTodoCard: true, completedValue: completedTodoCount, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[], todayAbsenceItems: [] as AbsenceGroup[], isWeeklyCard: false },
+    { label: '진행 중인 공지사항', value: allUpcomingNotices.length, unit: '건', color: 'text-red-500', icon: <BellRing size={18} />, items: allUpcomingNotices, categoryCounts: noticeCategoryCounts, isTodoCard: false, completedValue: 0, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[], todayAbsenceItems: [] as AbsenceGroup[], isWeeklyCard: false },
+    { label: '주간 일정', value: weeklyWorkSchedules.length, unit: '건', color: 'text-violet-600', icon: <CalendarDays size={18} />, items: filteredWeeklySchedules, categoryCounts: weeklyCategoryCounts, isTodoCard: false, completedValue: 0, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[], todayAbsenceItems: [] as AbsenceGroup[], isWeeklyCard: true },
+    { label: '이번 달 휴가', value: monthlyAbsenceGroups.length, unit: '명', color: 'text-amber-500', icon: <CalendarDays size={18} />, items: [] as Schedule[], categoryCounts: countScheduleCategories(monthlyAbsenceSchedules), isTodoCard: false, completedValue: 0, isAbsenceCard: true, absenceItems: monthlyAbsenceGroups, todayAbsenceItems: todayAbsenceGroups, isWeeklyCard: false },
   ];
 
   const activities: ActivityItem[] = [
@@ -349,15 +379,19 @@ export default function SharedDashboard({
     selectedFilter: DailyScheduleFilter,
     onSelect: (filter: DailyScheduleFilter) => void,
     color: 'blue' | 'violet',
+    counts: ScheduleFilterCounts,
   ) => (
-    <div className="flex flex-wrap justify-start gap-1 sm:justify-end sm:gap-1.5">
+    <div className="flex max-w-full gap-1 overflow-x-auto pb-1 sm:flex-wrap sm:justify-end sm:overflow-visible sm:pb-0 sm:gap-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
       {dailyScheduleFilters.map((filter) => (
         <button
           key={filter.value}
           onClick={() => onSelect(filter.value)}
-          className={`rounded-lg px-1.5 py-1.5 text-[8px] font-black transition-colors sm:px-2 sm:text-[9px] ${selectedFilter === filter.value ? color === 'blue' ? 'bg-blue-600 text-white shadow-sm' : 'bg-violet-600 text-white shadow-sm' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+          aria-pressed={selectedFilter === filter.value}
+          aria-label={`${filter.label} ${counts[filter.value]}건`}
+          className={`inline-flex h-7 shrink-0 items-center gap-1 rounded-lg border px-2 text-[9px] font-black transition-colors sm:text-[10px] ${selectedFilter === filter.value ? color === 'blue' ? 'border-blue-600 bg-blue-600 text-white shadow-sm' : 'border-violet-600 bg-violet-600 text-white shadow-sm' : `border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 ${counts[filter.value] === 0 ? 'opacity-50' : ''}`}`}
         >
-          {filter.label}
+          <span>{filter.label}</span>
+          <span className={`min-w-4 rounded-md px-1 text-center text-[8px] tabular-nums sm:text-[9px] ${selectedFilter === filter.value ? 'bg-white/20 text-white' : 'bg-white text-slate-700 shadow-sm'}`}>{counts[filter.value]}</span>
         </button>
       ))}
     </div>
@@ -445,15 +479,28 @@ export default function SharedDashboard({
               {item.isAbsenceCard && onOpenAbsenceBoard && <button onClick={onOpenAbsenceBoard} className="ml-auto rounded-lg bg-amber-50 px-2 py-1 text-[9px] font-black text-amber-700 transition-colors hover:bg-amber-100">현황표</button>}
             </div>
             {item.isWeeklyCard && (
-              <div className="mb-3 flex flex-wrap gap-1.5">
+              <div className="mb-3 grid grid-cols-3 gap-1.5">
                 {weeklyScheduleFilters.map((filter) => (
                   <button
                     key={`weekly-${filter.value}`}
                     onClick={() => setWeeklyFilter(filter.value)}
-                    className={`rounded-lg px-2 py-1.5 text-[9px] font-black transition-colors sm:px-2.5 sm:text-[10px] ${weeklyFilter === filter.value ? 'bg-violet-600 text-white shadow-sm' : 'bg-violet-50 text-violet-500 hover:bg-violet-100'}`}
+                    aria-pressed={weeklyFilter === filter.value}
+                    aria-label={`${filter.label} ${weeklyCategoryCounts[filter.value]}건`}
+                    className={`inline-flex h-7 min-w-0 items-center justify-center gap-1 rounded-lg border px-1.5 text-[9px] font-black transition-colors sm:text-[10px] ${weeklyFilter === filter.value ? 'border-violet-600 bg-violet-600 text-white shadow-sm' : `border-violet-100 bg-violet-50 text-violet-600 hover:bg-violet-100 ${weeklyCategoryCounts[filter.value] === 0 ? 'opacity-50' : ''}`}`}
                   >
-                    {filter.label}
+                    <span className="truncate">{filter.value === 'internal' ? '내부' : filter.label}</span>
+                    <span className={`min-w-4 rounded-md px-1 text-center text-[8px] tabular-nums ${weeklyFilter === filter.value ? 'bg-white/20 text-white' : 'bg-white text-violet-700'}`}>{weeklyCategoryCounts[filter.value]}</span>
                   </button>
+                ))}
+              </div>
+            )}
+            {!item.isWeeklyCard && !item.isAbsenceCard && (
+              <div className="mb-3 grid grid-cols-3 gap-1.5">
+                {dailyScheduleFilters.slice(1).map((filter) => (
+                  <div key={`${item.label}-${filter.value}`} className={`inline-flex h-7 min-w-0 items-center justify-center gap-1 rounded-lg border border-slate-100 bg-slate-50 px-1.5 text-[9px] font-black text-slate-500 sm:text-[10px] ${item.categoryCounts[filter.value] === 0 ? 'opacity-45' : ''}`}>
+                    <span className="truncate">{filter.value === 'internal' ? '내부' : filter.label}</span>
+                    <span className="min-w-4 rounded-md bg-white px-1 text-center text-[8px] tabular-nums text-slate-700">{item.categoryCounts[filter.value]}</span>
+                  </div>
                 ))}
               </div>
             )}
@@ -466,6 +513,11 @@ export default function SharedDashboard({
               <div>
                 <div className="flex flex-wrap items-center gap-2">
                   <strong className="shrink-0 text-2xl font-black text-slate-900 md:text-3xl">{item.value}<span className="ml-1 text-xs text-slate-400">{item.unit}</span></strong>
+                  <div className="flex items-center gap-1 text-[8px] font-black sm:text-[9px]">
+                    <span className="rounded-md bg-amber-50 px-1.5 py-1 text-amber-700">연차 {monthlyAbsenceTypeCounts.annual}</span>
+                    <span className="rounded-md bg-orange-50 px-1.5 py-1 text-orange-700">조퇴 {monthlyAbsenceTypeCounts.early}</span>
+                    <span className="rounded-md bg-yellow-50 px-1.5 py-1 text-yellow-700">외출 {monthlyAbsenceTypeCounts.outing}</span>
+                  </div>
                   <div className="flex max-h-16 min-w-0 flex-1 flex-wrap gap-1.5 overflow-y-auto custom-scrollbar">
                     {item.absenceItems.map((absence) => (
                       <button key={`absence-chip-${absence.key}`} onClick={() => setSelectedAbsence(absence)} className="min-w-8 rounded-lg bg-amber-50 px-2 py-1.5 text-[9px] font-black text-amber-700 transition-colors hover:bg-amber-100 sm:px-2.5 sm:text-[10px]">{absence.person}</button>
@@ -495,7 +547,7 @@ export default function SharedDashboard({
               <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white p-3 shadow-2xl">
                 <div className="mb-2 flex items-center justify-between border-b border-slate-100 px-1 pb-2">
                   <span className="text-xs font-black text-slate-700">{item.isAbsenceCard && selectedAbsence ? `${selectedAbsence.person} 휴가 상세` : `${item.label} 상세${item.isWeeklyCard ? ` · ${weeklyScheduleFilters.find((filter) => filter.value === weeklyFilter)?.label}` : ''}`}</span>
-                  <span className="text-[10px] font-black text-slate-400">{item.isAbsenceCard && selectedAbsence ? '1명' : `${item.value}${item.unit}`}</span>
+                  <span className="text-[10px] font-black text-slate-400">{item.isAbsenceCard && selectedAbsence ? '1명' : item.isWeeklyCard ? `${item.items.length}건` : `${item.value}${item.unit}`}</span>
                 </div>
                 {item.isAbsenceCard && item.absenceItems.length > 0 ? (
                   <div className="max-h-64 space-y-1 overflow-y-auto custom-scrollbar">
@@ -552,7 +604,7 @@ export default function SharedDashboard({
               <h3 className="mt-1 text-xl font-black text-slate-900">오늘 일정</h3>
             </div>
             <div className="flex w-full flex-col items-start gap-2 sm:w-auto sm:items-end">
-              {renderDailyFilters(todayFilter, setTodayFilter, 'blue')}
+              {renderDailyFilters(todayFilter, setTodayFilter, 'blue', todayCategoryCounts)}
               <button onClick={() => onChangeView('calendar')} className="flex items-center gap-1 text-[10px] font-black text-slate-400 hover:text-blue-600">전체 일정 보기 <ArrowRight size={13} /></button>
             </div>
           </div>
@@ -578,11 +630,11 @@ export default function SharedDashboard({
               <p className="text-[10px] font-black uppercase tracking-[0.18em] text-violet-500">Tomorrow</p>
               <h3 className="mt-1 text-xl font-black text-slate-900">내일 일정</h3>
             </div>
-            {renderDailyFilters(tomorrowFilter, setTomorrowFilter, 'violet')}
+            {renderDailyFilters(tomorrowFilter, setTomorrowFilter, 'violet', tomorrowCategoryCounts)}
           </div>
-          {filteredTomorrowSchedules.length > 0 ? (
+          {tomorrowVisibleSchedules.length > 0 ? (
             <div className="max-h-80 space-y-2 overflow-y-auto pr-1 custom-scrollbar">
-              {filteredTomorrowSchedules.map((schedule) => renderDailySchedule(schedule, true))}
+              {tomorrowVisibleSchedules.map((schedule) => renderDailySchedule(schedule, true))}
             </div>
           ) : (
             <div className="flex min-h-48 flex-col items-center justify-center rounded-2xl bg-slate-50 text-center">
