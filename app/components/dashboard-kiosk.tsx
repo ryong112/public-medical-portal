@@ -203,7 +203,7 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
     const reopenButton = controllerDocument.createElement('button');
     reopenButton.id = 'reopen-kiosk';
     reopenButton.type = 'button';
-    reopenButton.textContent = '전광판 다시 열기';
+    reopenButton.textContent = '전광판 다시 열기 · F8';
     const closeButton = controllerDocument.createElement('button');
     closeButton.id = 'close-kiosk';
     closeButton.type = 'button';
@@ -217,6 +217,11 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
 
     reopenButton.addEventListener('click', () => void expandKiosk());
     closeButton.addEventListener('click', closeKiosk);
+    controllerWindow.addEventListener('keydown', (event) => {
+      if (event.key !== 'F8' || event.repeat) return;
+      event.preventDefault();
+      void expandKiosk();
+    });
     controllerWindow.addEventListener('pagehide', () => {
       if (pictureInPictureWindowRef.current !== controllerWindow) return;
       pictureInPictureWindowRef.current = null;
@@ -252,9 +257,6 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
   };
 
   const expandKiosk = async () => {
-    pictureInPictureWindowRef.current?.close();
-    pictureInPictureWindowRef.current = null;
-    setIsPictureInPictureOpen(false);
     collapseRequestedRef.current = false;
     if (dedicatedWindow) {
       const bounds = getAvailableScreenBounds();
@@ -263,8 +265,34 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
     }
     setIsCollapsed(false);
     window.focus();
-    await document.documentElement.requestFullscreen?.().catch(() => undefined);
+    // PIP 창을 먼저 닫으면 그 창에서 발생한 클릭 권한까지 함께 사라져
+    // 전체 화면 요청이 거절될 수 있습니다. 클릭 권한이 살아 있을 때 요청을
+    // 먼저 시작하고, 그 다음 작은 제어창을 정리합니다.
+    const fullscreenRequest = document.documentElement.requestFullscreen?.();
+    pictureInPictureWindowRef.current?.close();
+    pictureInPictureWindowRef.current = null;
+    setIsPictureInPictureOpen(false);
+    await fullscreenRequest?.catch(() => undefined);
   };
+
+  const shortcutActionRef = useRef<() => void>(() => undefined);
+
+  useEffect(() => {
+    shortcutActionRef.current = () => {
+      if (isCollapsed) void expandKiosk();
+      else void collapseKiosk();
+    };
+  });
+
+  useEffect(() => {
+    const onShortcut = (event: KeyboardEvent) => {
+      if (event.key !== 'F8' || event.repeat) return;
+      event.preventDefault();
+      shortcutActionRef.current();
+    };
+    window.addEventListener('keydown', onShortcut);
+    return () => window.removeEventListener('keydown', onShortcut);
+  }, []);
 
   if (isCollapsed) {
     if (!dedicatedWindow && isPictureInPictureOpen) return null;
@@ -275,7 +303,7 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
           <p className="mb-2 px-1 text-[10px] font-black tracking-[0.12em] text-blue-600">공공의료지원과 전광판</p>
           <div className="grid grid-cols-[1fr_44px] gap-2">
             <button type="button" onClick={() => void expandKiosk()} className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-black text-white shadow-lg transition-colors hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
-              <MonitorUp size={18} /> 전광판 다시 열기
+              <MonitorUp size={18} /> 전광판 다시 열기 <span className="rounded-md bg-white/15 px-1.5 py-0.5 text-[10px]">F8</span>
             </button>
             <button type="button" onClick={closeKiosk} aria-label="전광판 완전히 종료" title="전광판 완전히 종료" className="flex min-h-12 items-center justify-center rounded-xl bg-slate-100 text-slate-500 transition-colors hover:bg-red-500 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2">
               <X size={18} />
@@ -317,7 +345,7 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
               </p>
             </div>
             {!isFullscreen && <button onClick={() => void document.documentElement.requestFullscreen?.()} aria-label="전체 화면" title="전체 화면" className="rounded-xl bg-white/10 p-2.5 text-slate-200 hover:bg-white/20"><MonitorUp size={18} /></button>}
-            <button onClick={() => void collapseKiosk()} aria-label="전광판 접기" title="전광판 접기" className="rounded-xl bg-blue-500/15 p-2.5 text-blue-200 transition-colors hover:bg-blue-600 hover:text-white"><Minimize2 size={18} /></button>
+            <button onClick={() => void collapseKiosk()} aria-label="전광판 접기" title="전광판 접기 (F8)" className="flex items-center gap-1.5 rounded-xl bg-blue-500/15 p-2.5 text-blue-200 transition-colors hover:bg-blue-600 hover:text-white"><Minimize2 size={18} /><span className="hidden text-[10px] font-black lg:inline">F8</span></button>
             <button onClick={closeKiosk} aria-label="전광판 닫기" className="rounded-xl bg-white/10 p-2.5 text-slate-200 hover:bg-red-500"><X size={18} /></button>
           </div>
         </header>
