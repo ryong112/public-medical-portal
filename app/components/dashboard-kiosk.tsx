@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { BellRing, CalendarDays, CheckCircle2, Clock3, Minimize2, MonitorUp, Siren, X } from 'lucide-react';
 
 interface KioskSchedule {
@@ -56,6 +56,14 @@ type ExtendedScreen = Screen & {
   availTop?: number;
 };
 
+type DocumentPictureInPictureApi = {
+  requestWindow: (options?: { width?: number; height?: number }) => Promise<Window>;
+};
+
+type WindowWithDocumentPictureInPicture = Window & {
+  documentPictureInPicture?: DocumentPictureInPictureApi;
+};
+
 const getAvailableScreenBounds = () => {
   const currentScreen = window.screen as ExtendedScreen;
   return {
@@ -70,6 +78,9 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
   const [now, setNow] = useState(() => new Date());
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isPictureInPictureOpen, setIsPictureInPictureOpen] = useState(false);
+  const collapseRequestedRef = useRef(false);
+  const pictureInPictureWindowRef = useRef<Window | null>(null);
   const today = dateKey(now);
   const tomorrow = dateKey(addDays(now, 1));
   const thisWeekEnd = dateKey(endOfThisWeek(now));
@@ -101,7 +112,7 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
       const nextIsFullscreen = Boolean(document.fullscreenElement);
       setIsFullscreen(nextIsFullscreen);
       if (nextIsFullscreen) enteredFullscreen = true;
-      else if (enteredFullscreen && !dedicatedWindow) onClose();
+      else if (enteredFullscreen && !dedicatedWindow && !collapseRequestedRef.current) onClose();
     };
     document.addEventListener('keydown', onKeyDown, true);
     document.addEventListener('fullscreenchange', onFullscreenChange);
@@ -111,6 +122,11 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
       document.removeEventListener('fullscreenchange', onFullscreenChange);
     };
   }, [dedicatedWindow, onClose]);
+
+  useEffect(() => () => {
+    pictureInPictureWindowRef.current?.close();
+    pictureInPictureWindowRef.current = null;
+  }, []);
 
   const data = useMemo(() => {
     const active = schedules
@@ -129,33 +145,151 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
   }, [nextWeekEnd, nextWeekStart, schedules, thisWeekEnd, today, tomorrow]);
 
   const closeKiosk = () => {
+    pictureInPictureWindowRef.current?.close();
+    pictureInPictureWindowRef.current = null;
+    setIsPictureInPictureOpen(false);
+    collapseRequestedRef.current = false;
     if (document.fullscreenElement) void document.exitFullscreen().finally(onClose);
     else onClose();
   };
 
-  const collapseKiosk = async () => {
-    if (!dedicatedWindow) return;
-    setIsCollapsed(true);
-    if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
-    const bounds = getAvailableScreenBounds();
-    window.resizeTo(360, 180);
-    window.moveTo(bounds.left + Math.max(0, bounds.width - 360), bounds.top + Math.max(0, Math.round((bounds.height - 180) / 2)));
+  const mountPictureInPictureController = (controllerWindow: Window) => {
+    const controllerDocument = controllerWindow.document;
+    controllerDocument.documentElement.lang = 'ko';
+    controllerDocument.title = '전광판 제어';
+    controllerDocument.head.replaceChildren();
+    controllerDocument.body.replaceChildren();
+
+    const style = controllerDocument.createElement('style');
+    style.textContent = `
+      * { box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; margin: 0; }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 12px;
+        overflow: hidden;
+        background: #071022;
+        color: #fff;
+        font-family: Arial, "Noto Sans KR", sans-serif;
+      }
+      .controller { width: 100%; }
+      .eyebrow { margin: 0 0 7px; color: #93c5fd; font-size: 10px; font-weight: 800; letter-spacing: .08em; }
+      .actions { display: grid; grid-template-columns: minmax(0, 1fr) 42px; gap: 8px; }
+      button {
+        min-height: 48px;
+        border: 0;
+        border-radius: 13px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 900;
+      }
+      #reopen-kiosk { background: #2563eb; color: #fff; box-shadow: 0 10px 24px rgba(37, 99, 235, .35); }
+      #reopen-kiosk:hover { background: #1d4ed8; }
+      #close-kiosk { background: rgba(255, 255, 255, .1); color: #cbd5e1; }
+      #close-kiosk:hover { background: #ef4444; color: #fff; }
+      button:focus-visible { outline: 3px solid #93c5fd; outline-offset: 2px; }
+    `;
+    controllerDocument.head.append(style);
+
+    const controller = controllerDocument.createElement('main');
+    controller.className = 'controller';
+    const eyebrow = controllerDocument.createElement('p');
+    eyebrow.className = 'eyebrow';
+    eyebrow.textContent = '공공의료지원과 공유 현황';
+    const actions = controllerDocument.createElement('div');
+    actions.className = 'actions';
+    const reopenButton = controllerDocument.createElement('button');
+    reopenButton.id = 'reopen-kiosk';
+    reopenButton.type = 'button';
+    reopenButton.textContent = '전광판 다시 열기';
+    const closeButton = controllerDocument.createElement('button');
+    closeButton.id = 'close-kiosk';
+    closeButton.type = 'button';
+    closeButton.setAttribute('aria-label', '전광판 완전히 종료');
+    closeButton.title = '전광판 완전히 종료';
+    closeButton.textContent = '×';
+
+    actions.append(reopenButton, closeButton);
+    controller.append(eyebrow, actions);
+    controllerDocument.body.append(controller);
+
+    reopenButton.addEventListener('click', () => void expandKiosk());
+    closeButton.addEventListener('click', closeKiosk);
+    controllerWindow.addEventListener('pagehide', () => {
+      if (pictureInPictureWindowRef.current !== controllerWindow) return;
+      pictureInPictureWindowRef.current = null;
+      setIsPictureInPictureOpen(false);
+    }, { once: true });
   };
 
-  const expandKiosk = () => {
-    const bounds = getAvailableScreenBounds();
-    window.moveTo(bounds.left, bounds.top);
-    window.resizeTo(bounds.width, bounds.height);
+  const collapseKiosk = async () => {
+    collapseRequestedRef.current = true;
+    setIsCollapsed(true);
+
+    if (dedicatedWindow) {
+      if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
+      const bounds = getAvailableScreenBounds();
+      window.resizeTo(360, 180);
+      window.moveTo(bounds.left + Math.max(0, bounds.width - 360), bounds.top + Math.max(0, Math.round((bounds.height - 180) / 2)));
+      return;
+    }
+
+    const pictureInPictureApi = (window as WindowWithDocumentPictureInPicture).documentPictureInPicture;
+    const pictureInPictureRequest = pictureInPictureApi?.requestWindow({ width: 360, height: 145 });
+    if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
+
+    if (!pictureInPictureRequest) return;
+    try {
+      const controllerWindow = await pictureInPictureRequest;
+      pictureInPictureWindowRef.current = controllerWindow;
+      setIsPictureInPictureOpen(true);
+      mountPictureInPictureController(controllerWindow);
+    } catch {
+      setIsPictureInPictureOpen(false);
+    }
+  };
+
+  const expandKiosk = async () => {
+    pictureInPictureWindowRef.current?.close();
+    pictureInPictureWindowRef.current = null;
+    setIsPictureInPictureOpen(false);
+    collapseRequestedRef.current = false;
+    if (dedicatedWindow) {
+      const bounds = getAvailableScreenBounds();
+      window.moveTo(bounds.left, bounds.top);
+      window.resizeTo(bounds.width, bounds.height);
+    }
     setIsCollapsed(false);
-    void document.documentElement.requestFullscreen?.().catch(() => undefined);
+    window.focus();
+    await document.documentElement.requestFullscreen?.().catch(() => undefined);
   };
 
   if (isCollapsed) {
+    if (!dedicatedWindow && isPictureInPictureOpen) return null;
+
+    if (!dedicatedWindow) {
+      return (
+        <aside className="fixed bottom-5 right-5 z-[400] w-[min(22rem,calc(100vw-2rem))] rounded-2xl border border-blue-200 bg-white p-3 text-slate-900 shadow-2xl ring-1 ring-slate-900/5">
+          <p className="mb-2 px-1 text-[10px] font-black tracking-[0.12em] text-blue-600">공공의료지원과 전광판</p>
+          <div className="grid grid-cols-[1fr_44px] gap-2">
+            <button type="button" onClick={() => void expandKiosk()} className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-black text-white shadow-lg transition-colors hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
+              <MonitorUp size={18} /> 전광판 다시 열기
+            </button>
+            <button type="button" onClick={closeKiosk} aria-label="전광판 완전히 종료" title="전광판 완전히 종료" className="flex min-h-12 items-center justify-center rounded-xl bg-slate-100 text-slate-500 transition-colors hover:bg-red-500 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2">
+              <X size={18} />
+            </button>
+          </div>
+        </aside>
+      );
+    }
+
     return (
       <div className="fixed inset-0 z-[400] flex items-center justify-center bg-[#071022] p-3 text-white">
         <button
           type="button"
-          onClick={expandKiosk}
+          onClick={() => void expandKiosk()}
           aria-label="전광판 다시 전체 화면으로 펼치기"
           className="group flex w-full items-center justify-center gap-3 rounded-2xl border border-blue-400/40 bg-blue-600 px-5 py-4 font-black shadow-2xl transition-colors hover:bg-blue-500"
         >
@@ -170,7 +304,6 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
     <div className="fixed inset-0 z-[400] overflow-hidden bg-[#071022] text-white">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(37,99,235,0.28),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(124,58,237,0.18),transparent_30%)]" />
       <div className="relative flex h-full flex-col p-3 sm:p-5 lg:p-7 2xl:p-9">
-        {dedicatedWindow && <button type="button" onClick={() => void collapseKiosk()} aria-label="전광판을 작은 창으로 접기" className="absolute right-0 top-1/2 z-20 flex -translate-y-1/2 flex-col items-center gap-1 rounded-l-xl bg-blue-600 px-2 py-3 text-[9px] font-black text-white shadow-xl transition-colors hover:bg-blue-500"><Minimize2 size={15}/><span className="[writing-mode:vertical-rl] tracking-wider">접기</span></button>}
         <header className="flex shrink-0 items-start justify-between gap-4 border-b border-white/10 pb-3 lg:pb-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-blue-300"><MonitorUp size={18} /><span className="text-[10px] font-black tracking-[0.18em] lg:text-xs">공공의료지원과 공유 현황</span></div>
@@ -184,6 +317,7 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
               </p>
             </div>
             {!isFullscreen && <button onClick={() => void document.documentElement.requestFullscreen?.()} aria-label="전체 화면" title="전체 화면" className="rounded-xl bg-white/10 p-2.5 text-slate-200 hover:bg-white/20"><MonitorUp size={18} /></button>}
+            <button onClick={() => void collapseKiosk()} aria-label="전광판 접기" title="전광판 접기" className="rounded-xl bg-blue-500/15 p-2.5 text-blue-200 transition-colors hover:bg-blue-600 hover:text-white"><Minimize2 size={18} /></button>
             <button onClick={closeKiosk} aria-label="전광판 닫기" className="rounded-xl bg-white/10 p-2.5 text-slate-200 hover:bg-red-500"><X size={18} /></button>
           </div>
         </header>
