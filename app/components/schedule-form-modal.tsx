@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { AlertTriangle, Bell, CalendarPlus, CalendarRange, Check, ChevronDown, Clock3, ListChecks, RotateCcw, Siren, X } from 'lucide-react';
-import TimeListPicker from '@/app/components/time-list-picker';
+import DirectTimeInput from '@/app/components/direct-time-input';
 
 export type ScheduleType = 'meeting' | 'business_trip' | 'internal' | 'leave' | 'unclassified';
 export type AbsenceType = 'annual' | 'early' | 'outing';
@@ -384,7 +384,7 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
             ))}
           </div>
           <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
-            <TimeListPicker
+            <DirectTimeInput
               label="시작"
               disabled={timeMode === 'end' || timeMode === 'none'}
               value={timeMode === 'end' || timeMode === 'none' ? '' : startTime}
@@ -395,9 +395,8 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
               }}
             />
             <span className="mt-5 text-slate-300">→</span>
-            <TimeListPicker
+            <DirectTimeInput
               label="종료"
-              align="right"
               disabled={timeMode === 'start' || timeMode === 'none'}
               value={timeMode === 'start' || timeMode === 'none' ? '' : endTime}
               minimumTime={timeMode === 'both' ? startTime : undefined}
