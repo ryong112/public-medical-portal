@@ -16,8 +16,8 @@ using Microsoft.Win32;
 [assembly: AssemblyCompany("공공의료지원과")]
 [assembly: AssemblyProduct("공공의료지원과 전광판")]
 [assembly: AssemblyCopyright("Copyright © 2026")]
-[assembly: AssemblyVersion("4.1.3.0")]
-[assembly: AssemblyFileVersion("4.1.3.0")]
+[assembly: AssemblyVersion("4.2.0.0")]
+[assembly: AssemblyFileVersion("4.2.0.0")]
 
 internal static class Program
 {
@@ -125,6 +125,7 @@ internal enum KioskViewState
 internal static class KioskPaths
 {
     internal const string PortalUrl = "https://dphs2023.vercel.app/kiosk?launcher=1";
+    internal const string PairingUrl = "https://dphs2023.vercel.app/kiosk/pair?request=";
 
     internal static string InstallDirectory
     {
@@ -165,7 +166,7 @@ internal static class KioskInstallation
         DeleteLegacyFiles();
         EnsureRegistration();
         CreateShortcuts();
-        KioskLog.Write("Launcher 4.1.3 installed from " + sourcePath);
+        KioskLog.Write("Launcher 4.2 installed from " + sourcePath);
     }
 
     internal static void EnsureRegistration()
@@ -395,6 +396,7 @@ internal sealed class KioskApplicationContext : ApplicationContext, IDisposable
     private DateTime launchStarted;
     private DateTime lastWindowSearch = DateTime.MinValue;
     private string handledWebCommand = String.Empty;
+    private string openedPairRequest = String.Empty;
     private DateTime lastToggle = DateTime.MinValue;
     private bool exiting;
     private bool disposed;
@@ -520,6 +522,10 @@ internal sealed class KioskApplicationContext : ApplicationContext, IDisposable
 
     private void ApplyDesiredState()
     {
+        // Apply window operations only when the desired state changes. Repeating
+        // SetForegroundWindow every timer tick would steal focus from other apps.
+        if (hasAppliedState && appliedState == desiredState) return;
+
         if (desiredState == KioskViewState.Collapsed)
         {
             if (edgeWindow != IntPtr.Zero && NativeWindow.IsWindow(edgeWindow))
@@ -533,17 +539,34 @@ internal sealed class KioskApplicationContext : ApplicationContext, IDisposable
                 NativeWindow.ShowFullscreenWindow(edgeWindow, targetScreen.Bounds);
         }
 
-        if (!hasAppliedState || appliedState != desiredState)
-        {
-            KioskLog.Write("Applied state=" + desiredState + " hwnd=" + edgeWindow.ToInt64());
-            appliedState = desiredState;
-            hasAppliedState = true;
-        }
+        KioskLog.Write("Applied state=" + desiredState + " hwnd=" + edgeWindow.ToInt64());
+        appliedState = desiredState;
+        hasAppliedState = true;
     }
 
     private void HandleWebCommandMarker()
     {
         string title = NativeWindow.GetTitle(edgeWindow);
+        const string pairPrefix = "DPHS_KIOSK_PAIR_";
+        int pairIndex = title.IndexOf(pairPrefix, StringComparison.OrdinalIgnoreCase);
+        if (pairIndex >= 0)
+        {
+            if (String.Equals(title, handledWebCommand, StringComparison.Ordinal)) return;
+            handledWebCommand = title;
+            string requestId = title.Substring(pairIndex + pairPrefix.Length).Trim();
+            if (requestId.Length > 36) requestId = requestId.Substring(0, 36);
+            OpenPairingRequest(requestId);
+            return;
+        }
+
+        if (!String.IsNullOrEmpty(openedPairRequest) &&
+            String.Equals(title, "공공의료지원과 전광판", StringComparison.Ordinal))
+        {
+            openedPairRequest = String.Empty;
+            hasAppliedState = false;
+            KioskLog.Write("Automatic kiosk approval completed");
+        }
+
         string command = String.Empty;
         if (title.IndexOf("DPHS_KIOSK_COMMAND_COLLAPSE", StringComparison.OrdinalIgnoreCase) >= 0)
             command = "collapse";
@@ -559,6 +582,27 @@ internal sealed class KioskApplicationContext : ApplicationContext, IDisposable
         handledWebCommand = title;
         if (command == "collapse") SetDesiredState(KioskViewState.Collapsed, "web marker");
         else ExitApplication();
+    }
+
+    private void OpenPairingRequest(string requestId)
+    {
+        Guid parsedRequest;
+        if (!Guid.TryParse(requestId, out parsedRequest))
+        {
+            KioskLog.Write("Ignored an invalid kiosk pairing marker");
+            return;
+        }
+        string normalizedRequest = parsedRequest.ToString("D");
+        if (String.Equals(openedPairRequest, normalizedRequest, StringComparison.OrdinalIgnoreCase)) return;
+        openedPairRequest = normalizedRequest;
+
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = EdgeLocator.Find(),
+            Arguments = "\"" + KioskPaths.PairingUrl + Uri.EscapeDataString(normalizedRequest) + "\"",
+            UseShellExecute = true
+        });
+        KioskLog.Write("Opened automatic approval in the existing Edge profile");
     }
 
     private void ExitApplication()

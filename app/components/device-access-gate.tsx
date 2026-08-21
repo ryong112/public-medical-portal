@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { CheckCircle2, Clock3, Laptop, LoaderCircle, RefreshCw, ShieldAlert, Smartphone } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
@@ -15,14 +15,31 @@ interface DeviceAccessInfo {
 
 interface DeviceAccessGateProps {
   onApproved: (access: { userId: string; isAdmin: boolean }) => void;
+  nativeKioskPairing?: boolean;
 }
 
-export default function DeviceAccessGate({ onApproved }: DeviceAccessGateProps) {
+export default function DeviceAccessGate({ onApproved, nativeKioskPairing = false }: DeviceAccessGateProps) {
   const [status, setStatus] = useState<DeviceStatus>('checking');
   const [accessInfo, setAccessInfo] = useState<DeviceAccessInfo | null>(null);
   const [deviceName, setDeviceName] = useState('');
   const [isRequesting, setIsRequesting] = useState(false);
   const [error, setError] = useState('');
+  const pairRequestStartedRef = useRef(false);
+
+  const startNativeKioskPairing = useCallback(async () => {
+    if (!nativeKioskPairing || pairRequestStartedRef.current) return;
+    pairRequestStartedRef.current = true;
+
+    const { data, error: pairError } = await supabase.rpc('create_kiosk_pair_request');
+    if (data?.status === 'approved') return;
+    const requestId = typeof data?.request_id === 'string' ? data.request_id : '';
+    if (pairError || !requestId) {
+      setError(pairError?.message ?? '전광판 자동 인증 요청을 만들지 못했습니다.');
+      return;
+    }
+
+    document.title = `DPHS_KIOSK_PAIR_${requestId}`;
+  }, [nativeKioskPairing]);
 
   const checkAccess = useCallback(async () => {
     setError('');
@@ -43,6 +60,7 @@ export default function DeviceAccessGate({ onApproved }: DeviceAccessGateProps) 
       setStatus(nextAccess.status);
       if (nextAccess.device_name) setDeviceName(nextAccess.device_name);
       if (nextAccess.status === 'approved') onApproved({ userId: nextAccess.user_id, isAdmin: nextAccess.is_admin });
+      else if (nextAccess.status !== 'blocked') void startNativeKioskPairing();
     } catch (accessError) {
       const message = accessError instanceof Error ? accessError.message : '기기 인증을 확인하지 못했습니다.';
       setError(message.includes('Anonymous sign-ins are disabled')
@@ -50,7 +68,7 @@ export default function DeviceAccessGate({ onApproved }: DeviceAccessGateProps) 
         : message);
       setStatus('error');
     }
-  }, [onApproved]);
+  }, [onApproved, startNativeKioskPairing]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => void checkAccess());
@@ -58,10 +76,10 @@ export default function DeviceAccessGate({ onApproved }: DeviceAccessGateProps) 
   }, [checkAccess]);
 
   useEffect(() => {
-    if (status !== 'pending') return;
+    if (status !== 'pending' && !(nativeKioskPairing && status === 'unregistered')) return;
     const interval = window.setInterval(() => void checkAccess(), 5000);
     return () => window.clearInterval(interval);
-  }, [checkAccess, status]);
+  }, [checkAccess, nativeKioskPairing, status]);
 
   const requestAccess = async () => {
     if (deviceName.trim().length < 2) {
@@ -101,7 +119,17 @@ export default function DeviceAccessGate({ onApproved }: DeviceAccessGateProps) 
           </div>
         )}
 
-        {status === 'unregistered' && (
+        {nativeKioskPairing && (status === 'unregistered' || status === 'pending') && (
+          <div className="flex flex-col items-center rounded-2xl bg-blue-50 py-10 text-blue-700">
+            <LoaderCircle className="animate-spin" size={30} />
+            <h2 className="mt-5 text-lg font-black">기존 기기 승인을 연결하고 있습니다.</h2>
+            <p className="mt-2 px-5 text-center text-xs font-bold leading-5 text-blue-500">
+              승인된 Edge 프로필에서 자동 인증 탭이 열립니다. 별도의 관리자 승인은 필요하지 않습니다.
+            </p>
+          </div>
+        )}
+
+        {status === 'unregistered' && !nativeKioskPairing && (
           <div>
             <p className="mb-5 text-sm font-bold leading-6 text-slate-500">회원가입 없이 이 브라우저만 승인받습니다. 관리자가 확인할 수 있도록 성함과 사용 기기를 함께 입력해 주십시오. 한 번 승인되면 관리자가 차단하기 전까지 계속 이용할 수 있습니다.</p>
             <label className="block">
@@ -114,7 +142,7 @@ export default function DeviceAccessGate({ onApproved }: DeviceAccessGateProps) 
           </div>
         )}
 
-        {status === 'pending' && (
+        {status === 'pending' && !nativeKioskPairing && (
           <div className="text-center">
             <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-50 text-amber-500"><Clock3 size={30} /></div>
             <h2 className="mt-5 text-lg font-black">관리자 승인을 기다리고 있습니다.</h2>

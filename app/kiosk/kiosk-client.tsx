@@ -41,7 +41,9 @@ export default function KioskClient({ nativeLauncher }: { nativeLauncher: boolea
     };
   }, [fetchSchedules, isAuthenticated]);
 
-  if (!isAuthenticated) return <DeviceAccessGate onApproved={handleApproved} />;
+  if (!isAuthenticated) {
+    return <DeviceAccessGate onApproved={handleApproved} nativeKioskPairing={nativeLauncher} />;
+  }
 
   if (isLoading) {
     return (
