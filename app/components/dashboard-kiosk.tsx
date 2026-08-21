@@ -320,8 +320,8 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
       setIsCollapsed(false);
       window.focus();
 
-      // 설치형 전광판은 실행기가 브라우저의 F11 상태를 직접 관리합니다.
-      // 웹 전체화면 API와 섞지 않아 최초 실행과 이후 복귀가 같은 상태가 됩니다.
+      // 설치형 전광판은 실행기가 창 프레임과 모니터 크기를 직접 관리합니다.
+      // F11/웹 전체화면 API와 섞지 않아 최초 실행과 이후 복귀가 같은 상태가 됩니다.
       if (nativeLauncher) {
         signalNativeLauncher('open');
         return;
