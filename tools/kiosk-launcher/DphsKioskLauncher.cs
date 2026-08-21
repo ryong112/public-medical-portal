@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -15,8 +16,8 @@ using Microsoft.Win32;
 [assembly: AssemblyCompany("공공의료지원과")]
 [assembly: AssemblyProduct("공공의료지원과 전광판")]
 [assembly: AssemblyCopyright("Copyright © 2026")]
-[assembly: AssemblyVersion("2.0.0.0")]
-[assembly: AssemblyFileVersion("2.0.0.0")]
+[assembly: AssemblyVersion("2.2.0.0")]
+[assembly: AssemblyFileVersion("2.2.0.0")]
 
 internal static class Program
 {
@@ -26,12 +27,18 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
-        Application.EnableVisualStyles();
-        Application.SetCompatibleTextRenderingDefault(false);
-
         try
         {
             string argument = args.Length > 0 ? args[0].Trim() : String.Empty;
+
+            // 이미 실행 중인 런처에 보내는 open/collapse 신호는 WinForms 초기화,
+            // 레지스트리 확인, 뮤텍스 생성을 거치지 않고 즉시 전달합니다.
+            if (argument.StartsWith(ProtocolPrefix, StringComparison.OrdinalIgnoreCase) &&
+                KioskController.TrySignalExisting(ParseAction(argument)))
+                return 0;
+
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
 
             if (String.Equals(argument, "--self-test", StringComparison.OrdinalIgnoreCase))
                 return NativeWindow.SelfTest() ? 0 : 1;
@@ -262,8 +269,8 @@ internal sealed class KioskController : IDisposable
 {
     internal const string ExitEventName = @"Local\DPHS-Kiosk-Native-Exit";
     private const string MutexName = @"Local\DPHS-Kiosk-Native-Launcher";
-    private const string OpenEventName = @"Local\DPHS-Kiosk-Native-Open";
-    private const string CollapseEventName = @"Local\DPHS-Kiosk-Native-Collapse";
+    internal const string OpenEventName = @"Local\DPHS-Kiosk-Native-Open";
+    internal const string CollapseEventName = @"Local\DPHS-Kiosk-Native-Collapse";
     private const string PortalUrl = "https://dphs2023.vercel.app/kiosk?launcher=1";
 
     private readonly KioskAction initialAction;
@@ -274,6 +281,7 @@ internal sealed class KioskController : IDisposable
     private readonly bool ownsMutex;
     private IntPtr kioskWindow;
     private Screen targetScreen;
+    private bool browserFullscreen;
     private bool disposed;
 
     internal KioskController(KioskAction initialAction)
@@ -329,6 +337,27 @@ internal sealed class KioskController : IDisposable
         return 0;
     }
 
+    internal static bool TrySignalExisting(KioskAction action)
+    {
+        string eventName = action == KioskAction.Collapse
+            ? CollapseEventName
+            : action == KioskAction.Exit
+                ? ExitEventName
+                : OpenEventName;
+        try
+        {
+            using (EventWaitHandle signalEvent = EventWaitHandle.OpenExisting(eventName))
+            {
+                signalEvent.Set();
+                return true;
+            }
+        }
+        catch (WaitHandleCannotBeOpenedException)
+        {
+            return false;
+        }
+    }
+
     private void Signal(KioskAction action)
     {
         if (action == KioskAction.Collapse) collapseEvent.Set();
@@ -365,13 +394,10 @@ internal sealed class KioskController : IDisposable
 
         targetScreen = GetPreferredScreen();
 
-        // Edge가 시작 직후 창 프레임을 다시 적용할 수 있어, 초기 로딩 동안
-        // 같은 무테 전체화면 상태를 반복 적용합니다. F11 키는 사용하지 않습니다.
-        for (int attempt = 0; attempt < 20 && NativeWindow.IsWindow(kioskWindow); attempt++)
-        {
-            NativeWindow.ShowBorderless(kioskWindow, targetScreen.Bounds);
-            Thread.Sleep(150);
-        }
+        // 창을 보조 모니터에 먼저 배치한 뒤 실제 Edge F11 전체화면으로 진입합니다.
+        // 최초 실행과 접기 후 복귀가 모두 이 한 경로를 사용합니다.
+        browserFullscreen = false;
+        EnterBrowserFullscreen();
 
         KioskLog.Write("Kiosk ready on " + targetScreen.DeviceName);
     }
@@ -379,16 +405,17 @@ internal sealed class KioskController : IDisposable
     private void ShowKioskWindow()
     {
         if (!NativeWindow.IsWindow(kioskWindow)) OpenKioskWindow();
-        NativeWindow.ShowBorderless(kioskWindow, targetScreen.Bounds);
-        Thread.Sleep(200);
-        NativeWindow.ShowBorderless(kioskWindow, targetScreen.Bounds);
+        EnterBrowserFullscreen();
     }
 
     private void CollapseKioskWindow()
     {
         if (!NativeWindow.IsWindow(kioskWindow)) return;
+        ExitBrowserFullscreen();
         NativeWindow.ShowCompact(kioskWindow, targetScreen.Bounds);
-        Thread.Sleep(200);
+        Thread.Sleep(90);
+        NativeWindow.ShowCompact(kioskWindow, targetScreen.Bounds);
+        Thread.Sleep(160);
         NativeWindow.ShowCompact(kioskWindow, targetScreen.Bounds);
     }
 
@@ -397,12 +424,66 @@ internal sealed class KioskController : IDisposable
         if (!NativeWindow.IsWindow(kioskWindow)) return;
         string title = NativeWindow.GetTitle(kioskWindow);
         bool controller = title.IndexOf("전광판 제어", StringComparison.OrdinalIgnoreCase) >= 0;
-        if (!controller && !NativeWindow.IsCompact(kioskWindow) &&
+        if (!controller && !NativeWindow.IsCompact(kioskWindow) && browserFullscreen &&
             !NativeWindow.IsBorderlessAtBounds(kioskWindow, targetScreen.Bounds))
         {
-            NativeWindow.ShowBorderless(kioskWindow, targetScreen.Bounds);
-            KioskLog.Write("Kiosk fullscreen state restored");
+            browserFullscreen = false;
+            EnterBrowserFullscreen();
+            KioskLog.Write("Kiosk F11 fullscreen state restored");
         }
+    }
+
+    private void EnterBrowserFullscreen()
+    {
+        if (!NativeWindow.IsWindow(kioskWindow)) return;
+        if (browserFullscreen && NativeWindow.IsBorderlessAtBounds(kioskWindow, targetScreen.Bounds))
+            return;
+
+        NativeWindow.ShowWindowedOnScreen(kioskWindow, targetScreen.Bounds);
+        Thread.Sleep(250);
+
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            NativeWindow.SendF11(kioskWindow);
+            if (WaitForFullscreenState(true, 1800))
+            {
+                browserFullscreen = true;
+                KioskLog.Write("Edge entered actual F11 fullscreen");
+                return;
+            }
+            Thread.Sleep(250);
+        }
+
+        // 포커스 정책으로 F11 입력이 거절되는 예외 상황에서도 전광판 화면은
+        // 비어 보이지 않도록 무테 전체화면을 마지막 안전장치로 적용합니다.
+        NativeWindow.ShowBorderless(kioskWindow, targetScreen.Bounds);
+        browserFullscreen = false;
+        KioskLog.Write("WARNING Edge rejected F11; borderless fallback applied");
+    }
+
+    private void ExitBrowserFullscreen()
+    {
+        if (!NativeWindow.IsWindow(kioskWindow)) return;
+        if (browserFullscreen)
+        {
+            NativeWindow.SendF11(kioskWindow);
+            // Edge의 전체화면 종료 애니메이션을 기다리지 않고 바로 축소합니다.
+            // ShowCompact를 직후와 90ms 후에 다시 적용해 최초 F8도 즉시 반응합니다.
+            Thread.Sleep(35);
+        }
+        browserFullscreen = false;
+    }
+
+    private bool WaitForFullscreenState(bool expectedFullscreen, int timeoutMilliseconds)
+    {
+        DateTime deadline = DateTime.UtcNow.AddMilliseconds(timeoutMilliseconds);
+        while (DateTime.UtcNow < deadline && NativeWindow.IsWindow(kioskWindow))
+        {
+            bool isFullscreen = NativeWindow.IsBorderlessAtBounds(kioskWindow, targetScreen.Bounds);
+            if (isFullscreen == expectedFullscreen) return true;
+            Thread.Sleep(60);
+        }
+        return false;
     }
 
     private static Screen GetPreferredScreen()
@@ -510,7 +591,11 @@ internal static class NativeWindow
     private const int SwRestore = 9;
     private const uint SwpFrameChanged = 0x0020;
     private const uint SwpShowWindow = 0x0040;
+    private const uint InputKeyboard = 1;
+    private const ushort VirtualKeyF11 = 0x7A;
+    private const uint KeyEventKeyUp = 0x0002;
     private static readonly IntPtr HwndTopmost = new IntPtr(-1);
+    private static readonly IntPtr HwndNotTopmost = new IntPtr(-2);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct Rect
@@ -519,6 +604,30 @@ internal static class NativeWindow
         internal int Top;
         internal int Right;
         internal int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Input
+    {
+        internal uint Type;
+        internal InputUnion Data;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
+    private struct InputUnion
+    {
+        [FieldOffset(0)]
+        internal KeyboardInput Keyboard;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct KeyboardInput
+    {
+        internal ushort VirtualKey;
+        internal ushort ScanCode;
+        internal uint Flags;
+        internal uint Time;
+        internal UIntPtr ExtraInfo;
     }
 
     [DllImport("user32.dll")]
@@ -553,6 +662,24 @@ internal static class NativeWindow
 
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr window);
+
+    [DllImport("user32.dll")]
+    private static extern bool BringWindowToTop(IntPtr window);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SetFocus(IntPtr window);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll")]
+    private static extern bool AttachThreadInput(uint attachThread, uint attachToThread, bool attach);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint SendInput(uint inputCount, Input[] inputs, int inputSize);
 
     [DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr window, out Rect rectangle);
@@ -608,6 +735,44 @@ internal static class NativeWindow
         SetForegroundWindow(window);
     }
 
+    internal static void ShowWindowedOnScreen(IntPtr window, Rectangle bounds)
+    {
+        long style = GetStyle(window, GwlStyle);
+        style &= ~WsPopup;
+        style |= WsCaption | WsThickFrame | WsMinimizeBox | WsMaximizeBox | WsSystemMenu;
+        SetStyle(window, GwlStyle, style);
+
+        int horizontalMargin = Math.Min(80, Math.Max(20, bounds.Width / 12));
+        int verticalMargin = Math.Min(60, Math.Max(20, bounds.Height / 12));
+        int width = Math.Max(640, bounds.Width - horizontalMargin * 2);
+        int height = Math.Max(480, bounds.Height - verticalMargin * 2);
+        ShowWindow(window, SwRestore);
+        SetWindowPos(window, HwndNotTopmost,
+            bounds.X + horizontalMargin,
+            bounds.Y + verticalMargin,
+            width,
+            height,
+            SwpFrameChanged | SwpShowWindow);
+        BringWindowToTop(window);
+        SetForegroundWindow(window);
+    }
+
+    internal static void SendF11(IntPtr window)
+    {
+        ShowWindow(window, SwRestore);
+        ActivateWindow(window);
+        Thread.Sleep(120);
+        Input[] inputs = new Input[2];
+        inputs[0].Type = InputKeyboard;
+        inputs[0].Data.Keyboard.VirtualKey = VirtualKeyF11;
+        inputs[1].Type = InputKeyboard;
+        inputs[1].Data.Keyboard.VirtualKey = VirtualKeyF11;
+        inputs[1].Data.Keyboard.Flags = KeyEventKeyUp;
+        uint sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(Input)));
+        if (sent != inputs.Length)
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Edge에 F11 입력을 보내지 못했습니다.");
+    }
+
     internal static void ShowCompact(IntPtr window, Rectangle bounds)
     {
         long style = GetStyle(window, GwlStyle);
@@ -637,6 +802,25 @@ internal static class NativeWindow
     {
         if (IntPtr.Size == 8) SetWindowLongPtr64(window, index, new IntPtr(style));
         else SetWindowLong32(window, index, unchecked((int)style));
+    }
+
+    private static void ActivateWindow(IntPtr window)
+    {
+        uint processId;
+        uint targetThread = GetWindowThreadProcessId(window, out processId);
+        uint currentThread = GetCurrentThreadId();
+        bool attached = targetThread != 0 && targetThread != currentThread &&
+                        AttachThreadInput(currentThread, targetThread, true);
+        try
+        {
+            BringWindowToTop(window);
+            SetForegroundWindow(window);
+            SetFocus(window);
+        }
+        finally
+        {
+            if (attached) AttachThreadInput(currentThread, targetThread, false);
+        }
     }
 }
 

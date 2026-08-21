@@ -283,20 +283,29 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
 
   const collapseKiosk = async () => {
     collapseRequestedRef.current = true;
-    setDedicatedWindowTitle(true);
-    setIsCollapsed(true);
 
     if (dedicatedWindow) {
       if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
       if (nativeLauncher) {
         signalNativeLauncher('collapse');
+        // 네이티브 창이 축소를 시작하기 전에 전체 화면용 제어 버튼이 크게
+        // 렌더링되지 않도록 아주 짧게 늦춰 작은 창에서 바로 표시합니다.
+        window.setTimeout(() => {
+          setDedicatedWindowTitle(true);
+          setIsCollapsed(true);
+        }, 160);
         return;
       }
+      setDedicatedWindowTitle(true);
+      setIsCollapsed(true);
       const bounds = getAvailableScreenBounds();
       window.resizeTo(360, 180);
       window.moveTo(bounds.left + Math.max(0, bounds.width - 360), bounds.top + Math.max(0, Math.round((bounds.height - 180) / 2)));
       return;
     }
+
+    setDedicatedWindowTitle(true);
+    setIsCollapsed(true);
 
     const pictureInPictureApi = (window as WindowWithDocumentPictureInPicture).documentPictureInPicture;
     const pictureInPictureRequest = pictureInPictureApi?.requestWindow({ width: 360, height: 145 });
