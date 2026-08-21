@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -16,8 +15,8 @@ using Microsoft.Win32;
 [assembly: AssemblyCompany("공공의료지원과")]
 [assembly: AssemblyProduct("공공의료지원과 전광판")]
 [assembly: AssemblyCopyright("Copyright © 2026")]
-[assembly: AssemblyVersion("2.2.0.0")]
-[assembly: AssemblyFileVersion("2.2.0.0")]
+[assembly: AssemblyVersion("2.3.1.0")]
+[assembly: AssemblyFileVersion("2.3.1.0")]
 
 internal static class Program
 {
@@ -157,12 +156,42 @@ internal static class KioskInstallation
             catch (WaitHandleCannotBeOpenedException)
             {
             }
+
+            // 이전 버전이 오류 MessageBox에서 멈춘 경우 이벤트를 처리할 수 없으므로
+            // 설치된 경로의 런처 프로세스만 종료해 새 파일로 확실히 교체합니다.
+            StopInstalledLauncherProcesses();
         }
 
         File.Copy(sourcePath, InstalledExecutablePath, true);
         EnsureRegistration();
         CreateShortcuts();
         KioskLog.Write("Native launcher installed from " + sourcePath);
+    }
+
+    private static void StopInstalledLauncherProcesses()
+    {
+        string processName = Path.GetFileNameWithoutExtension(InstalledExecutablePath);
+        Process[] processes = Process.GetProcessesByName(processName);
+        for (int index = 0; index < processes.Length; index++)
+        {
+            using (Process process = processes[index])
+            {
+                if (process.Id == Process.GetCurrentProcess().Id) continue;
+                try
+                {
+                    string runningPath = process.MainModule == null ? String.Empty : process.MainModule.FileName;
+                    if (!String.Equals(
+                        Path.GetFullPath(runningPath),
+                        Path.GetFullPath(InstalledExecutablePath),
+                        StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    process.Kill();
+                    process.WaitForExit(1500);
+                }
+                catch (InvalidOperationException) { }
+                catch (System.ComponentModel.Win32Exception) { }
+            }
+        }
     }
 
     internal static void EnsureRegistration()
@@ -591,8 +620,7 @@ internal static class NativeWindow
     private const int SwRestore = 9;
     private const uint SwpFrameChanged = 0x0020;
     private const uint SwpShowWindow = 0x0040;
-    private const uint InputKeyboard = 1;
-    private const ushort VirtualKeyF11 = 0x7A;
+    private const byte VirtualKeyF11 = 0x7A;
     private const uint KeyEventKeyUp = 0x0002;
     private static readonly IntPtr HwndTopmost = new IntPtr(-1);
     private static readonly IntPtr HwndNotTopmost = new IntPtr(-2);
@@ -604,30 +632,6 @@ internal static class NativeWindow
         internal int Top;
         internal int Right;
         internal int Bottom;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct Input
-    {
-        internal uint Type;
-        internal InputUnion Data;
-    }
-
-    [StructLayout(LayoutKind.Explicit)]
-    private struct InputUnion
-    {
-        [FieldOffset(0)]
-        internal KeyboardInput Keyboard;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct KeyboardInput
-    {
-        internal ushort VirtualKey;
-        internal ushort ScanCode;
-        internal uint Flags;
-        internal uint Time;
-        internal UIntPtr ExtraInfo;
     }
 
     [DllImport("user32.dll")]
@@ -678,8 +682,8 @@ internal static class NativeWindow
     [DllImport("user32.dll")]
     private static extern bool AttachThreadInput(uint attachThread, uint attachToThread, bool attach);
 
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern uint SendInput(uint inputCount, Input[] inputs, int inputSize);
+    [DllImport("user32.dll")]
+    private static extern void keybd_event(byte virtualKey, byte scanCode, uint flags, UIntPtr extraInfo);
 
     [DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr window, out Rect rectangle);
@@ -762,15 +766,10 @@ internal static class NativeWindow
         ShowWindow(window, SwRestore);
         ActivateWindow(window);
         Thread.Sleep(120);
-        Input[] inputs = new Input[2];
-        inputs[0].Type = InputKeyboard;
-        inputs[0].Data.Keyboard.VirtualKey = VirtualKeyF11;
-        inputs[1].Type = InputKeyboard;
-        inputs[1].Data.Keyboard.VirtualKey = VirtualKeyF11;
-        inputs[1].Data.Keyboard.Flags = KeyEventKeyUp;
-        uint sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(Input)));
-        if (sent != inputs.Length)
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "Edge에 F11 입력을 보내지 못했습니다.");
+        // SendInput은 일부 Edge/보안 환경에서 UIPI에 의해 0을 반환합니다.
+        // 반환값 때문에 실행기를 종료하지 않는 키 이벤트 방식으로 F11을 전달합니다.
+        keybd_event(VirtualKeyF11, 0, 0, UIntPtr.Zero);
+        keybd_event(VirtualKeyF11, 0, KeyEventKeyUp, UIntPtr.Zero);
     }
 
     internal static void ShowCompact(IntPtr window, Rectangle bounds)
