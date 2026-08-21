@@ -16,8 +16,8 @@ using Microsoft.Win32;
 [assembly: AssemblyCompany("공공의료지원과")]
 [assembly: AssemblyProduct("공공의료지원과 전광판")]
 [assembly: AssemblyCopyright("Copyright © 2026")]
-[assembly: AssemblyVersion("4.1.2.0")]
-[assembly: AssemblyFileVersion("4.1.2.0")]
+[assembly: AssemblyVersion("4.1.3.0")]
+[assembly: AssemblyFileVersion("4.1.3.0")]
 
 internal static class Program
 {
@@ -165,7 +165,7 @@ internal static class KioskInstallation
         DeleteLegacyFiles();
         EnsureRegistration();
         CreateShortcuts();
-        KioskLog.Write("Launcher 4.1.2 installed from " + sourcePath);
+        KioskLog.Write("Launcher 4.1.3 installed from " + sourcePath);
     }
 
     internal static void EnsureRegistration()
@@ -391,6 +391,7 @@ internal sealed class KioskApplicationContext : ApplicationContext, IDisposable
     private bool hasAppliedState;
     private IntPtr edgeWindow;
     private bool launchRequested;
+    private bool edgeAttachedOnce;
     private DateTime launchStarted;
     private DateTime lastWindowSearch = DateTime.MinValue;
     private string handledWebCommand = String.Empty;
@@ -449,11 +450,24 @@ internal sealed class KioskApplicationContext : ApplicationContext, IDisposable
             edgeWindow = WindowFinder.FindDedicatedKioskWindow(KioskPaths.EdgeProfileDirectory);
             if (edgeWindow != IntPtr.Zero)
             {
+                edgeAttachedOnce = true;
                 hasAppliedState = false;
                 KioskLog.Write("Dedicated Edge attached: hwnd=" + edgeWindow.ToInt64());
             }
             else
             {
+                if (edgeAttachedOnce)
+                {
+                    KioskLog.Write("Dedicated Edge was closed by the user; launcher exits without reopening it");
+                    ExitApplication();
+                    return;
+                }
+                if (launchRequested && (DateTime.UtcNow - launchStarted).TotalSeconds >= 15)
+                {
+                    KioskLog.Write("Dedicated Edge startup timed out; launcher exits without retrying");
+                    ExitApplication();
+                    return;
+                }
                 StartEdgeIfNeeded();
                 return;
             }
@@ -465,7 +479,9 @@ internal sealed class KioskApplicationContext : ApplicationContext, IDisposable
 
     private void StartEdgeIfNeeded()
     {
-        if (launchRequested && (DateTime.UtcNow - launchStarted).TotalSeconds < 30) return;
+        // A single user action may launch Edge only once. If Edge is closed or startup fails,
+        // OnTick exits this launcher instead of reopening windows in the background.
+        if (launchRequested) return;
         launchRequested = true;
         launchStarted = DateTime.UtcNow;
         string edge = EdgeLocator.Find();
