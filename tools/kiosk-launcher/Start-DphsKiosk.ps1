@@ -58,6 +58,18 @@ public static class DphsKioskNativeWindow
     [DllImport("user32.dll")]
     public static extern bool IsWindow(IntPtr hWnd);
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+
     private static long GetStyle(IntPtr hWnd)
     {
         return IntPtr.Size == 8 ? GetWindowLongPtr64(hWnd, GWL_STYLE).ToInt64() : GetWindowLong32(hWnd, GWL_STYLE);
@@ -70,6 +82,26 @@ public static class DphsKioskNativeWindow
     }
 
     public static long CaptureStyle(IntPtr hWnd) { return GetStyle(hWnd); }
+
+    public static bool IsBorderlessAtBounds(IntPtr hWnd, Rectangle bounds)
+    {
+        long style = GetStyle(hWnd);
+        if ((style & (WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU)) != 0) return false;
+        RECT rect;
+        if (!GetWindowRect(hWnd, out rect)) return false;
+        return Math.Abs(rect.Left - bounds.X) <= 2
+            && Math.Abs(rect.Top - bounds.Y) <= 2
+            && Math.Abs((rect.Right - rect.Left) - bounds.Width) <= 2
+            && Math.Abs((rect.Bottom - rect.Top) - bounds.Height) <= 2;
+    }
+
+    public static bool IsCompactWindow(IntPtr hWnd)
+    {
+        RECT rect;
+        return GetWindowRect(hWnd, out rect)
+            && rect.Right - rect.Left <= 500
+            && rect.Bottom - rect.Top <= 320;
+    }
 
     public static void ShowBorderless(IntPtr hWnd, Rectangle bounds)
     {
@@ -207,6 +239,17 @@ try {
     if ($openEvent.WaitOne(500)) {
       Show-KioskWindow
       Write-KioskLog 'Kiosk expanded'
+    }
+    else {
+      $kioskProcess = Get-Process -Name msedge -ErrorAction SilentlyContinue |
+        Where-Object { $_.MainWindowHandle -eq $script:kioskHandle } |
+        Select-Object -First 1
+      $isController = $kioskProcess -and $kioskProcess.MainWindowTitle -like '*전광판 제어*'
+      $isCompact = [DphsKioskNativeWindow]::IsCompactWindow($script:kioskHandle)
+      if (-not $isController -and -not $isCompact -and -not [DphsKioskNativeWindow]::IsBorderlessAtBounds($script:kioskHandle, $script:targetScreen.Bounds)) {
+        [DphsKioskNativeWindow]::ShowBorderless($script:kioskHandle, $script:targetScreen.Bounds)
+        Write-KioskLog 'Kiosk fullscreen state restored'
+      }
     }
   }
   Write-KioskLog 'Kiosk window closed; launcher stopped'

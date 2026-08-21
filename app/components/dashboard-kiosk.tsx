@@ -146,7 +146,7 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
     // `window.open(..., 'fullscreen')`을 지원하지 않는 환경에서도 사이트에
     // 자동 전체 화면 권한이 부여되어 있다면 바로 전체 화면으로 전환합니다.
     if (!document.fullscreenElement) {
-      void document.documentElement.requestFullscreen?.().catch(() => undefined);
+      void document.documentElement.requestFullscreen?.({ navigationUI: 'hide' }).catch(() => undefined);
     }
     return () => { document.title = previousTitle; };
   }, [dedicatedWindow]);
@@ -316,24 +316,23 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
       setIsCollapsed(false);
       window.focus();
 
-      // 설치형 실행기에는 복원 신호도 함께 보내 작업표시줄이나 브라우저
-      // 프레임이 남지 않는 독립 전체 화면 상태를 다시 고정합니다.
-      signalNativeFullscreenRestore();
-
       // 접힌 전용 창 안에서 누른 버튼/F8의 사용자 동작을 바로 사용해야
       // 브라우저가 전체 화면 요청을 허용할 가능성이 가장 높습니다.
       try {
         await document.documentElement.requestFullscreen?.({ navigationUI: 'hide' });
-        return;
+        if (document.fullscreenElement) return;
       } catch {
-        // 전체 화면이 정책상 제한된 브라우저에서는 작업 영역을 꽉 채우는
-        // 독립 창으로 복원해 전광판 사용 흐름이 끊기지 않게 합니다.
-        const bounds = getAvailableScreenBounds();
-        window.moveTo(bounds.left, bounds.top);
-        window.resizeTo(bounds.width, bounds.height);
-        window.focus();
-        return;
+        // 아래의 설치형 실행기/창 크기 복원 경로로 계속 진행합니다.
       }
+
+      // 브라우저 전체 화면이 제한된 경우에만 설치형 실행기에 복원 신호를
+      // 보내 사용자 클릭 권한을 전체 화면 요청이 가장 먼저 사용하게 합니다.
+      signalNativeFullscreenRestore();
+      const bounds = getAvailableScreenBounds();
+      window.moveTo(bounds.left, bounds.top);
+      window.resizeTo(bounds.width, bounds.height);
+      window.focus();
+      return;
     }
     setIsCollapsed(false);
     window.focus();
@@ -401,10 +400,10 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
   }
 
   return (
-    <div className="fixed inset-0 z-[400] overflow-hidden bg-[#071022] text-white">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(37,99,235,0.28),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(124,58,237,0.18),transparent_30%)]" />
-      <div className="relative flex h-full flex-col p-3 sm:p-5 lg:p-7 2xl:p-9">
-        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-white/10 pb-3 lg:pb-4">
+    <div className="fixed inset-0 z-[400] overflow-hidden bg-[#050b18] text-white">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(37,99,235,0.24),transparent_32%),radial-gradient(circle_at_bottom_left,rgba(124,58,237,0.16),transparent_28%)]" />
+      <div className="relative flex h-full flex-col p-3 sm:p-5 lg:p-6 2xl:p-7">
+        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-white/20 pb-3 lg:pb-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-blue-300"><MonitorUp size={18} /><span className="text-[10px] font-black tracking-[0.18em] lg:text-xs">공공의료지원과 공유 현황</span></div>
             <h1 className="mt-1.5 truncate text-2xl font-black tracking-tight sm:text-3xl lg:text-4xl 2xl:text-5xl">{now.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}</h1>
@@ -416,13 +415,13 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
                 <span key={now.getSeconds()} className="kiosk-second-tick inline-block min-w-[1.45em] text-lg text-blue-200 lg:text-2xl 2xl:text-3xl">:{String(now.getSeconds()).padStart(2, '0')}</span>
               </p>
             </div>
-            {!isFullscreen && <button onClick={() => void document.documentElement.requestFullscreen?.()} aria-label="전체 화면" title="전체 화면" className="rounded-xl bg-white/10 p-2.5 text-slate-200 hover:bg-white/20"><MonitorUp size={18} /></button>}
+            {!isFullscreen && !nativeLauncher && <button onClick={() => void document.documentElement.requestFullscreen?.({ navigationUI: 'hide' })} aria-label="전체 화면" title="전체 화면" className="rounded-xl border border-blue-300/30 bg-blue-500/20 p-2.5 text-blue-100 hover:bg-blue-500/35"><MonitorUp size={18} /></button>}
             <button onClick={() => void collapseKiosk()} aria-label="전광판 접기" title="전광판 접기 (F8)" className="flex items-center gap-1.5 rounded-xl bg-blue-500/15 p-2.5 text-blue-200 transition-colors hover:bg-blue-600 hover:text-white"><Minimize2 size={18} /><span className="hidden text-[10px] font-black lg:inline">F8</span></button>
             <button onClick={closeKiosk} aria-label="전광판 닫기" className="rounded-xl bg-white/10 p-2.5 text-slate-200 hover:bg-red-500"><X size={18} /></button>
           </div>
         </header>
 
-        <main className="grid min-h-0 flex-1 gap-2.5 overflow-y-auto pt-3 sm:gap-3 lg:grid-cols-12 lg:grid-rows-[minmax(0,1.25fr)_minmax(0,0.75fr)] lg:gap-3 lg:overflow-hidden lg:pt-4 2xl:gap-4">
+        <main className="grid min-h-0 flex-1 gap-3 overflow-y-auto pt-3 lg:grid-cols-12 lg:grid-rows-[minmax(0,1.25fr)_minmax(0,0.75fr)] lg:gap-4 lg:overflow-hidden lg:pt-4">
           <Panel title="오늘 일정" count={data.today.length} breakdown={getScheduleBreakdown(data.today)} tone="blue" className="lg:col-span-3">
             <ScheduleList items={data.today} empty="오늘 등록된 일정이 없습니다." />
           </Panel>
@@ -452,23 +451,24 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
   );
 }
 
-const toneClasses = {
-  blue: 'bg-blue-500/20 text-blue-300',
-  violet: 'bg-violet-500/20 text-violet-300',
-  red: 'bg-red-500/15 text-red-300',
-  emerald: 'bg-emerald-500/15 text-emerald-300',
-  amber: 'bg-amber-400/15 text-amber-300',
+const toneStyles = {
+  blue: { panel: 'border-blue-400/35 bg-[#101c34]', text: 'text-blue-300', badge: 'border-blue-400/30 bg-blue-500/25 text-blue-100', chip: 'border-blue-400/20 bg-blue-500/15 text-blue-100' },
+  violet: { panel: 'border-violet-400/35 bg-[#171a38]', text: 'text-violet-300', badge: 'border-violet-400/30 bg-violet-500/25 text-violet-100', chip: 'border-violet-400/20 bg-violet-500/15 text-violet-100' },
+  red: { panel: 'border-rose-400/35 bg-[#24172a]', text: 'text-rose-300', badge: 'border-rose-400/30 bg-rose-500/25 text-rose-100', chip: 'border-rose-400/20 bg-rose-500/15 text-rose-100' },
+  emerald: { panel: 'border-emerald-400/35 bg-[#10252b]', text: 'text-emerald-300', badge: 'border-emerald-400/30 bg-emerald-500/25 text-emerald-100', chip: 'border-emerald-400/20 bg-emerald-500/15 text-emerald-100' },
+  amber: { panel: 'border-amber-300/35 bg-[#29251c]', text: 'text-amber-300', badge: 'border-amber-300/30 bg-amber-400/25 text-amber-100', chip: 'border-amber-300/20 bg-amber-400/15 text-amber-100' },
 };
 
-function Panel({ title, count, breakdown, tone, icon, className = '', children }: { title: string; count: number; breakdown?: ScheduleBreakdownItem[]; tone: keyof typeof toneClasses; icon?: React.ReactNode; className?: string; children: React.ReactNode }) {
+function Panel({ title, count, breakdown, tone, icon, className = '', children }: { title: string; count: number; breakdown?: ScheduleBreakdownItem[]; tone: keyof typeof toneStyles; icon?: React.ReactNode; className?: string; children: React.ReactNode }) {
+  const style = toneStyles[tone];
   return (
-    <section className={`flex min-h-0 flex-col rounded-[20px] border border-white/10 bg-white/[0.06] p-3 backdrop-blur-sm sm:p-4 lg:rounded-[24px] lg:p-5 ${className}`}>
-      <div className="mb-2 flex shrink-0 items-center gap-2">{icon && <span className={toneClasses[tone].split(' ').at(-1)}>{icon}</span>}<h2 className="text-base font-black sm:text-lg lg:text-xl 2xl:text-2xl">{title}</h2><span className={`ml-auto rounded-lg px-2.5 py-1 text-[10px] font-black lg:text-xs ${toneClasses[tone]}`}>전체 {count}건</span></div>
+    <section className={`flex min-h-0 flex-col rounded-[20px] border-2 p-3 shadow-[0_18px_45px_rgba(0,0,0,0.2)] sm:p-4 lg:rounded-[24px] lg:p-5 ${style.panel} ${className}`}>
+      <div className="mb-2.5 flex shrink-0 items-center gap-2 border-b border-white/10 pb-2.5">{icon ? <span className={style.text}>{icon}</span> : <span className={`h-5 w-1 rounded-full ${style.badge.split(' ')[1]}`} />}<h2 className="text-base font-black tracking-tight sm:text-lg lg:text-xl 2xl:text-2xl">{title}</h2><span className={`ml-auto rounded-lg border px-2.5 py-1 text-[10px] font-black lg:text-xs ${style.badge}`}>전체 {count}건</span></div>
       {breakdown && (
-        <div className="mb-2.5 grid shrink-0 grid-flow-col auto-cols-fr gap-1 lg:mb-3">
+        <div className="mb-2.5 grid shrink-0 grid-flow-col auto-cols-fr gap-1.5 lg:mb-3">
           {breakdown.map((item) => (
-            <div key={`${title}-${item.label}`} className={`flex min-w-0 items-center justify-center gap-1 rounded-lg bg-white/[0.055] px-1.5 py-1 text-[8px] font-black ring-1 ring-inset ring-white/[0.07] lg:text-[9px] ${item.count === 0 ? 'text-slate-600' : 'text-slate-300'}`}>
-              <span className="truncate">{item.label}</span><strong className={item.count === 0 ? 'text-slate-600' : toneClasses[tone].split(' ').at(-1)}>{item.count}</strong>
+            <div key={`${title}-${item.label}`} className={`flex min-w-0 items-center justify-center gap-1 rounded-lg border px-1.5 py-1 text-[8px] font-black lg:text-[9px] ${item.count === 0 ? 'border-white/5 bg-black/10 text-slate-600' : style.chip}`}>
+              <span className="truncate">{item.label}</span><strong className={item.count === 0 ? 'text-slate-600' : 'text-white'}>{item.count}</strong>
             </div>
           ))}
         </div>
@@ -497,14 +497,25 @@ function ScheduleList({ items, empty, showDate = false, allowColumns = false }: 
 }
 
 function ScheduleRow({ schedule, showDate = false }: { schedule: KioskSchedule; showDate?: boolean }) {
+  const category = getScheduleCategory(schedule);
+  const categoryStyle = {
+    general: { label: '일반', badge: 'bg-blue-400/15 text-blue-200 ring-blue-300/20', icon: 'bg-blue-500/20 text-blue-200' },
+    internal: { label: '내부일정', badge: 'bg-cyan-400/15 text-cyan-200 ring-cyan-300/20', icon: 'bg-cyan-500/20 text-cyan-200' },
+    business_trip: { label: '출장', badge: 'bg-orange-400/15 text-orange-200 ring-orange-300/20', icon: 'bg-orange-500/20 text-orange-200' },
+    meeting: { label: '회의', badge: 'bg-violet-400/15 text-violet-200 ring-violet-300/20', icon: 'bg-violet-500/20 text-violet-200' },
+    leave: { label: '휴가', badge: 'bg-amber-400/15 text-amber-200 ring-amber-300/20', icon: 'bg-amber-500/20 text-amber-200' },
+  }[category];
   return (
-    <div className="flex min-h-0 flex-1 items-center gap-3 rounded-xl border border-white/10 bg-slate-950/25 px-3 py-2 lg:rounded-2xl lg:px-4">
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-500/15 text-blue-300 lg:h-9 lg:w-9">{schedule.is_urgent ? <Siren size={16} /> : <CalendarDays size={16} />}</span>
+    <div className="flex min-h-0 flex-1 items-center gap-3 rounded-xl border border-white/15 bg-[#071126]/75 px-3 py-2 shadow-sm lg:rounded-2xl lg:px-4">
+      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${schedule.is_urgent ? 'bg-rose-500/25 text-rose-200' : categoryStyle.icon} lg:h-9 lg:w-9`}>{schedule.is_urgent ? <Siren size={16} /> : <CalendarDays size={16} />}</span>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-xs font-black sm:text-sm lg:text-base 2xl:text-lg">{cleanTitle(schedule.title)}</p>
+        <div className="flex items-center gap-2">
+          <p className="min-w-0 flex-1 truncate text-xs font-black sm:text-sm lg:text-base 2xl:text-lg">{cleanTitle(schedule.title)}</p>
+          <span className={`shrink-0 rounded-md px-1.5 py-1 text-[8px] font-black ring-1 ring-inset lg:text-[9px] ${categoryStyle.badge}`}>{categoryStyle.label}</span>
+        </div>
         <div className="mt-0.5 flex items-center gap-2">
-          {showDate && <span className="shrink-0 text-xs font-black tracking-tight text-violet-200 lg:text-sm 2xl:text-base">{formatShortDate(schedule.date)}</span>}
-          <span className="flex min-w-0 items-center gap-1 truncate text-[9px] font-bold text-slate-400 lg:text-[10px]"><Clock3 size={10} className="shrink-0" />{formatTime(schedule)}</span>
+          {showDate && <span className="shrink-0 text-xs font-black tracking-tight text-white lg:text-sm 2xl:text-base">{formatShortDate(schedule.date)}</span>}
+          <span className="flex min-w-0 items-center gap-1 truncate text-[9px] font-bold text-slate-300 lg:text-[10px]"><Clock3 size={10} className="shrink-0" />{formatTime(schedule)}</span>
         </div>
       </div>
     </div>
@@ -513,14 +524,17 @@ function ScheduleRow({ schedule, showDate = false }: { schedule: KioskSchedule; 
 
 function CompactList({ items, empty }: { items: KioskSchedule[]; empty: string }) {
   if (items.length === 0) return <Empty label={empty} />;
-  return <div className="grid h-full min-h-0 gap-1 overflow-hidden lg:gap-1.5" style={{ gridTemplateRows: `repeat(${items.length}, minmax(0, 1fr))` }}>{items.map((schedule) => <div key={schedule.id} className="flex min-h-0 items-center gap-2 rounded-xl bg-slate-950/25 px-3 py-1.5"><span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400" /><span className="min-w-0 flex-1 truncate text-xs font-black lg:text-sm">{cleanTitle(schedule.title)}</span><span className="shrink-0 text-[9px] font-bold text-slate-400">{schedule.date.slice(5).replace('-', '.')}</span></div>)}</div>;
+  return <div className="grid h-full min-h-0 gap-1 overflow-hidden lg:gap-1.5" style={{ gridTemplateRows: `repeat(${items.length}, minmax(0, 1fr))` }}>{items.map((schedule) => {
+    const categoryLabel = ({ general: '일반', internal: '내부', business_trip: '출장', meeting: '회의', leave: '휴가' })[getScheduleCategory(schedule)];
+    return <div key={schedule.id} className="flex min-h-0 items-center gap-2 rounded-xl border border-white/10 bg-[#071126]/70 px-3 py-1.5"><span className="rounded-md bg-white/10 px-1.5 py-1 text-[8px] font-black text-slate-200">{categoryLabel}</span><span className="min-w-0 flex-1 truncate text-xs font-black text-white lg:text-sm">{cleanTitle(schedule.title)}</span><span className="shrink-0 text-[9px] font-bold text-slate-300">{schedule.date.slice(5).replace('-', '.')}</span></div>;
+  })}</div>;
 }
 
 function AbsenceList({ items }: { items: KioskSchedule[] }) {
   if (items.length === 0) return <Empty label="예정된 휴가·조퇴·외출이 없습니다." />;
-  return <div className="grid h-full min-h-0 gap-1 overflow-hidden lg:gap-1.5" style={{ gridTemplateRows: `repeat(${items.length}, minmax(0, 1fr))` }}>{items.map((schedule) => <div key={schedule.id} className="flex min-h-0 items-center gap-2 rounded-xl bg-amber-300/10 px-3 py-1.5"><span className="rounded-md bg-amber-300/15 px-2 py-1 text-[9px] font-black text-amber-300">{absenceLabel(schedule)}</span><span className="shrink-0 text-xs font-black tracking-tight text-amber-100 lg:text-sm 2xl:text-base">{schedule.end_date && schedule.end_date > schedule.date ? `${formatAbsenceDate(schedule.date)}–${formatAbsenceDate(schedule.end_date)}` : formatAbsenceDate(schedule.date)}</span><span className="min-w-0 flex-1 truncate text-xs font-black text-white lg:text-sm 2xl:text-base">{cleanTitle(schedule.title)}</span></div>)}</div>;
+  return <div className="grid h-full min-h-0 gap-1 overflow-hidden lg:gap-1.5" style={{ gridTemplateRows: `repeat(${items.length}, minmax(0, 1fr))` }}>{items.map((schedule) => <div key={schedule.id} className="flex min-h-0 items-center gap-2 rounded-xl border border-amber-200/15 bg-amber-950/35 px-3 py-1.5"><span className="rounded-md bg-amber-300/20 px-2 py-1 text-[9px] font-black text-amber-200 ring-1 ring-inset ring-amber-200/20">{absenceLabel(schedule)}</span><span className="shrink-0 text-xs font-black tracking-tight text-amber-50 lg:text-sm 2xl:text-base">{schedule.end_date && schedule.end_date > schedule.date ? `${formatAbsenceDate(schedule.date)}–${formatAbsenceDate(schedule.end_date)}` : formatAbsenceDate(schedule.date)}</span><span className="min-w-0 flex-1 truncate text-xs font-black text-white lg:text-sm 2xl:text-base">{cleanTitle(schedule.title)}</span></div>)}</div>;
 }
 
 function Empty({ label }: { label: string }) {
-  return <div className="flex h-full min-h-16 items-center justify-center rounded-xl bg-white/[0.03] px-3 text-center text-[10px] font-bold text-slate-500 lg:text-xs">{label}</div>;
+  return <div className="flex h-full min-h-16 items-center justify-center rounded-xl border border-white/10 bg-black/15 px-3 text-center text-[10px] font-bold text-slate-400 lg:text-xs">{label}</div>;
 }

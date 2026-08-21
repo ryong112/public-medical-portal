@@ -1277,12 +1277,9 @@ export default function IntegratedPortal() {
               
               {viewMode === 'dashboard' ? (
                 <SharedDashboard
-                  files={files}
                   schedules={schedules}
-                  messages={messages}
                   onChangeView={setViewMode}
                   onOpenChat={() => setIsChatOpen(true)}
-                  onOpenFile={handleDownload}
                   onOpenSchedule={setSelectedSchedule}
                   onToggleScheduleComplete={onToggleScheduleComplete}
                   onOpenAbsenceBoard={() => setIsAbsenceBoardOpen(true)}

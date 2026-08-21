@@ -4,7 +4,6 @@ import {
   BellRing,
   CalendarDays,
   Check,
-  FileText,
   FolderOpen,
   MessageCircle,
   Siren,
@@ -14,14 +13,6 @@ type DashboardView = 'files' | 'calendar' | 'external_calendar' | 'dashboard';
 type DailyScheduleFilter = 'all' | 'general' | 'internal' | 'business_trip' | 'meeting' | 'leave';
 type WeeklyScheduleFilter = Exclude<DailyScheduleFilter, 'leave'>;
 type ScheduleFilterCounts = Record<DailyScheduleFilter, number>;
-
-interface PortalFile {
-  id: number;
-  name: string;
-  url: string;
-  category: string;
-  created_at?: string;
-}
 
 interface Schedule {
   id: number;
@@ -47,31 +38,13 @@ interface AbsenceGroup {
   schedules: Schedule[];
 }
 
-interface Message {
-  id: number;
-  content: string;
-  created_at: string;
-}
-
 interface SharedDashboardProps {
-  files: PortalFile[];
   schedules: Schedule[];
-  messages: Message[];
   onChangeView: (view: DashboardView) => void;
   onOpenChat: () => void;
-  onOpenFile: (url: string, name: string) => void;
   onOpenSchedule: (schedule: Schedule) => void;
   onToggleScheduleComplete: (schedule: Schedule) => void;
   onOpenAbsenceBoard?: () => void;
-}
-
-interface ActivityItem {
-  id: string;
-  type: 'file' | 'schedule' | 'message';
-  title: string;
-  description: string;
-  createdAt: string;
-  onClick: () => void;
 }
 
 const toLocalDateKey = (date: Date) => {
@@ -79,22 +52,6 @@ const toLocalDateKey = (date: Date) => {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
-};
-
-const formatActivityTime = (value: string) => {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-
-  const now = new Date();
-  const diffMinutes = Math.max(0, Math.floor((now.getTime() - date.getTime()) / 60000));
-  if (diffMinutes < 1) return '방금 전';
-  if (diffMinutes < 60) return `${diffMinutes}분 전`;
-  if (diffMinutes < 1440) return `${Math.floor(diffMinutes / 60)}시간 전`;
-
-  return new Intl.DateTimeFormat('ko-KR', {
-    month: 'short',
-    day: 'numeric',
-  }).format(date);
 };
 
 const formatScheduleTime = (schedule: Schedule) => {
@@ -180,6 +137,16 @@ const getDailyScheduleCategory = (schedule: Schedule): Exclude<DailyScheduleFilt
   return 'general';
 };
 
+const scheduleCategoryStyles: Record<Exclude<DailyScheduleFilter, 'all'>, { label: string; accent: string; badge: string; icon: string }> = {
+  general: { label: '일반', accent: 'border-l-blue-500', badge: 'bg-blue-50 text-blue-700 ring-blue-100', icon: 'bg-blue-50 text-blue-600' },
+  internal: { label: '내부일정', accent: 'border-l-cyan-500', badge: 'bg-cyan-50 text-cyan-700 ring-cyan-100', icon: 'bg-cyan-50 text-cyan-600' },
+  business_trip: { label: '출장', accent: 'border-l-orange-500', badge: 'bg-orange-50 text-orange-700 ring-orange-100', icon: 'bg-orange-50 text-orange-600' },
+  meeting: { label: '회의', accent: 'border-l-violet-500', badge: 'bg-violet-50 text-violet-700 ring-violet-100', icon: 'bg-violet-50 text-violet-600' },
+  leave: { label: '휴가', accent: 'border-l-amber-500', badge: 'bg-amber-50 text-amber-700 ring-amber-100', icon: 'bg-amber-50 text-amber-600' },
+};
+
+const cleanScheduleTitle = (title: string) => title.replace(/^(?:회의|출장|내부일정|휴가|연차|조퇴|외출)\s*[)）]\s*/u, '').trim();
+
 const matchesDailyScheduleFilter = (schedule: Schedule, filter: DailyScheduleFilter) => filter === 'all' || getDailyScheduleCategory(schedule) === filter;
 
 const countScheduleCategories = (schedules: Schedule[], excludeAbsencesFromAll = false): ScheduleFilterCounts => {
@@ -249,12 +216,9 @@ const groupAbsenceSchedules = (schedules: Schedule[], minimumDate?: string, maxi
 };
 
 export default function SharedDashboard({
-  files,
   schedules,
-  messages,
   onChangeView,
   onOpenChat,
-  onOpenFile,
   onOpenSchedule,
   onToggleScheduleComplete,
   onOpenAbsenceBoard,
@@ -320,60 +284,12 @@ export default function SharedDashboard({
     early: monthlyAbsenceGroups.filter((group) => group.schedules.some((schedule) => getAbsenceTypeLabel(schedule) === '조퇴')).length,
     outing: monthlyAbsenceGroups.filter((group) => group.schedules.some((schedule) => getAbsenceTypeLabel(schedule) === '외출')).length,
   };
-  const recentFiles = [...files]
-    .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
-    .slice(0, 4);
   const summaryCards = [
     { label: 'TO DO LIST', value: pendingTodoCount, unit: '개', color: 'text-blue-600', icon: <Check size={18} />, items: todayTodoSchedules, categoryCounts: pendingTodoCategoryCounts, isTodoCard: true, completedValue: completedTodoCount, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[], todayAbsenceItems: [] as AbsenceGroup[], isWeeklyCard: false },
     { label: '진행 중인 공지사항', value: allUpcomingNotices.length, unit: '건', color: 'text-red-500', icon: <BellRing size={18} />, items: allUpcomingNotices, categoryCounts: noticeCategoryCounts, isTodoCard: false, completedValue: 0, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[], todayAbsenceItems: [] as AbsenceGroup[], isWeeklyCard: false },
     { label: '주간 일정', value: weeklyWorkSchedules.length, unit: '건', color: 'text-violet-600', icon: <CalendarDays size={18} />, items: filteredWeeklySchedules, categoryCounts: weeklyCategoryCounts, isTodoCard: false, completedValue: 0, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[], todayAbsenceItems: [] as AbsenceGroup[], isWeeklyCard: true },
     { label: '이번 달 휴가', value: monthlyAbsenceGroups.length, unit: '명', color: 'text-amber-500', icon: <CalendarDays size={18} />, items: [] as Schedule[], categoryCounts: countScheduleCategories(monthlyAbsenceSchedules), isTodoCard: false, completedValue: 0, isAbsenceCard: true, absenceItems: monthlyAbsenceGroups, todayAbsenceItems: todayAbsenceGroups, isWeeklyCard: false },
   ];
-
-  const activities: ActivityItem[] = [
-    ...files
-      .filter((file) => file.created_at)
-      .map((file) => ({
-        id: `file-${file.id}`,
-        type: 'file' as const,
-        title: file.name,
-        description: `${file.category}에 새 문서가 등록되었습니다.`,
-        createdAt: file.created_at as string,
-        onClick: () => onOpenFile(file.url, file.name),
-      })),
-    ...schedules
-      .filter((schedule) => schedule.created_at)
-      .map((schedule) => ({
-        id: `schedule-${schedule.id}`,
-        type: 'schedule' as const,
-        title: formatScheduleTitle(schedule),
-        description: `${formatScheduleDateRange(schedule)} 일정이 등록되었습니다.`,
-        createdAt: schedule.created_at as string,
-        onClick: () => onOpenSchedule(schedule),
-      })),
-    ...messages.map((message) => ({
-      id: `message-${message.id}`,
-      type: 'message' as const,
-      title: message.content,
-      description: '공유방에 새 메시지가 등록되었습니다.',
-      createdAt: message.created_at,
-      onClick: onOpenChat,
-    })),
-  ]
-    .filter((activity) => !Number.isNaN(new Date(activity.createdAt).getTime()))
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .slice(0, 10);
-
-  const activityIcon = {
-    file: <FileText size={16} />,
-    schedule: <CalendarDays size={16} />,
-    message: <MessageCircle size={16} />,
-  };
-  const activityColor = {
-    file: 'bg-blue-50 text-blue-600',
-    schedule: 'bg-violet-50 text-violet-600',
-    message: 'bg-amber-50 text-amber-600',
-  };
 
   const renderDailyFilters = (
     selectedFilter: DailyScheduleFilter,
@@ -388,7 +304,7 @@ export default function SharedDashboard({
           onClick={() => onSelect(filter.value)}
           aria-pressed={selectedFilter === filter.value}
           aria-label={`${filter.label} ${counts[filter.value]}건`}
-          className={`inline-flex h-7 shrink-0 items-center gap-1 rounded-lg border px-2 text-[9px] font-black transition-colors sm:text-[10px] ${selectedFilter === filter.value ? color === 'blue' ? 'border-blue-600 bg-blue-600 text-white shadow-sm' : 'border-violet-600 bg-violet-600 text-white shadow-sm' : `border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 ${counts[filter.value] === 0 ? 'opacity-50' : ''}`}`}
+          className={`inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border px-2.5 text-[9px] font-black transition-colors sm:text-[10px] ${selectedFilter === filter.value ? color === 'blue' ? 'border-blue-600 bg-blue-600 text-white shadow-sm' : 'border-violet-600 bg-violet-600 text-white shadow-sm' : counts[filter.value] > 0 ? color === 'blue' ? 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100' : 'border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100' : 'border-slate-200 bg-slate-50 text-slate-400'}`}
         >
           <span>{filter.label}</span>
           <span className={`min-w-4 rounded-md px-1 text-center text-[8px] tabular-nums sm:text-[9px] ${selectedFilter === filter.value ? 'bg-white/20 text-white' : 'bg-white text-slate-700 shadow-sm'}`}>{counts[filter.value]}</span>
@@ -397,10 +313,14 @@ export default function SharedDashboard({
     </div>
   );
 
-  const renderDailySchedule = (schedule: Schedule, isTomorrow = false) => (
+  const renderDailySchedule = (schedule: Schedule, isTomorrow = false) => {
+    const category = getDailyScheduleCategory(schedule);
+    const categoryStyle = scheduleCategoryStyles[category];
+    const categoryLabel = category === 'leave' ? getAbsenceTypeLabel(schedule) : categoryStyle.label;
+    return (
     <div
       key={schedule.id}
-      className={`group flex w-full items-center gap-2 rounded-xl border p-3 text-left transition-all sm:gap-3 sm:rounded-2xl sm:p-3.5 ${schedule.is_completed ? 'border-slate-100 bg-slate-50/70' : schedule.is_urgent ? 'border-red-200 bg-red-50/40 hover:border-red-300' : isTomorrow ? 'border-slate-100 hover:border-violet-200 hover:bg-violet-50/40' : 'border-slate-100 hover:border-blue-200 hover:bg-blue-50/50'}`}
+      className={`group flex w-full items-center gap-2 rounded-xl border border-l-4 p-3 text-left shadow-sm transition-all sm:gap-3 sm:rounded-2xl sm:p-3.5 ${categoryStyle.accent} ${schedule.is_completed ? 'border-slate-200 bg-slate-50/80' : schedule.is_urgent ? 'border-red-200 bg-red-50/50 hover:border-red-300' : isTomorrow ? 'border-violet-100 bg-white hover:border-violet-200 hover:bg-violet-50/50' : 'border-blue-100 bg-white hover:border-blue-200 hover:bg-blue-50/50'}`}
     >
       {schedule.is_todo ? (
         <button
@@ -411,14 +331,15 @@ export default function SharedDashboard({
           <Check size={15} strokeWidth={3} />
         </button>
       ) : (
-        <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${isTomorrow ? 'bg-violet-50 text-violet-500' : 'bg-blue-50 text-blue-500'}`}><CalendarDays size={15} /></span>
+        <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${categoryStyle.icon}`}><CalendarDays size={15} /></span>
       )}
       <button onClick={() => onOpenSchedule(schedule)} className="flex min-w-0 flex-1 items-center gap-2 text-left sm:gap-3">
         <div className={`w-11 shrink-0 text-[10px] font-black sm:w-16 sm:text-xs ${schedule.is_completed ? 'text-slate-400 line-through' : schedule.is_urgent ? 'text-red-600' : isTomorrow ? 'text-violet-600' : 'text-blue-600'}`}>{schedule.start_time ?? schedule.end_time ?? '미정'}</div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             {schedule.is_urgent && <Siren size={15} className="shrink-0 text-red-500" />}
-            <p className={`truncate text-xs font-black sm:text-sm ${schedule.is_completed ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{formatScheduleTitle(schedule)}</p>
+            <span className={`shrink-0 rounded-md px-1.5 py-1 text-[8px] font-black ring-1 ring-inset sm:text-[9px] ${categoryStyle.badge}`}>{categoryLabel}</span>
+            <p className={`truncate text-xs font-black sm:text-sm ${schedule.is_completed ? 'text-slate-400 line-through' : 'text-slate-900'}`}>{cleanScheduleTitle(schedule.title)}</p>
           </div>
           <p className={`mt-1 text-[11px] font-bold ${schedule.is_completed ? 'text-slate-300 line-through' : 'text-slate-400'}`}>{schedule.end_date && schedule.end_date > schedule.date ? `${formatScheduleDateRange(schedule)} · ` : ''}{formatScheduleTime(schedule)}</p>
         </div>
@@ -427,11 +348,12 @@ export default function SharedDashboard({
         <ArrowRight size={15} className="hidden text-slate-300 transition-transform group-hover:translate-x-1 sm:block" />
       </button>
     </div>
-  );
+    );
+  };
 
   return (
-    <div className="h-full overflow-y-auto pb-6 custom-scrollbar sm:pb-8">
-      <section className="relative overflow-hidden rounded-2xl bg-slate-950 px-5 py-6 text-white shadow-xl sm:rounded-[28px] sm:px-6 sm:py-7 lg:px-8 lg:py-8">
+    <div className="flex h-full min-h-0 flex-col overflow-y-auto pb-4 custom-scrollbar sm:pb-5">
+      <section className="relative shrink-0 overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 px-5 py-5 text-white shadow-xl sm:rounded-[28px] sm:px-6 sm:py-6 lg:px-8">
         <div className="absolute -right-20 -top-24 h-64 w-64 rounded-full bg-blue-500/20 blur-3xl" />
         <div className="absolute -bottom-24 left-1/3 h-56 w-56 rounded-full bg-violet-500/20 blur-3xl" />
         <div className="relative flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
@@ -471,9 +393,9 @@ export default function SharedDashboard({
         </div>
       </section>
 
-      <section className="mt-3 grid grid-cols-2 gap-2.5 sm:mt-5 sm:gap-3 lg:grid-cols-4">
+      <section className="mt-3 grid shrink-0 grid-cols-2 gap-2.5 sm:mt-4 sm:gap-3 lg:grid-cols-4">
         {summaryCards.map((item, index) => (
-          <div key={item.label} tabIndex={0} className="group relative rounded-2xl border border-slate-100 bg-white p-3 shadow-sm outline-none transition-all hover:z-30 hover:-translate-y-0.5 hover:border-slate-200 hover:shadow-lg focus:z-30 focus:border-blue-200 focus:ring-4 focus:ring-blue-50 sm:rounded-[22px] sm:p-4 lg:p-5">
+          <div key={item.label} tabIndex={0} className={`group relative rounded-2xl border-2 bg-white p-3 shadow-sm outline-none transition-all hover:z-30 hover:-translate-y-0.5 hover:shadow-lg focus:z-30 focus:ring-4 sm:rounded-[22px] sm:p-4 ${item.isTodoCard ? 'border-blue-100 focus:border-blue-300 focus:ring-blue-50' : item.isWeeklyCard ? 'border-violet-100 focus:border-violet-300 focus:ring-violet-50' : item.isAbsenceCard ? 'border-amber-100 focus:border-amber-300 focus:ring-amber-50' : 'border-red-100 focus:border-red-300 focus:ring-red-50'}`}>
             <div className={`mb-3 flex items-center gap-1.5 text-[10px] font-black sm:mb-4 sm:gap-2 sm:text-xs ${item.color}`}>
               {item.icon} {item.label}
               {item.isAbsenceCard && onOpenAbsenceBoard && <button onClick={onOpenAbsenceBoard} className="ml-auto rounded-lg bg-amber-50 px-2 py-1 text-[9px] font-black text-amber-700 transition-colors hover:bg-amber-100">현황표</button>}
@@ -486,7 +408,7 @@ export default function SharedDashboard({
                     onClick={() => setWeeklyFilter(filter.value)}
                     aria-pressed={weeklyFilter === filter.value}
                     aria-label={`${filter.label} ${weeklyCategoryCounts[filter.value]}건`}
-                    className={`inline-flex h-7 min-w-0 items-center justify-center gap-1 rounded-lg border px-1.5 text-[9px] font-black transition-colors sm:text-[10px] ${weeklyFilter === filter.value ? 'border-violet-600 bg-violet-600 text-white shadow-sm' : `border-violet-100 bg-violet-50 text-violet-600 hover:bg-violet-100 ${weeklyCategoryCounts[filter.value] === 0 ? 'opacity-50' : ''}`}`}
+                    className={`inline-flex h-8 min-w-0 items-center justify-center gap-1 rounded-lg border px-1.5 text-[9px] font-black transition-colors sm:text-[10px] ${weeklyFilter === filter.value ? 'border-violet-600 bg-violet-600 text-white shadow-sm' : weeklyCategoryCounts[filter.value] > 0 ? 'border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100' : 'border-slate-200 bg-slate-50 text-slate-400'}`}
                   >
                     <span className="truncate">{filter.value === 'internal' ? '내부' : filter.label}</span>
                     <span className={`min-w-4 rounded-md px-1 text-center text-[8px] tabular-nums ${weeklyFilter === filter.value ? 'bg-white/20 text-white' : 'bg-white text-violet-700'}`}>{weeklyCategoryCounts[filter.value]}</span>
@@ -497,7 +419,7 @@ export default function SharedDashboard({
             {!item.isWeeklyCard && !item.isAbsenceCard && (
               <div className="mb-3 grid grid-cols-3 gap-1.5">
                 {dailyScheduleFilters.slice(1).map((filter) => (
-                  <div key={`${item.label}-${filter.value}`} className={`inline-flex h-7 min-w-0 items-center justify-center gap-1 rounded-lg border border-slate-100 bg-slate-50 px-1.5 text-[9px] font-black text-slate-500 sm:text-[10px] ${item.categoryCounts[filter.value] === 0 ? 'opacity-45' : ''}`}>
+                  <div key={`${item.label}-${filter.value}`} className={`inline-flex h-8 min-w-0 items-center justify-center gap-1 rounded-lg border px-1.5 text-[9px] font-black sm:text-[10px] ${item.categoryCounts[filter.value] > 0 ? item.isTodoCard ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-red-200 bg-red-50 text-red-700' : 'border-slate-200 bg-slate-50 text-slate-400'}`}>
                     <span className="truncate">{filter.value === 'internal' ? '내부' : filter.label}</span>
                     <span className="min-w-4 rounded-md bg-white px-1 text-center text-[8px] tabular-nums text-slate-700">{item.categoryCounts[filter.value]}</span>
                   </div>
@@ -596,8 +518,8 @@ export default function SharedDashboard({
         ))}
       </section>
 
-      <section className="mt-3 grid gap-3 sm:mt-5 sm:gap-5 lg:grid-cols-[1.1fr_0.9fr]">
-        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm sm:rounded-[28px] sm:p-5 lg:p-6 2xl:p-7">
+      <section className="mt-3 grid min-h-[330px] flex-1 gap-3 sm:mt-4 sm:gap-4 lg:grid-cols-2">
+        <div className="flex min-h-0 flex-col rounded-2xl border-2 border-blue-100 bg-white p-4 shadow-sm sm:rounded-[28px] sm:p-5 lg:p-6">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.18em] text-blue-500">Today</p>
@@ -610,7 +532,7 @@ export default function SharedDashboard({
           </div>
 
           {todayWorkSchedules.length > 0 ? (
-            <div className="flex max-h-80 flex-col">
+            <div className="flex min-h-0 flex-1 flex-col">
               <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1 custom-scrollbar">
                 {todayWorkSchedules.map((schedule) => renderDailySchedule(schedule))}
               </div>
@@ -624,7 +546,7 @@ export default function SharedDashboard({
           )}
         </div>
 
-        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm sm:rounded-[28px] sm:p-5 lg:p-6 2xl:p-7">
+        <div className="flex min-h-0 flex-col rounded-2xl border-2 border-violet-100 bg-white p-4 shadow-sm sm:rounded-[28px] sm:p-5 lg:p-6">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.18em] text-violet-500">Tomorrow</p>
@@ -633,7 +555,7 @@ export default function SharedDashboard({
             {renderDailyFilters(tomorrowFilter, setTomorrowFilter, 'violet', tomorrowCategoryCounts)}
           </div>
           {tomorrowVisibleSchedules.length > 0 ? (
-            <div className="max-h-80 space-y-2 overflow-y-auto pr-1 custom-scrollbar">
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1 custom-scrollbar">
               {tomorrowVisibleSchedules.map((schedule) => renderDailySchedule(schedule, true))}
             </div>
           ) : (
@@ -643,53 +565,6 @@ export default function SharedDashboard({
               <button onClick={() => onChangeView('calendar')} className="mt-3 text-xs font-black text-violet-500">일정 추가</button>
             </div>
           )}
-        </div>
-      </section>
-
-      <section className="mt-3 grid gap-3 sm:mt-5 sm:gap-5 lg:grid-cols-[0.85fr_1.15fr]">
-        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm sm:rounded-[28px] sm:p-5 lg:p-6 2xl:p-7">
-          <div className="mb-5 flex items-center justify-between">
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-500">Documents</p>
-              <h3 className="mt-1 text-xl font-black text-slate-900">최근 문서</h3>
-            </div>
-            <button onClick={() => onChangeView('files')} className="flex items-center gap-1 text-xs font-black text-slate-400 hover:text-blue-600">
-              문서함 <ArrowRight size={14} />
-            </button>
-          </div>
-          <div className="space-y-2">
-            {recentFiles.length > 0 ? recentFiles.map((file) => (
-              <button key={file.id} onClick={() => onOpenFile(file.url, file.name)} className="group flex w-full items-center gap-3 rounded-2xl p-3 text-left transition-colors hover:bg-slate-50">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600"><FileText size={17} /></div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-black text-slate-800">{file.name}</p>
-                  <p className="mt-1 text-[10px] font-bold text-slate-400">{file.category}</p>
-                </div>
-                <ArrowRight size={14} className="text-slate-300 transition-transform group-hover:translate-x-1" />
-              </button>
-            )) : <p className="py-12 text-center text-sm font-bold text-slate-400">등록된 문서가 없습니다.</p>}
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm sm:rounded-[28px] sm:p-5 lg:p-6 2xl:p-7">
-          <div className="mb-5">
-            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-500">Live</p>
-            <h3 className="mt-1 text-xl font-black text-slate-900">최근 활동</h3>
-          </div>
-          <div className="space-y-1">
-            {activities.length > 0 ? activities.map((activity) => (
-              <button key={activity.id} onClick={activity.onClick} className="group flex w-full items-center gap-3 rounded-2xl p-3 text-left transition-colors hover:bg-slate-50">
-                <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${activityColor[activity.type]}`}>
-                  {activityIcon[activity.type]}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-black text-slate-800">{activity.title}</p>
-                  <p className="mt-1 truncate text-[10px] font-bold text-slate-400">{activity.description}</p>
-                </div>
-                <time className="shrink-0 text-[10px] font-black text-slate-300">{formatActivityTime(activity.createdAt)}</time>
-              </button>
-            )) : <p className="py-12 text-center text-sm font-bold text-slate-400">최근 활동이 없습니다.</p>}
-          </div>
         </div>
       </section>
 
