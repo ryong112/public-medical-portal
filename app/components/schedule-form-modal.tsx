@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { AlertTriangle, CalendarPlus, CalendarRange, ChevronDown, Clock3, RotateCcw, X } from 'lucide-react';
+import { AlertTriangle, Bell, CalendarPlus, CalendarRange, ChevronDown, Clock3, ListChecks, RotateCcw, Siren, X } from 'lucide-react';
 
 export type ScheduleType = 'meeting' | 'business_trip' | 'internal' | 'leave' | 'unclassified';
 export type AbsenceType = 'annual' | 'early' | 'outing';
@@ -427,6 +427,56 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
             </div>
           </div>
         )}
+
+        <div className="mt-4 grid grid-cols-3 gap-1.5 rounded-2xl border border-slate-100 bg-slate-50 p-1.5" aria-label="일정 표시 설정">
+          <button
+            type="button"
+            aria-pressed={isNotice}
+            title="이 일정을 공지사항에 추가합니다."
+            onClick={() => setIsNotice((current) => !current)}
+            className={`flex min-w-0 items-center justify-between gap-1 rounded-xl border px-2 py-2.5 transition-all ${isNotice ? 'border-violet-200 bg-violet-50 text-violet-700 shadow-sm' : 'border-transparent bg-white text-slate-500 hover:border-slate-200'}`}
+          >
+            <span className="flex min-w-0 items-center gap-1.5">
+              <Bell size={14} className="shrink-0" />
+              <span className="truncate text-[10px] font-black sm:text-[11px]">공지사항</span>
+            </span>
+            <span className={`relative h-4 w-7 shrink-0 rounded-full transition-colors ${isNotice ? 'bg-violet-600' : 'bg-slate-200'}`} aria-hidden="true">
+              <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white shadow-sm transition-transform ${isNotice ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+            </span>
+          </button>
+
+          <button
+            type="button"
+            aria-pressed={isTodo}
+            title="이 일정을 TO DO LIST에 추가합니다."
+            onClick={() => setIsTodo((current) => !current)}
+            className={`flex min-w-0 items-center justify-between gap-1 rounded-xl border px-2 py-2.5 transition-all ${isTodo ? 'border-blue-200 bg-blue-50 text-blue-700 shadow-sm' : 'border-transparent bg-white text-slate-500 hover:border-slate-200'}`}
+          >
+            <span className="flex min-w-0 items-center gap-1.5">
+              <ListChecks size={14} className="shrink-0" />
+              <span className="truncate text-[10px] font-black sm:text-[11px]">TO DO</span>
+            </span>
+            <span className={`relative h-4 w-7 shrink-0 rounded-full transition-colors ${isTodo ? 'bg-blue-600' : 'bg-slate-200'}`} aria-hidden="true">
+              <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white shadow-sm transition-transform ${isTodo ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+            </span>
+          </button>
+
+          <button
+            type="button"
+            aria-pressed={isUrgent}
+            title="브리핑과 공지사항에 긴급 표시를 추가합니다."
+            onClick={() => setIsUrgent((current) => !current)}
+            className={`flex min-w-0 items-center justify-between gap-1 rounded-xl border px-2 py-2.5 transition-all ${isUrgent ? 'border-red-200 bg-red-50 text-red-700 shadow-sm' : 'border-transparent bg-white text-slate-500 hover:border-slate-200'}`}
+          >
+            <span className="flex min-w-0 items-center gap-1.5">
+              <Siren size={14} className="shrink-0" />
+              <span className="truncate text-[10px] font-black sm:text-[11px]">긴급</span>
+            </span>
+            <span className={`relative h-4 w-7 shrink-0 rounded-full transition-colors ${isUrgent ? 'bg-red-600' : 'bg-slate-200'}`} aria-hidden="true">
+              <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white shadow-sm transition-transform ${isUrgent ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+            </span>
+          </button>
+        </div>
 
         {conflicts.length > 0 && (
           <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
