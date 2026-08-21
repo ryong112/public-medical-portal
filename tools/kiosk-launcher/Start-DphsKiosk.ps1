@@ -31,6 +31,8 @@ public static class DphsKioskNativeWindow
     private const uint SWP_SHOWWINDOW = 0x0040;
     private const int SW_HIDE = 0;
     private const int SW_SHOW = 5;
+    private const byte VK_F11 = 0x7A;
+    private const uint KEYEVENTF_KEYUP = 0x0002;
     private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
     private static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
 
@@ -54,6 +56,9 @@ public static class DphsKioskNativeWindow
 
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern void keybd_event(byte virtualKey, byte scanCode, uint flags, UIntPtr extraInfo);
 
     [DllImport("user32.dll")]
     public static extern bool IsWindow(IntPtr hWnd);
@@ -115,6 +120,30 @@ public static class DphsKioskNativeWindow
         SetForegroundWindow(hWnd);
     }
 
+    public static void ToggleBrowserFullscreen(IntPtr hWnd)
+    {
+        ShowWindow(hWnd, SW_SHOW);
+        SetForegroundWindow(hWnd);
+        keybd_event(VK_F11, 0, 0, UIntPtr.Zero);
+        keybd_event(VK_F11, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+    }
+
+    public static void ShowCompact(IntPtr hWnd, Rectangle bounds)
+    {
+        long style = GetStyle(hWnd);
+        style &= ~WS_POPUP;
+        style |= WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_SYSMENU;
+        SetStyle(hWnd, style);
+        ShowWindow(hWnd, SW_SHOW);
+        const int width = 360;
+        const int height = 180;
+        int x = bounds.X + Math.Max(0, bounds.Width - width);
+        int y = bounds.Y + Math.Max(0, (bounds.Height - height) / 2);
+        SetWindowPos(hWnd, HWND_TOPMOST, x, y, width, height,
+            SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+        SetForegroundWindow(hWnd);
+    }
+
     public static void Hide(IntPtr hWnd) { ShowWindow(hWnd, SW_HIDE); }
 
     public static void Restore(IntPtr hWnd, long style, Rectangle bounds)
@@ -141,10 +170,13 @@ function Write-KioskLog([string]$Message) {
 $createdNew = $false
 $mutex = [System.Threading.Mutex]::new($true, 'Local\DPHS-Kiosk-Launcher', [ref]$createdNew)
 $openEvent = [System.Threading.EventWaitHandle]::new($false, [System.Threading.EventResetMode]::AutoReset, 'Local\DPHS-Kiosk-Open')
+$collapseEvent = [System.Threading.EventWaitHandle]::new($false, [System.Threading.EventResetMode]::AutoReset, 'Local\DPHS-Kiosk-Collapse')
 
 if (-not $createdNew) {
-  $openEvent.Set() | Out-Null
+  if ($ProtocolUri -like 'dphskiosk://collapse*') { $collapseEvent.Set() | Out-Null }
+  else { $openEvent.Set() | Out-Null }
   $openEvent.Dispose()
+  $collapseEvent.Dispose()
   $mutex.Dispose()
   exit 0
 }
@@ -168,7 +200,7 @@ function Get-EdgePath {
 
 function Get-KioskProcess {
   return Get-Process -Name msedge -ErrorAction SilentlyContinue |
-    Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like '*공공의료지원과 전광판*' } |
+    Where-Object { $_.MainWindowHandle -ne 0 -and ($_.MainWindowTitle -like '*공공의료지원과 전광판*' -or $_.MainWindowTitle -like '*전광판 제어*') } |
     Sort-Object StartTime -Descending |
     Select-Object -First 1
 }
@@ -193,7 +225,7 @@ function Open-KioskWindow {
       ForEach-Object { $_.MainWindowHandle.ToInt64() })
     $edgePath = Get-EdgePath
     Write-KioskLog "Launching Edge: $PortalUrl"
-    Start-Process -FilePath $edgePath -ArgumentList @("--app=$PortalUrl", '--new-window') | Out-Null
+    Start-Process -FilePath $edgePath -ArgumentList @("--app=$PortalUrl", '--new-window', '--start-fullscreen', '--no-first-run') | Out-Null
     $deadline = [DateTime]::UtcNow.AddSeconds($WindowWaitSeconds)
     do {
       Start-Sleep -Milliseconds 350
@@ -225,10 +257,30 @@ function Open-KioskWindow {
 function Show-KioskWindow {
   if (-not (Test-KioskWindow)) { Open-KioskWindow }
   else {
-    1..8 | ForEach-Object {
-      [DphsKioskNativeWindow]::ShowBorderless($script:kioskHandle, $script:targetScreen.Bounds)
-      Start-Sleep -Milliseconds 120
+    $kioskProcess = Get-Process -Name msedge -ErrorAction SilentlyContinue |
+      Where-Object { $_.MainWindowHandle -eq $script:kioskHandle } |
+      Select-Object -First 1
+    $isController = $kioskProcess -and $kioskProcess.MainWindowTitle -like '*전광판 제어*'
+    if ($isController -or [DphsKioskNativeWindow]::IsCompactWindow($script:kioskHandle)) {
+      [DphsKioskNativeWindow]::ToggleBrowserFullscreen($script:kioskHandle)
+      Start-Sleep -Milliseconds 800
     }
+    if ([DphsKioskNativeWindow]::IsCompactWindow($script:kioskHandle)) {
+      [DphsKioskNativeWindow]::ShowBorderless($script:kioskHandle, $script:targetScreen.Bounds)
+    }
+  }
+}
+
+function Collapse-KioskWindow {
+  if (-not (Test-KioskWindow) -or [DphsKioskNativeWindow]::IsCompactWindow($script:kioskHandle)) { return }
+  [DphsKioskNativeWindow]::ToggleBrowserFullscreen($script:kioskHandle)
+  Start-Sleep -Milliseconds 650
+  [DphsKioskNativeWindow]::ShowCompact($script:kioskHandle, $script:targetScreen.Bounds)
+  Start-Sleep -Milliseconds 250
+  if (-not [DphsKioskNativeWindow]::IsCompactWindow($script:kioskHandle)) {
+    [DphsKioskNativeWindow]::ToggleBrowserFullscreen($script:kioskHandle)
+    Start-Sleep -Milliseconds 650
+    [DphsKioskNativeWindow]::ShowCompact($script:kioskHandle, $script:targetScreen.Bounds)
   }
 }
 
@@ -236,9 +288,14 @@ try {
   Write-KioskLog "START protocol=$ProtocolUri"
   Open-KioskWindow
   while (Test-KioskWindow) {
-    if ($openEvent.WaitOne(500)) {
+    $signal = [System.Threading.WaitHandle]::WaitAny(@($openEvent, $collapseEvent), 500)
+    if ($signal -eq 0) {
       Show-KioskWindow
       Write-KioskLog 'Kiosk expanded'
+    }
+    elseif ($signal -eq 1) {
+      Collapse-KioskWindow
+      Write-KioskLog 'Kiosk collapsed'
     }
     else {
       $kioskProcess = Get-Process -Name msedge -ErrorAction SilentlyContinue |
@@ -266,6 +323,7 @@ catch {
 }
 finally {
   $openEvent.Dispose()
+  $collapseEvent.Dispose()
   if ($createdNew) {
     try { $mutex.ReleaseMutex() } catch { }
   }

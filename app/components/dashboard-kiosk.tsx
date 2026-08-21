@@ -129,10 +129,10 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
     document.title = collapsed ? '전광판 제어' : '공공의료지원과 전광판';
   };
 
-  const signalNativeFullscreenRestore = () => {
+  const signalNativeLauncher = (action: 'open' | 'collapse') => {
     if (!nativeLauncher) return;
     const link = document.createElement('a');
-    link.href = 'dphskiosk://open';
+    link.href = `dphskiosk://${action}`;
     link.hidden = true;
     document.body.append(link);
     link.click();
@@ -288,6 +288,10 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
 
     if (dedicatedWindow) {
       if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
+      if (nativeLauncher) {
+        signalNativeLauncher('collapse');
+        return;
+      }
       const bounds = getAvailableScreenBounds();
       window.resizeTo(360, 180);
       window.moveTo(bounds.left + Math.max(0, bounds.width - 360), bounds.top + Math.max(0, Math.round((bounds.height - 180) / 2)));
@@ -316,6 +320,13 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
       setIsCollapsed(false);
       window.focus();
 
+      // 설치형 전광판은 실행기가 브라우저의 F11 상태를 직접 관리합니다.
+      // 웹 전체화면 API와 섞지 않아 최초 실행과 이후 복귀가 같은 상태가 됩니다.
+      if (nativeLauncher) {
+        signalNativeLauncher('open');
+        return;
+      }
+
       // 접힌 전용 창 안에서 누른 버튼/F8의 사용자 동작을 바로 사용해야
       // 브라우저가 전체 화면 요청을 허용할 가능성이 가장 높습니다.
       try {
@@ -325,9 +336,6 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
         // 아래의 설치형 실행기/창 크기 복원 경로로 계속 진행합니다.
       }
 
-      // 브라우저 전체 화면이 제한된 경우에만 설치형 실행기에 복원 신호를
-      // 보내 사용자 클릭 권한을 전체 화면 요청이 가장 먼저 사용하게 합니다.
-      signalNativeFullscreenRestore();
       const bounds = getAvailableScreenBounds();
       window.moveTo(bounds.left, bounds.top);
       window.resizeTo(bounds.width, bounds.height);
