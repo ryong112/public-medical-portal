@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { AlertTriangle, Bell, CalendarPlus, CalendarRange, Check, ChevronDown, Clock3, ListChecks, RotateCcw, Siren, X } from 'lucide-react';
+import TimeListPicker from '@/app/components/time-list-picker';
 
 export type ScheduleType = 'meeting' | 'business_trip' | 'internal' | 'leave' | 'unclassified';
 export type AbsenceType = 'annual' | 'early' | 'outing';
@@ -383,15 +384,29 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
             ))}
           </div>
           <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
-            <label>
-              <span className="mb-1.5 block text-[10px] font-bold text-slate-400">시작</span>
-              <input type="time" disabled={timeMode === 'end' || timeMode === 'none'} value={timeMode === 'end' || timeMode === 'none' ? '' : startTime} onChange={(event) => { setStartTime(event.target.value); if (timeMode === 'both') setEndTime(addMinutes(event.target.value, 60)); setError(''); }} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-black text-slate-800 outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:bg-slate-100" />
-            </label>
+            <TimeListPicker
+              label="시작"
+              disabled={timeMode === 'end' || timeMode === 'none'}
+              value={timeMode === 'end' || timeMode === 'none' ? '' : startTime}
+              onChange={(nextTime) => {
+                setStartTime(nextTime);
+                if (timeMode === 'both') setEndTime(addMinutes(nextTime, 60));
+                setError('');
+              }}
+            />
             <span className="mt-5 text-slate-300">→</span>
-            <label>
-              <span className="mb-1.5 block text-[10px] font-bold text-slate-400">종료</span>
-              <input type="time" disabled={timeMode === 'start' || timeMode === 'none'} value={timeMode === 'start' || timeMode === 'none' ? '' : endTime} onChange={(event) => { setEndTime(event.target.value); setError(''); }} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-black text-slate-800 outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:bg-slate-100" />
-            </label>
+            <TimeListPicker
+              label="종료"
+              align="right"
+              disabled={timeMode === 'start' || timeMode === 'none'}
+              value={timeMode === 'start' || timeMode === 'none' ? '' : endTime}
+              minimumTime={timeMode === 'both' ? startTime : undefined}
+              durationFrom={timeMode === 'both' ? startTime : undefined}
+              onChange={(nextTime) => {
+                setEndTime(nextTime);
+                setError('');
+              }}
+            />
           </div>
         </div>
 
