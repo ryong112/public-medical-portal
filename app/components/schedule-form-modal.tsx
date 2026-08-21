@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Bell, CalendarPlus, CalendarRange, ChevronDown, Clock3, ListChecks, RotateCcw, Siren, X } from 'lucide-react';
+import { AlertTriangle, Bell, CalendarPlus, CalendarRange, Check, ChevronDown, Clock3, ListChecks, RotateCcw, Siren, X } from 'lucide-react';
 
 export type ScheduleType = 'meeting' | 'business_trip' | 'internal' | 'leave' | 'unclassified';
 export type AbsenceType = 'annual' | 'early' | 'outing';
@@ -428,21 +428,18 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
           </div>
         )}
 
-        <div className="mt-4 grid grid-cols-3 gap-1.5 rounded-2xl border border-slate-100 bg-slate-50 p-1.5" aria-label="일정 표시 설정">
+        <fieldset className="mt-4 grid grid-cols-3 gap-1.5 rounded-2xl border border-slate-200 bg-slate-100 p-1.5 sm:gap-2 sm:p-2">
+          <legend className="sr-only">일정 표시 설정</legend>
           <button
             type="button"
             aria-pressed={isNotice}
             title="이 일정을 공지사항에 추가합니다."
             onClick={() => setIsNotice((current) => !current)}
-            className={`flex min-w-0 items-center justify-between gap-1 rounded-xl border px-2 py-2.5 transition-all ${isNotice ? 'border-violet-200 bg-violet-50 text-violet-700 shadow-sm' : 'border-transparent bg-white text-slate-500 hover:border-slate-200'}`}
+            className={`relative flex min-h-12 min-w-0 items-center justify-center gap-1.5 rounded-xl border px-1.5 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-1 ${isNotice ? 'border-violet-300 bg-violet-100 text-violet-800 shadow-sm ring-1 ring-violet-200' : 'border-slate-200 bg-white text-slate-700 shadow-sm hover:border-violet-200 hover:bg-violet-50'}`}
           >
-            <span className="flex min-w-0 items-center gap-1.5">
-              <Bell size={14} className="shrink-0" />
-              <span className="truncate text-[10px] font-black sm:text-[11px]">공지사항</span>
-            </span>
-            <span className={`relative h-4 w-7 shrink-0 rounded-full transition-colors ${isNotice ? 'bg-violet-600' : 'bg-slate-200'}`} aria-hidden="true">
-              <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white shadow-sm transition-transform ${isNotice ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-            </span>
+            <Bell size={15} className={`shrink-0 ${isNotice ? 'text-violet-700' : 'text-violet-500'}`} />
+            <span className="truncate text-[11px] font-black tracking-tight sm:text-xs">공지사항</span>
+            {isNotice && <span className="absolute right-1.5 top-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-violet-600 text-white" aria-hidden="true"><Check size={9} strokeWidth={3} /></span>}
           </button>
 
           <button
@@ -450,15 +447,11 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
             aria-pressed={isTodo}
             title="이 일정을 TO DO LIST에 추가합니다."
             onClick={() => setIsTodo((current) => !current)}
-            className={`flex min-w-0 items-center justify-between gap-1 rounded-xl border px-2 py-2.5 transition-all ${isTodo ? 'border-blue-200 bg-blue-50 text-blue-700 shadow-sm' : 'border-transparent bg-white text-slate-500 hover:border-slate-200'}`}
+            className={`relative flex min-h-12 min-w-0 items-center justify-center gap-1.5 rounded-xl border px-1.5 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 ${isTodo ? 'border-blue-300 bg-blue-100 text-blue-800 shadow-sm ring-1 ring-blue-200' : 'border-slate-200 bg-white text-slate-700 shadow-sm hover:border-blue-200 hover:bg-blue-50'}`}
           >
-            <span className="flex min-w-0 items-center gap-1.5">
-              <ListChecks size={14} className="shrink-0" />
-              <span className="truncate text-[10px] font-black sm:text-[11px]">TO DO</span>
-            </span>
-            <span className={`relative h-4 w-7 shrink-0 rounded-full transition-colors ${isTodo ? 'bg-blue-600' : 'bg-slate-200'}`} aria-hidden="true">
-              <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white shadow-sm transition-transform ${isTodo ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-            </span>
+            <ListChecks size={15} className={`shrink-0 ${isTodo ? 'text-blue-700' : 'text-blue-500'}`} />
+            <span className="truncate text-[11px] font-black tracking-tight sm:text-xs">TO DO</span>
+            {isTodo && <span className="absolute right-1.5 top-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-blue-600 text-white" aria-hidden="true"><Check size={9} strokeWidth={3} /></span>}
           </button>
 
           <button
@@ -466,17 +459,13 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
             aria-pressed={isUrgent}
             title="브리핑과 공지사항에 긴급 표시를 추가합니다."
             onClick={() => setIsUrgent((current) => !current)}
-            className={`flex min-w-0 items-center justify-between gap-1 rounded-xl border px-2 py-2.5 transition-all ${isUrgent ? 'border-red-200 bg-red-50 text-red-700 shadow-sm' : 'border-transparent bg-white text-slate-500 hover:border-slate-200'}`}
+            className={`relative flex min-h-12 min-w-0 items-center justify-center gap-1.5 rounded-xl border px-1.5 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:ring-offset-1 ${isUrgent ? 'border-rose-300 bg-rose-100 text-rose-800 shadow-sm ring-1 ring-rose-200' : 'border-slate-200 bg-white text-slate-700 shadow-sm hover:border-rose-200 hover:bg-rose-50'}`}
           >
-            <span className="flex min-w-0 items-center gap-1.5">
-              <Siren size={14} className="shrink-0" />
-              <span className="truncate text-[10px] font-black sm:text-[11px]">긴급</span>
-            </span>
-            <span className={`relative h-4 w-7 shrink-0 rounded-full transition-colors ${isUrgent ? 'bg-red-600' : 'bg-slate-200'}`} aria-hidden="true">
-              <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white shadow-sm transition-transform ${isUrgent ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-            </span>
+            <Siren size={15} className={`shrink-0 ${isUrgent ? 'text-rose-700' : 'text-rose-500'}`} />
+            <span className="truncate text-[11px] font-black tracking-tight sm:text-xs">긴급</span>
+            {isUrgent && <span className="absolute right-1.5 top-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-rose-600 text-white" aria-hidden="true"><Check size={9} strokeWidth={3} /></span>}
           </button>
-        </div>
+        </fieldset>
 
         {conflicts.length > 0 && (
           <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
