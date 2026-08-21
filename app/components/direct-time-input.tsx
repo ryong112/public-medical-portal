@@ -51,6 +51,12 @@ const formatDuration = (minutes: number) => {
   return `${hours}시간 ${remainder}분`;
 };
 
+const formatTwelveHourTime = (time: string) => {
+  if (!/^\d{2}:\d{2}$/u.test(time)) return time;
+  const [hour, minute] = time.split(':').map(Number);
+  return `${hour % 12 || 12}:${String(minute).padStart(2, '0')}`;
+};
+
 export default function DirectTimeInput({
   label,
   value,
@@ -104,7 +110,7 @@ export default function DirectTimeInput({
           type="text"
           inputMode="numeric"
           disabled={disabled}
-          value={disabled ? '' : isEditing ? draft : value}
+          value={disabled ? '' : isEditing ? draft : formatTwelveHourTime(value)}
           placeholder={disabled ? '선택 안 함' : '예: 1030'}
           aria-label={`${label} 시간 직접 입력`}
           onFocus={(event) => {
