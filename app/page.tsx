@@ -1540,6 +1540,7 @@ export default function IntegratedPortal() {
       {isWhiteboardImportOpen && (
         <WhiteboardImportModal
           onClose={() => setIsWhiteboardImportOpen(false)}
+          initialMonth={`${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}`}
           existingSchedules={schedules}
           onImport={onImportWhiteboardSchedules}
         />

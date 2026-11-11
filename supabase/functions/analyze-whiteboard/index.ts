@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.104.0';
+import { buildPhotoPrompt, flagColorDisagreements, normalizePhotoAnalysis, photoAnalysisSchema, relevantSpellingHints, validDate, type StoredCorrection } from './analysis.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -18,13 +19,46 @@ const jsonResponse = (body: unknown, status = 200) => new Response(JSON.stringif
   headers: { ...corsHeaders, 'Content-Type': 'application/json' },
 });
 
-interface StoredCorrection {
-  source_text: string;
-  ai_title: string;
-  corrected_title: string;
-  ai_schedule_type: string;
-  corrected_schedule_type: string;
+class AnalysisError extends Error {
+  constructor(message: string, readonly status = 502) { super(message); }
 }
+
+const readPhoto = async (apiKey: string, model: string, imageBase64: string, mimeType: string, prompt: string, timeout: number) => {
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+    method: 'POST',
+    signal: AbortSignal.timeout(timeout),
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+    body: JSON.stringify({
+      contents: [{ role: 'user', parts: [{ inlineData: { mimeType, data: imageBase64 } }, { text: prompt }] }],
+      generationConfig: {
+        temperature: 0,
+        maxOutputTokens: 24576,
+        mediaResolution: 'MEDIA_RESOLUTION_HIGH',
+        responseMimeType: 'application/json',
+        responseSchema: photoAnalysisSchema,
+      },
+    }),
+  });
+  if (!response.ok) {
+    console.error('Gemini analysis request failed:', response.status);
+    if (response.status === 429) throw new AnalysisError('사진 분석 사용량이 많습니다. 잠시 후 다시 시도해 주십시오.', 429);
+    throw new AnalysisError('사진을 분석하지 못했습니다. 잠시 후 다시 시도해 주십시오.');
+  }
+  const result = await response.json();
+  const candidate = result?.candidates?.[0];
+  if (!candidate || (candidate.finishReason && candidate.finishReason !== 'STOP')) {
+    throw new AnalysisError('사진 전체를 읽지 못했습니다. 사진을 선명하게 촬영하거나 나누어 다시 분석해 주십시오.');
+  }
+  const rawText = candidate.content?.parts
+    ?.filter((part: { thought?: boolean }) => !part.thought)
+    .map((part: { text?: string }) => part.text ?? '').join('') ?? '';
+  if (!rawText.trim()) throw new AnalysisError('사진에서 일정을 읽지 못했습니다. 사진을 확인해 주십시오.');
+  try {
+    return normalizePhotoAnalysis(JSON.parse(rawText));
+  } catch {
+    throw new AnalysisError('사진 분석 결과를 읽지 못했습니다. 다시 분석해 주십시오.');
+  }
+};
 
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -34,7 +68,7 @@ Deno.serve(async (request) => {
     const geminiApiKey = Deno.env.get('GEMINI_API_KEY');
     if (!geminiApiKey) return jsonResponse({ error: 'Gemini API 키가 설정되지 않았습니다.' }, 500);
 
-    const { imageBase64, mimeType, currentDate } = await request.json();
+    const { imageBase64, mimeType, currentDate, targetMonth } = await request.json();
     if (typeof imageBase64 !== 'string' || typeof mimeType !== 'string') {
       return jsonResponse({ error: '분석할 이미지가 없습니다.' }, 400);
     }
@@ -66,108 +100,41 @@ Deno.serve(async (request) => {
     if (correctionLoadError) console.warn('Correction memory is unavailable:', correctionLoadError.message);
 
     const storedCorrections = (correctionRows ?? []) as StoredCorrection[];
-    const correctionGuide = storedCorrections.length > 0
-      ? `\n이전 사용자가 직접 확인한 교정 사례입니다. 비슷하거나 같은 필기는 교정된 표현을 우선 사용하십시오.\n${JSON.stringify(storedCorrections)}\n`
-      : '';
-
-    const prompt = `
-당신은 한국어 화이트보드에서 부서 일정을 추출하는 도구입니다.
-기준 날짜는 ${typeof currentDate === 'string' ? currentDate : new Date().toISOString().slice(0, 10)}입니다.
-
-화이트보드 필기 색상 규칙:
-- 빨간색 필기 또는 빨간색 행: meeting (회의)
-- 초록색 필기 또는 초록색 행: business_trip (출장)
-- 파란색 필기 또는 파란색 행: internal (내부일정)
-- 주황색 필기 또는 주황색 행: leave (휴가)
-- 색상이 불명확하면 unclassified (미분류)
-
-규칙:
-1. 실제로 읽을 수 있는 일정만 추출하고 내용을 추측해서 만들지 마십시오.
-2. 제목에서 '회의)', '출장)', '내부일정)', '휴가)' 접두어는 제거하고 schedule_type으로 분리하십시오.
-3. 연도가 없으면 기준 날짜의 연도를 사용하되, 전후 문맥상 다음 해가 명확하면 다음 해를 사용하십시오.
-4. 날짜가 불명확하면 date를 null로 반환하십시오.
-5. 시작 또는 종료 시간만 적힌 경우 읽을 수 있는 값만 반환하고 나머지는 null로 두십시오.
-6. 시간이 없으면 start_time과 end_time을 모두 null로 두십시오.
-7. '긴급', '필독', '즉시' 또는 명확한 긴급 표시가 있을 때만 is_urgent를 true로 하십시오.
-8. 색상과 글씨가 모호하면 confidence를 낮추고 warnings에 한국어로 이유를 적으십시오.
-9. 표 제목, 요일 이름, 장식 문구는 일정으로 만들지 마십시오.
-10. 출력은 지정된 JSON 스키마만 사용하십시오.
-${correctionGuide}
-`;
-
+    const referenceDate = validDate(currentDate) ?? new Date().toISOString().slice(0, 10);
+    const referenceMonth = typeof targetMonth === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/u.test(targetMonth) ? targetMonth : referenceDate.slice(0, 7);
+    const prompt = buildPhotoPrompt(referenceDate, referenceMonth);
     const model = Deno.env.get('GEMINI_MODEL') || 'gemini-2.5-flash';
-    const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': geminiApiKey,
-      },
-      body: JSON.stringify({
-        contents: [{
-          role: 'user',
-          parts: [
-            { text: prompt },
-            { inlineData: { mimeType, data: imageBase64 } },
-          ],
-        }],
-        generationConfig: {
-          temperature: 0.1,
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: 'ARRAY',
-            items: {
-              type: 'OBJECT',
-              required: ['title', 'schedule_type', 'is_urgent', 'confidence', 'source_text', 'warnings'],
-              properties: {
-                title: { type: 'STRING' },
-                date: { type: 'STRING', nullable: true, description: 'YYYY-MM-DD' },
-                start_time: { type: 'STRING', nullable: true, description: 'HH:mm' },
-                end_time: { type: 'STRING', nullable: true, description: 'HH:mm' },
-                schedule_type: { type: 'STRING', enum: ['meeting', 'business_trip', 'internal', 'leave', 'unclassified'] },
-                is_urgent: { type: 'BOOLEAN' },
-                confidence: { type: 'NUMBER', minimum: 0, maximum: 1 },
-                source_text: { type: 'STRING' },
-                warnings: { type: 'ARRAY', items: { type: 'STRING' } },
-              },
-            },
-          },
-        },
-      }),
+    const initialAnalysis = await readPhoto(geminiApiKey, model, imageBase64, mimeType, prompt, 65_000);
+    let analysis = initialAnalysis;
+    let verified = false;
+    const spellingHints = relevantSpellingHints(initialAnalysis, storedCorrections);
+    try {
+      const reviewed = await readPhoto(geminiApiKey, Deno.env.get('GEMINI_REVIEW_MODEL') || model, imageBase64, mimeType, `${prompt}
+이번 단계는 사진 재검수입니다. 아래 초안은 오타·누락·병합·날짜·색상 오류가 있을 수 있습니다. 반드시 사진 원본과 대조하여 전체 목록을 다시 반환하십시오.
+- 날짜 칸마다 읽히는 일정 줄 수를 다시 세고 누락된 줄을 추가하십시오. 기존 일정 줄을 이유 없이 없애거나 서로 합치지 마십시오.
+- 특히 파란색/하늘색을 초록색으로 읽지 않았는지 글씨 획을 다시 확인하십시오. 색 판독이 애매하면 teal/unknown과 낮은 color_confidence를 사용하십시오.
+- 사진 근거가 없는 항목과 반복 생성한 다음 달 회차는 제거하십시오. source_text는 원본 전사로 유지합니다.
+- 맞춤법 참고 사전은 해당 글씨의 획이 뒷받침할 때만 활용하십시오. 사전 항목을 새 일정으로 만들거나 사전에서 날짜·유형을 추론하지 마십시오.
+<초안>${JSON.stringify(initialAnalysis)}</초안>
+<맞춤법참고>${JSON.stringify(spellingHints)}</맞춤법참고>`, 45_000);
+      analysis = flagColorDisagreements(initialAnalysis, reviewed);
+      verified = true;
+    } catch (reviewError) {
+      console.warn('Photo verification did not complete:', reviewError instanceof Error ? reviewError.name : 'unknown');
+      analysis.analysis_warnings.push('사진 재검수를 완료하지 못했습니다. 읽은 원문과 일정 수·유형을 확인해 주세요.');
+    }
+    if (analysis.schedules.length < initialAnalysis.schedules.length) analysis.analysis_warnings.push(`재검수에서 일정 수가 ${initialAnalysis.schedules.length}건에서 ${analysis.schedules.length}건으로 바뀌었습니다. 누락된 줄이 있는지 사진과 비교해 주세요.`);
+    return jsonResponse({
+      schedules: analysis.schedules,
+      visible_months: [...new Set(analysis.visible_months.map((item) => item.month))],
+      visible_schedule_count: analysis.visible_schedule_count,
+      analysis_warnings: [...new Set(analysis.analysis_warnings)],
+      verified,
     });
-
-    if (!geminiResponse.ok) {
-      const detail = await geminiResponse.text();
-      if (geminiResponse.status === 429) return jsonResponse({ error: 'Gemini 무료 분석 한도에 도달했습니다. 잠시 후 다시 시도해 주십시오.' }, 429);
-      console.error('Gemini error:', detail);
-      return jsonResponse({ error: '사진을 분석하지 못했습니다.' }, 502);
-    }
-
-    const geminiResult = await geminiResponse.json();
-    const rawText = geminiResult?.candidates?.[0]?.content?.parts?.map((part: { text?: string }) => part.text ?? '').join('') ?? '[]';
-    const parsed = JSON.parse(rawText);
-    const correctionMap = new Map<string, StoredCorrection>();
-    for (const correction of storedCorrections) {
-      const key = correction.ai_title.trim().toLocaleLowerCase('ko-KR');
-      if (key && !correctionMap.has(key)) correctionMap.set(key, correction);
-    }
-
-    const schedules = Array.isArray(parsed)
-      ? parsed
-        .filter((item) => item && typeof item.title === 'string')
-        .map((item) => {
-          const correction = correctionMap.get(item.title.trim().toLocaleLowerCase('ko-KR'));
-          if (!correction) return item;
-          return {
-            ...item,
-            title: correction.corrected_title,
-            schedule_type: correction.corrected_schedule_type,
-          };
-        })
-      : [];
-
-    return jsonResponse({ schedules });
   } catch (error) {
-    console.error(error);
-    return jsonResponse({ error: error instanceof Error ? error.message : '사진 분석 중 오류가 발생했습니다.' }, 500);
+    console.error('Whiteboard analysis failed:', error instanceof Error ? error.name : 'unknown');
+    if (error instanceof AnalysisError) return jsonResponse({ error: error.message }, error.status);
+    if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) return jsonResponse({ error: '사진 분석 시간이 초과되었습니다. 사진을 나누어 다시 분석해 주십시오.' }, 504);
+    return jsonResponse({ error: '사진 분석 중 오류가 발생했습니다. 다시 시도해 주십시오.' }, 500);
   }
 });
