@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.104.0';
 import { buildPhotoPrompt, flagColorDisagreements, normalizePhotoAnalysis, photoAnalysisSchema, relevantSpellingHints, validDate, type StoredCorrection } from './analysis.ts';
+import { fetchWithPhotoRetry } from './request.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -24,7 +25,7 @@ class AnalysisError extends Error {
 }
 
 const readPhoto = async (apiKey: string, model: string, imageBase64: string, mimeType: string, prompt: string, timeout: number) => {
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+  const response = await fetchWithPhotoRetry(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
     method: 'POST',
     signal: AbortSignal.timeout(timeout),
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
@@ -42,6 +43,7 @@ const readPhoto = async (apiKey: string, model: string, imageBase64: string, mim
   if (!response.ok) {
     console.error('Gemini analysis request failed:', response.status);
     if (response.status === 429) throw new AnalysisError('사진 분석 사용량이 많습니다. 잠시 후 다시 시도해 주십시오.', 429);
+    if ([500, 502, 503, 504].includes(response.status)) throw new AnalysisError('사진 분석 서비스가 일시적으로 혼잡합니다. 잠시 후 다시 시도해 주십시오.', 503);
     throw new AnalysisError('사진을 분석하지 못했습니다. 잠시 후 다시 시도해 주십시오.');
   }
   const result = await response.json();
