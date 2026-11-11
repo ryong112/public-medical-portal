@@ -5,6 +5,7 @@ import NextImage from 'next/image';
 import { AlertTriangle, Camera, Check, ImagePlus, LoaderCircle, Plus, ScanText, Trash2, X } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { compareWhiteboardSchedule, getPhotoExistingSchedules, getWhiteboardImportError, isWhiteboardDate, isWhiteboardTime } from '@/lib/whiteboard-import';
+import { scheduleCategoryStyles } from '@/lib/schedule-category';
 import type { AbsenceType, NewScheduleInput } from '@/app/components/schedule-form-modal';
 
 type ScheduleType = 'meeting' | 'business_trip' | 'internal' | 'leave' | 'unclassified';
@@ -486,12 +487,12 @@ export default function WhiteboardImportModal({ onClose, initialMonth, existingS
                         className={`mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border-2 ${draft.selected ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 bg-white text-transparent'} disabled:cursor-not-allowed disabled:bg-slate-100`}
                       ><Check size={14} strokeWidth={3} /></button>
                       <div className="grid min-w-0 flex-1 gap-3 md:grid-cols-[140px_1fr]">
-                        <select aria-label="일정 유형" value={draft.schedule_type} onChange={(event) => updateDraft(draft.id, 'schedule_type', event.target.value as ScheduleType)} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-black text-slate-700 outline-none focus:border-blue-500">
-                          {scheduleTypes.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
+                        <select aria-label="일정 유형" value={draft.schedule_type} onChange={(event) => updateDraft(draft.id, 'schedule_type', event.target.value as ScheduleType)} className={`rounded-xl border px-3 py-2.5 text-xs font-black outline-none focus:ring-2 focus:ring-blue-200 ${scheduleCategoryStyles[draft.schedule_type === 'unclassified' ? 'general' : draft.schedule_type].filter}`}>
+                          {scheduleTypes.map((type) => <option key={type.value} value={type.value} className="bg-white text-slate-900">{type.label}</option>)}
                         </select>
                         <input ref={draft.id === addedDraftId ? addedTitleRef : undefined} aria-label="일정 제목" value={draft.title} onChange={(event) => updateDraft(draft.id, 'title', event.target.value)} placeholder="일정 제목" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-black text-slate-800 outline-none focus:border-blue-500" />
                         {draft.schedule_type === 'leave' && (
-                          <select aria-label="휴가 구분" value={draft.absence_type} onChange={(event) => updateDraft(draft.id, 'absence_type', event.target.value as AbsenceType)} className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-black text-amber-800 outline-none focus:border-amber-500">
+                          <select aria-label="휴가 구분" value={draft.absence_type} onChange={(event) => updateDraft(draft.id, 'absence_type', event.target.value as AbsenceType)} className={`rounded-xl border px-3 py-2.5 text-xs font-black outline-none focus:ring-2 focus:ring-orange-200 ${scheduleCategoryStyles.leave.filter}`}>
                             <option value="annual">연차</option>
                             <option value="early">조퇴</option>
                             <option value="outing">외출</option>

@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, CalendarPlus, Clock3, Sparkles, X } from 'lucide-react';
 import type { AbsenceType, NewScheduleInput, ScheduleType } from '@/app/components/schedule-form-modal';
+import { inferScheduleTypeFromText } from '@/lib/schedule-classification';
+import { scheduleCategoryStyles } from '@/lib/schedule-category';
 
 interface QuickScheduleInputProps {
   open: boolean;
@@ -128,21 +130,17 @@ export const parseQuickSchedule = (source: string, defaultDate: string): ParsedQ
     warnings.push('시간 표현을 찾지 못해 시간 미정으로 두었습니다.');
   }
 
-  let scheduleType: ScheduleType = 'unclassified';
+  const scheduleType = inferScheduleTypeFromText(original);
   let absenceType: AbsenceType = 'annual';
-  if (/연차|휴가|조퇴|외출/.test(original)) {
-    scheduleType = 'leave';
+  remainder = remainder.replace(/(?:^|\s)(?:회의|출장|내부\s*일정|휴가|연차|반차|조퇴|외출|일반|미분류)\s*[)）:：]\s*/u, ' ');
+  if (scheduleType === 'leave') {
     absenceType = /조퇴/.test(original) ? 'early' : /외출/.test(original) ? 'outing' : 'annual';
-    remainder = remainder.replace(/연차|휴가|조퇴|외출/g, ' ');
-  } else if (/출장/.test(original)) {
-    scheduleType = 'business_trip';
+    remainder = remainder.replace(/연차|휴가|반차|조퇴|외출/g, ' ');
+  } else if (scheduleType === 'business_trip') {
     remainder = remainder.replace(/출장/g, ' ');
-  } else if (/회의|간담회|협의회/.test(original)) {
-    scheduleType = 'meeting';
-  } else if (/내부일정/.test(original)) {
-    scheduleType = 'internal';
-    remainder = remainder.replace(/내부일정/g, ' ');
-  } else {
+  } else if (scheduleType === 'internal') {
+    remainder = remainder.replace(/내부\s*일정/g, ' ');
+  } else if (scheduleType === 'unclassified') {
     warnings.push('일정 유형을 확정하지 못해 일반으로 분류했습니다.');
   }
 
@@ -292,16 +290,17 @@ export default function QuickScheduleInput({ open, onClose, defaultDate, onSubmi
               </label>
               <label className="sm:col-span-2">
                 <span className="mb-1.5 block text-[10px] font-black text-slate-500">일정 유형</span>
-                <select value={parsed.schedule.schedule_type} onChange={(event) => updateSchedule('schedule_type', event.target.value as ScheduleType)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-black text-slate-800 outline-none focus:border-blue-500">
-                  {scheduleTypes.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
+                <select value={parsed.schedule.schedule_type} onChange={(event) => updateSchedule('schedule_type', event.target.value as ScheduleType)} className={`w-full rounded-xl border px-3 py-2.5 text-sm font-black outline-none focus:ring-2 focus:ring-blue-200 ${scheduleCategoryStyles[parsed.schedule.schedule_type === 'unclassified' ? 'general' : parsed.schedule.schedule_type].filter}`}>
+                  {scheduleTypes.map((type) => <option key={type.value} value={type.value} className="bg-white text-slate-900">{type.label}</option>)}
                 </select>
+                {parsed.schedule.schedule_type === 'internal' && <span className="mt-1.5 block text-[10px] font-medium text-blue-700">내부에서 진행하는 협의회·간담회·업무협약식 등</span>}
               </label>
               {parsed.schedule.schedule_type === 'leave' && (
                 <div className="sm:col-span-2">
                   <span className="mb-1.5 block text-[10px] font-black text-slate-500">휴가 구분</span>
                   <div className="grid grid-cols-3 gap-2">
                     {([{ value: 'annual', label: '연차' }, { value: 'early', label: '조퇴' }, { value: 'outing', label: '외출' }] as const).map((type) => (
-                      <button key={type.value} type="button" onClick={() => updateSchedule('absence_type', type.value)} className={`rounded-xl py-2.5 text-[11px] font-black ${parsed.schedule.absence_type === type.value ? 'bg-amber-500 text-white' : 'bg-white text-amber-700'}`}>{type.label}</button>
+                      <button key={type.value} type="button" onClick={() => updateSchedule('absence_type', type.value)} className={`rounded-xl border py-2.5 text-[11px] font-black ${parsed.schedule.absence_type === type.value ? scheduleCategoryStyles.leave.filterActive : scheduleCategoryStyles.leave.filter}`}>{type.label}</button>
                     ))}
                   </div>
                 </div>

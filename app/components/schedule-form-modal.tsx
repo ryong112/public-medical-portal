@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle, Bell, CalendarPlus, CalendarRange, Check, ChevronDown, Clock3, ListChecks, RotateCcw, Siren, X } from 'lucide-react';
 import DirectTimeInput from '@/app/components/direct-time-input';
+import { scheduleCategoryStyles } from '@/lib/schedule-category';
 
 export type ScheduleType = 'meeting' | 'business_trip' | 'internal' | 'leave' | 'unclassified';
 export type AbsenceType = 'annual' | 'early' | 'outing';
@@ -352,19 +353,20 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
               { value: 'leave' as const, label: '연차·조퇴·외출)' },
               { value: 'unclassified' as const, label: '미분류)' },
             ].map((type) => (
-              <button key={type.value} type="button" onClick={() => setScheduleType(type.value)} className={`rounded-xl px-2 py-2.5 text-[10px] font-black transition-colors ${scheduleType === type.value ? 'bg-blue-600 text-white shadow-md' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>{type.label}</button>
+              <button key={type.value} type="button" aria-pressed={scheduleType === type.value} onClick={() => setScheduleType(type.value)} className={`inline-flex items-center justify-center gap-1.5 rounded-xl border px-2 py-2.5 text-[10px] font-black transition-colors ${scheduleType === type.value ? scheduleCategoryStyles[type.value === 'unclassified' ? 'general' : type.value].filterActive : scheduleCategoryStyles[type.value === 'unclassified' ? 'general' : type.value].filter}`}><span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full ${scheduleType === type.value ? 'bg-white' : scheduleCategoryStyles[type.value === 'unclassified' ? 'general' : type.value].dot}`} />{type.label}</button>
             ))}
           </div>
+          {scheduleType === 'internal' && <p className="mt-2 text-[10px] font-medium text-blue-700">내부에서 진행하는 협의회·간담회·업무협약식 등</p>}
           {scheduleType === 'leave' && (
-            <div className="mt-3 rounded-2xl bg-amber-50 p-3">
-              <span className="mb-2 block text-[10px] font-black text-amber-700">휴가 구분</span>
+            <div className="mt-3 rounded-2xl bg-orange-50 p-3">
+              <span className="mb-2 block text-[10px] font-black text-orange-700">휴가 구분</span>
               <div className="grid grid-cols-3 gap-2">
                 {[
                   { value: 'annual' as const, label: '연차' },
                   { value: 'early' as const, label: '조퇴' },
                   { value: 'outing' as const, label: '외출' },
                 ].map((type) => (
-                  <button key={type.value} type="button" onClick={() => setAbsenceType(type.value)} className={`rounded-xl px-2 py-2.5 text-[10px] font-black transition-colors ${absenceType === type.value ? 'bg-amber-500 text-white shadow-md' : 'bg-white text-amber-700 hover:bg-amber-100'}`}>{type.label}</button>
+                  <button key={type.value} type="button" aria-pressed={absenceType === type.value} onClick={() => setAbsenceType(type.value)} className={`rounded-xl border px-2 py-2.5 text-[10px] font-black transition-colors ${absenceType === type.value ? scheduleCategoryStyles.leave.filterActive : scheduleCategoryStyles.leave.filter}`}>{type.label}</button>
                 ))}
               </div>
             </div>

@@ -15,6 +15,7 @@ import MonthlyAbsenceBoard from '@/app/components/monthly-absence-board';
 import QuickScheduleInput from '@/app/components/quick-schedule-input';
 import YearlyDocumentCleanupModal, { type YearlyCleanupCategory, type YearlyCleanupFile, type YearlyDocumentCleanupTarget } from '@/app/components/yearly-document-cleanup-modal';
 import { attachRecurrenceMetadata, createRecurrenceGroupId, isRecurringSchedule, type RecurrenceOccurrenceFields, type RecurrenceScope } from '@/lib/schedule-recurrence';
+import { getScheduleCategory, scheduleCategoryOrder, scheduleCategoryStyles } from '@/lib/schedule-category';
 import JSZip from 'jszip';
 import { 
   FileText, FilePlus,
@@ -368,17 +369,12 @@ export default function IntegratedPortal() {
   };
 
   const getCalendarScheduleTypeLabel = (schedule: (typeof schedules)[number]) => {
-    if (schedule.schedule_type === 'leave') {
+    if (getScheduleCategory(schedule) === 'leave') {
       if (['early', 'early_am', 'early_pm'].includes(schedule.absence_type)) return '조퇴';
       if (schedule.absence_type === 'outing') return '외출';
       return '연차';
     }
-    return ({
-      meeting: '회의',
-      business_trip: '출장',
-      internal: '내부일정',
-      unclassified: '일반',
-    } as Record<string, string>)[schedule.schedule_type] ?? '일반';
+    return scheduleCategoryStyles[getScheduleCategory(schedule)].label;
   };
 
   const moveCalendarMonth = (offset: number) => {
@@ -1325,6 +1321,14 @@ export default function IntegratedPortal() {
                     </div>
                   </div>
 
+                  <div aria-label="일정 분류 색상" className="mb-2 flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 px-0.5 text-[9px] font-bold text-slate-600 sm:mb-3 sm:text-[10px]">
+                    {scheduleCategoryOrder.map((category) => (
+                      <span key={category} className="inline-flex items-center gap-1.5" title={category === 'internal' ? '부서 내부 협의회·간담회·업무협약식 등' : undefined}>
+                        <span aria-hidden="true" className={`h-2 w-2 rounded-full ${scheduleCategoryStyles[category].dot}`} />{category === 'leave' ? '휴가·조퇴·외출' : scheduleCategoryStyles[category].label}
+                      </span>
+                    ))}
+                  </div>
+
                   <div className="grid min-h-0 flex-1 gap-3 xl:grid-cols-[minmax(0,1fr)_300px] 2xl:grid-cols-[minmax(0,1fr)_360px]">
                     <div className="min-w-0 rounded-[16px] xl:overflow-hidden xl:rounded-[28px]">
                       <div className="flex min-h-[410px] min-w-0 flex-col overflow-hidden rounded-[16px] border border-slate-200 bg-slate-200 shadow-xl sm:min-h-[560px] xl:h-full xl:min-h-0 xl:rounded-[28px]">
@@ -1375,9 +1379,9 @@ export default function IntegratedPortal() {
                               >
                                 <div className="mb-1 flex shrink-0 items-start justify-between gap-0.5 sm:gap-1">
                                   <div className="flex min-w-0 items-center gap-1 sm:gap-1.5">
-                                    <span className={`flex h-5 min-w-5 items-center justify-center rounded-md px-0.5 text-[10px] font-black sm:h-6 sm:min-w-6 sm:rounded-lg sm:px-1 sm:text-xs md:h-7 md:min-w-7 md:text-sm ${isToday ? 'bg-blue-600 text-white shadow-md' : isHoliday || daySchedules.some((schedule) => schedule.is_notice) ? 'bg-red-50 text-red-600' : new Date(`${dateStr}T00:00:00`).getDay() === 0 ? 'text-red-500' : new Date(`${dateStr}T00:00:00`).getDay() === 6 ? 'text-blue-500' : 'text-slate-800'}`}>{day}</span>
-                                    {daySchedules.length > 0 && <span className={`rounded-md px-1.5 py-0.5 text-[8px] font-black tabular-nums md:text-[9px] ${isToday ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>{daySchedules.length}건</span>}
-                                    {isToday && <span className="hidden rounded-md bg-blue-100 px-1.5 py-0.5 text-[8px] font-black text-blue-700 sm:inline md:text-[9px]">오늘</span>}
+                                    <span className={`flex h-5 min-w-5 shrink-0 items-center justify-center rounded-md px-0.5 text-[10px] font-black sm:h-6 sm:min-w-6 sm:rounded-lg sm:px-1 sm:text-xs md:h-7 md:min-w-7 md:text-sm ${isToday ? 'bg-blue-600 text-white shadow-md' : isHoliday || daySchedules.some((schedule) => schedule.is_notice) ? 'bg-red-50 text-red-600' : new Date(`${dateStr}T00:00:00`).getDay() === 0 ? 'text-red-500' : new Date(`${dateStr}T00:00:00`).getDay() === 6 ? 'text-blue-500' : 'text-slate-800'}`}>{day}</span>
+                                    {daySchedules.length > 0 && <span className={`shrink-0 whitespace-nowrap rounded-md px-1 py-0.5 text-[8px] font-black tabular-nums md:text-[9px] ${isToday ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>{daySchedules.length}건</span>}
+                                    {isToday && <span className="hidden shrink-0 whitespace-nowrap rounded-md bg-blue-100 px-1 py-0.5 text-[8px] font-black text-blue-700 sm:inline md:text-[9px]">오늘</span>}
                                     {isHoliday && <span title={holidayNames.join(', ')} className="hidden truncate text-[8px] font-extrabold text-red-500 lg:block md:text-[9px]">{holidayNames.join(' · ')}</span>}
                                   </div>
                                   <button
@@ -1388,7 +1392,7 @@ export default function IntegratedPortal() {
                                       onAddSchedule(dateStr);
                                     }}
                                     aria-label={`${currentMonth.getMonth() + 1}월 ${day}일 일정 추가`}
-                                    className="hidden rounded-md bg-slate-900 p-1 text-white opacity-0 transition-all hover:bg-blue-600 focus-visible:opacity-100 sm:block sm:group-hover:opacity-100"
+                                    className="absolute right-1 top-1 z-20 hidden rounded-md bg-slate-900 p-1 text-white opacity-0 transition-all hover:bg-blue-600 focus-visible:opacity-100 sm:block sm:group-hover:opacity-100"
                                   >
                                     <Plus size={10}/>
                                   </button>
@@ -1396,14 +1400,16 @@ export default function IntegratedPortal() {
 
                                 <div className="mt-auto flex min-h-4 flex-wrap items-end gap-0.5 px-0.5 pb-0.5 sm:hidden" aria-hidden="true">
                                   {daySchedules.slice(0, 3).map((schedule) => {
-                                    const isRange = getScheduleEndDate(schedule) > schedule.date;
-                                    return <span key={schedule.id} className={`h-1.5 w-1.5 rounded-full ${schedule.is_notice || schedule.is_urgent ? 'bg-red-500' : isRange ? 'bg-indigo-500' : schedule.schedule_type === 'leave' ? 'bg-amber-500' : 'bg-blue-500'}`} />;
+                                    const category = getScheduleCategory(schedule);
+                                    return <span key={schedule.id} data-calendar-dot-category={category} className={`h-1.5 w-1.5 rounded-full ${scheduleCategoryStyles[category].dot} ${schedule.is_urgent ? 'ring-1 ring-red-500 ring-offset-1' : ''}`} />;
                                   })}
                                   {daySchedules.length > 3 && <span className="ml-0.5 text-[7px] font-black leading-none text-slate-500">+{daySchedules.length - 3}</span>}
                                 </div>
 
                                 <div className="hidden min-h-0 flex-1 space-y-1 overflow-hidden sm:block">
                                   {visibleSchedules.map((schedule) => {
+                                    const category = getScheduleCategory(schedule);
+                                    const categoryStyle = scheduleCategoryStyles[category];
                                     const endDate = getScheduleEndDate(schedule);
                                     const isRange = endDate > schedule.date;
                                     const weekday = new Date(`${dateStr}T00:00:00`).getDay();
@@ -1416,6 +1422,7 @@ export default function IntegratedPortal() {
                                       <button
                                         type="button"
                                         key={schedule.id}
+                                        data-calendar-category={category}
                                         draggable
                                         title={`${formatCalendarScheduleTime(schedule, dateStr)} · ${formatScheduleTitle(schedule)}`}
                                         onDragStart={(event) => onScheduleDragStart(event, schedule.id)}
@@ -1423,10 +1430,10 @@ export default function IntegratedPortal() {
                                           event.stopPropagation();
                                           setSelectedCalendarDate(dateStr);
                                         }}
-                                        className={`relative z-[1] grid min-h-6 min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1 border px-1 py-0.5 text-left font-bold text-slate-800 shadow-sm transition-all lg:grid-cols-[auto_minmax(0,1fr)_auto] xl:grid-cols-[minmax(0,1fr)_auto] 2xl:grid-cols-[auto_minmax(0,1fr)_auto] ${rangeEdges} ${schedule.is_notice ? 'border-red-200 bg-red-50/95 hover:border-red-400' : isRange ? 'border-indigo-200 bg-indigo-50/95 hover:bg-indigo-100' : 'border-blue-100 bg-white hover:border-blue-400'}`}
+                                        className={`relative z-[1] grid min-h-6 min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1 border px-1 py-0.5 text-left font-bold shadow-sm transition-all lg:grid-cols-[auto_minmax(0,1fr)_auto] xl:grid-cols-[minmax(0,1fr)_auto] 2xl:grid-cols-[auto_minmax(0,1fr)_auto] ${rangeEdges} ${categoryStyle.chip} ${schedule.is_urgent ? 'ring-1 ring-red-400' : ''}`}
                                       >
-                                        <span className={`hidden max-w-[68px] truncate text-[9px] font-black tabular-nums lg:block xl:hidden 2xl:block ${schedule.is_notice ? 'text-red-500' : isRange ? 'text-indigo-600' : 'text-blue-600'}`}>{formatCalendarScheduleTime(schedule, dateStr)}</span>
-                                        <span className={`min-w-0 truncate text-[9px] font-extrabold ${schedule.is_notice ? 'text-red-900' : ''} ${schedule.is_completed ? 'text-slate-400 line-through opacity-60' : ''}`}>{formatScheduleTitle(schedule)}</span>
+                                        <span className={`hidden max-w-[68px] truncate text-[9px] font-black tabular-nums lg:block xl:hidden 2xl:block ${categoryStyle.time}`}>{formatCalendarScheduleTime(schedule, dateStr)}</span>
+                                        <span className={`min-w-0 truncate text-[9px] font-extrabold ${schedule.is_completed ? 'text-slate-500 line-through opacity-60' : ''}`}>{formatScheduleTitle(schedule)}</span>
                                         {schedule.is_urgent ? <Siren size={10} className="shrink-0 text-red-500" /> : schedule.is_notice ? <span className="rounded bg-red-500 px-1 text-[7px] font-black text-white">공지</span> : null}
                                       </button>
                                     );
@@ -1477,18 +1484,21 @@ export default function IntegratedPortal() {
                           </div>
                         ) : selectedCalendarSchedules.map((schedule) => {
                           const isRange = getScheduleEndDate(schedule) > schedule.date;
+                          const category = getScheduleCategory(schedule);
+                          const categoryStyle = scheduleCategoryStyles[category];
                           return (
                             <button
                               type="button"
                               key={schedule.id}
+                              data-calendar-detail-category={category}
                               onClick={() => setSelectedSchedule(schedule)}
-                              className={`w-full rounded-2xl border p-3.5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md ${schedule.is_notice ? 'border-red-200 bg-red-50/60 hover:border-red-300' : isRange ? 'border-indigo-200 bg-indigo-50/50 hover:border-indigo-300' : 'border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50/30'}`}
+                              className={`w-full rounded-2xl border border-l-4 p-3.5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md ${categoryStyle.chip} ${categoryStyle.accent} ${schedule.is_urgent ? 'ring-1 ring-red-400' : ''}`}
                             >
                               <div className="flex flex-wrap items-center justify-between gap-2">
-                                <span className={`flex items-center gap-1.5 text-sm font-black tabular-nums ${schedule.is_notice ? 'text-red-600' : isRange ? 'text-indigo-600' : 'text-blue-600'}`}><Clock size={14}/>{formatScheduleTime(schedule)}</span>
+                                <span className={`flex items-center gap-1.5 text-sm font-black tabular-nums ${categoryStyle.time}`}><Clock size={14}/>{formatScheduleTime(schedule)}</span>
                                 <div className="flex flex-wrap justify-end gap-1">
-                                  <span className="rounded-md bg-slate-100 px-1.5 py-1 text-[8px] font-black text-slate-600">{getCalendarScheduleTypeLabel(schedule)}</span>
-                                  {isRange && <span className="rounded-md bg-indigo-100 px-1.5 py-1 text-[8px] font-black text-indigo-700">기간</span>}
+                                  <span className={`rounded-md px-1.5 py-1 text-[8px] font-black ring-1 ring-inset ${categoryStyle.badge}`}>{getCalendarScheduleTypeLabel(schedule)}</span>
+                                  {isRange && <span className="rounded-md bg-white/80 px-1.5 py-1 text-[8px] font-black text-slate-600">기간</span>}
                                   {schedule.is_notice && <span className="rounded-md bg-red-500 px-1.5 py-1 text-[8px] font-black text-white">공지</span>}
                                   {schedule.is_urgent && <span className="rounded-md bg-red-100 px-1.5 py-1 text-[8px] font-black text-red-600">긴급</span>}
                                 </div>
@@ -1617,10 +1627,11 @@ export default function IntegratedPortal() {
       {selectedSchedule && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
           <div className="flex w-full max-w-md flex-col items-center rounded-[32px] bg-white p-8 shadow-2xl">
-            <div className={`mb-6 rounded-2xl p-3 ${selectedSchedule.is_urgent ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'}`}>
+            <div className={`mb-4 rounded-2xl p-3 ${selectedSchedule.is_urgent ? 'bg-red-50 text-red-600' : scheduleCategoryStyles[getScheduleCategory(selectedSchedule)].icon}`}>
               {selectedSchedule.is_urgent ? <Siren size={24} /> : <CalendarDays size={24} />}
             </div>
             {selectedSchedule.is_urgent && <span className="mb-3 rounded-lg bg-red-500 px-3 py-1 text-[10px] font-black text-white">긴급 일정</span>}
+            <span className={`mb-3 rounded-lg px-2.5 py-1.5 text-[10px] font-black ring-1 ring-inset ${scheduleCategoryStyles[getScheduleCategory(selectedSchedule)].badge}`}>{getCalendarScheduleTypeLabel(selectedSchedule)}</span>
             <h3 className={`mb-2 text-center text-2xl font-black leading-tight ${selectedSchedule.is_completed ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{formatScheduleTitle(selectedSchedule)}</h3>
             <p className="mb-8 text-center font-bold text-slate-400">{formatScheduleDateRange(selectedSchedule)} | {formatScheduleTime(selectedSchedule)}</p>
             {isRecurringSchedule(selectedSchedule) && (

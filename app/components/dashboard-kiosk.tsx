@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BellRing, CalendarDays, CheckCircle2, Clock3, Minimize2, MonitorUp, Siren, X } from 'lucide-react';
+import { getScheduleCategory, scheduleCategoryStyles, type ScheduleCategory } from '@/lib/schedule-category';
 
 export interface KioskSchedule {
   id: number | string;
@@ -28,6 +29,7 @@ interface DashboardKioskProps {
 type ScheduleBreakdownItem = {
   label: string;
   count: number;
+  category: ScheduleCategory;
 };
 
 const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -61,31 +63,23 @@ const formatAbsenceDate = (value: string) => {
   return `${month}월 ${day}일(${weekday})`;
 };
 
-const getScheduleCategory = (schedule: KioskSchedule) => {
-  if (schedule.schedule_type === 'leave') return 'leave';
-  if (schedule.schedule_type === 'internal' || /^내부일정\s*[)）]/u.test(schedule.title)) return 'internal';
-  if (schedule.schedule_type === 'business_trip' || /^출장\s*[)）]/u.test(schedule.title)) return 'business_trip';
-  if (schedule.schedule_type === 'meeting' || /^회의\s*[)）]/u.test(schedule.title)) return 'meeting';
-  return 'general';
-};
-
 const getScheduleBreakdown = (items: KioskSchedule[], includeLeave = false): ScheduleBreakdownItem[] => {
   const counts = { general: 0, internal: 0, business_trip: 0, meeting: 0, leave: 0 };
   for (const schedule of items) counts[getScheduleCategory(schedule)] += 1;
   const result: ScheduleBreakdownItem[] = [
-    { label: '일반', count: counts.general },
-    { label: '내부일정', count: counts.internal },
-    { label: '출장', count: counts.business_trip },
-    { label: '회의', count: counts.meeting },
+    { label: '일반', count: counts.general, category: 'general' },
+    { label: '내부일정', count: counts.internal, category: 'internal' },
+    { label: '출장', count: counts.business_trip, category: 'business_trip' },
+    { label: '회의', count: counts.meeting, category: 'meeting' },
   ];
-  if (includeLeave) result.push({ label: '휴가', count: counts.leave });
+  if (includeLeave) result.push({ label: '휴가', count: counts.leave, category: 'leave' });
   return result;
 };
 
 const getAbsenceBreakdown = (items: KioskSchedule[]): ScheduleBreakdownItem[] => [
-  { label: '연차', count: items.filter((schedule) => absenceLabel(schedule) === '연차').length },
-  { label: '조퇴', count: items.filter((schedule) => absenceLabel(schedule) === '조퇴').length },
-  { label: '외출', count: items.filter((schedule) => absenceLabel(schedule) === '외출').length },
+  { label: '연차', count: items.filter((schedule) => absenceLabel(schedule) === '연차').length, category: 'leave' },
+  { label: '조퇴', count: items.filter((schedule) => absenceLabel(schedule) === '조퇴').length, category: 'leave' },
+  { label: '외출', count: items.filter((schedule) => absenceLabel(schedule) === '외출').length, category: 'leave' },
 ];
 
 type ExtendedScreen = Screen & {
@@ -469,7 +463,7 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
             <CompactList items={data.todos} empty="미완료 항목이 없습니다." />
           </Panel>
 
-          <Panel title="이번 주·다음 주 휴가" count={data.absences.length} breakdown={getAbsenceBreakdown(data.absences)} icon={<CalendarDays size={17} />} tone="amber" className="lg:col-span-4">
+          <Panel title="이번 주·다음 주 휴가" count={data.absences.length} breakdown={getAbsenceBreakdown(data.absences)} icon={<CalendarDays size={17} />} tone="orange" className="lg:col-span-4">
             <AbsenceList items={data.absences} />
           </Panel>
         </main>
@@ -483,7 +477,7 @@ const toneStyles = {
   violet: { panel: 'border-violet-400/35 bg-[#171a38]', text: 'text-violet-300', badge: 'border-violet-400/30 bg-violet-500/25 text-violet-100', chip: 'border-violet-400/20 bg-violet-500/15 text-violet-100' },
   red: { panel: 'border-rose-400/35 bg-[#24172a]', text: 'text-rose-300', badge: 'border-rose-400/30 bg-rose-500/25 text-rose-100', chip: 'border-rose-400/20 bg-rose-500/15 text-rose-100' },
   emerald: { panel: 'border-emerald-400/35 bg-[#10252b]', text: 'text-emerald-300', badge: 'border-emerald-400/30 bg-emerald-500/25 text-emerald-100', chip: 'border-emerald-400/20 bg-emerald-500/15 text-emerald-100' },
-  amber: { panel: 'border-amber-300/35 bg-[#29251c]', text: 'text-amber-300', badge: 'border-amber-300/30 bg-amber-400/25 text-amber-100', chip: 'border-amber-300/20 bg-amber-400/15 text-amber-100' },
+  orange: { panel: 'border-orange-300/35 bg-[#2c211a]', text: 'text-orange-300', badge: 'border-orange-300/30 bg-orange-400/25 text-orange-100', chip: 'border-orange-300/20 bg-orange-400/15 text-orange-100' },
 };
 
 function Panel({ title, count, breakdown, tone, icon, className = '', children }: { title: string; count: number; breakdown?: ScheduleBreakdownItem[]; tone: keyof typeof toneStyles; icon?: React.ReactNode; className?: string; children: React.ReactNode }) {
@@ -494,8 +488,8 @@ function Panel({ title, count, breakdown, tone, icon, className = '', children }
       {breakdown && (
         <div className="mb-2.5 grid shrink-0 grid-flow-col auto-cols-fr gap-1.5 lg:mb-3">
           {breakdown.map((item) => (
-            <div key={`${title}-${item.label}`} className={`flex min-w-0 items-center justify-center gap-1 rounded-lg border px-1.5 py-1 text-[8px] font-black lg:text-[9px] ${item.count === 0 ? 'border-white/5 bg-black/10 text-slate-600' : style.chip}`}>
-              <span className="truncate">{item.label}</span><strong className={item.count === 0 ? 'text-slate-600' : 'text-white'}>{item.count}</strong>
+            <div key={`${title}-${item.label}`} data-schedule-category={item.category} className={`flex min-w-0 items-center justify-center gap-1 rounded-lg border border-white/10 px-1.5 py-1 text-[8px] font-black ring-1 ring-inset lg:text-[9px] ${scheduleCategoryStyles[item.category].darkBadge}`}>
+              <span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full ${scheduleCategoryStyles[item.category].darkDot}`} /><span className="truncate">{item.label}</span><strong className={item.count === 0 ? 'text-slate-400' : 'text-white'}>{item.count}</strong>
             </div>
           ))}
         </div>
@@ -525,20 +519,14 @@ function ScheduleList({ items, empty, showDate = false, allowColumns = false }: 
 
 function ScheduleRow({ schedule, showDate = false }: { schedule: KioskSchedule; showDate?: boolean }) {
   const category = getScheduleCategory(schedule);
-  const categoryStyle = {
-    general: { label: '일반', badge: 'bg-blue-400/15 text-blue-200 ring-blue-300/20', icon: 'bg-blue-500/20 text-blue-200' },
-    internal: { label: '내부일정', badge: 'bg-cyan-400/15 text-cyan-200 ring-cyan-300/20', icon: 'bg-cyan-500/20 text-cyan-200' },
-    business_trip: { label: '출장', badge: 'bg-orange-400/15 text-orange-200 ring-orange-300/20', icon: 'bg-orange-500/20 text-orange-200' },
-    meeting: { label: '회의', badge: 'bg-violet-400/15 text-violet-200 ring-violet-300/20', icon: 'bg-violet-500/20 text-violet-200' },
-    leave: { label: '휴가', badge: 'bg-amber-400/15 text-amber-200 ring-amber-300/20', icon: 'bg-amber-500/20 text-amber-200' },
-  }[category];
+  const categoryStyle = scheduleCategoryStyles[category];
   return (
-    <div className="flex min-h-0 flex-1 items-center gap-3 rounded-xl border border-white/15 bg-[#071126]/75 px-3 py-2 shadow-sm lg:rounded-2xl lg:px-4">
-      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${schedule.is_urgent ? 'bg-rose-500/25 text-rose-200' : categoryStyle.icon} lg:h-9 lg:w-9`}>{schedule.is_urgent ? <Siren size={16} /> : <CalendarDays size={16} />}</span>
+    <div data-schedule-category={category} className={`flex min-h-0 flex-1 items-center gap-3 rounded-xl border border-l-4 border-white/15 bg-[#071126]/75 px-3 py-2 shadow-sm lg:rounded-2xl lg:px-4 ${categoryStyle.darkAccent}`}>
+      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${schedule.is_urgent ? 'bg-rose-500/25 text-rose-200' : categoryStyle.darkIcon} lg:h-9 lg:w-9`}>{schedule.is_urgent ? <Siren size={16} /> : <CalendarDays size={16} />}</span>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <p className="min-w-0 flex-1 truncate text-xs font-black sm:text-sm lg:text-base 2xl:text-lg">{cleanTitle(schedule.title)}</p>
-          <span className={`shrink-0 rounded-md px-1.5 py-1 text-[8px] font-black ring-1 ring-inset lg:text-[9px] ${categoryStyle.badge}`}>{categoryStyle.label}</span>
+          <span className={`shrink-0 rounded-md px-1.5 py-1 text-[8px] font-black ring-1 ring-inset lg:text-[9px] ${categoryStyle.darkBadge}`}>{category === 'leave' ? absenceLabel(schedule) : categoryStyle.label}</span>
         </div>
         <div className="mt-0.5 flex items-center gap-2">
           {showDate && <span className="shrink-0 text-xs font-black tracking-tight text-white lg:text-sm 2xl:text-base">{formatShortDate(schedule.date)}</span>}
@@ -552,14 +540,15 @@ function ScheduleRow({ schedule, showDate = false }: { schedule: KioskSchedule; 
 function CompactList({ items, empty }: { items: KioskSchedule[]; empty: string }) {
   if (items.length === 0) return <Empty label={empty} />;
   return <div className="grid h-full min-h-0 gap-1 overflow-hidden lg:gap-1.5" style={{ gridTemplateRows: `repeat(${items.length}, minmax(0, 1fr))` }}>{items.map((schedule) => {
-    const categoryLabel = ({ general: '일반', internal: '내부', business_trip: '출장', meeting: '회의', leave: '휴가' })[getScheduleCategory(schedule)];
-    return <div key={schedule.id} className="flex min-h-0 items-center gap-2 rounded-xl border border-white/10 bg-[#071126]/70 px-3 py-1.5"><span className="rounded-md bg-white/10 px-1.5 py-1 text-[8px] font-black text-slate-200">{categoryLabel}</span><span className="min-w-0 flex-1 truncate text-xs font-black text-white lg:text-sm">{cleanTitle(schedule.title)}</span><span className="shrink-0 text-[9px] font-bold text-slate-300">{schedule.date.slice(5).replace('-', '.')}</span></div>;
+    const category = getScheduleCategory(schedule);
+    const categoryStyle = scheduleCategoryStyles[category];
+    return <div key={schedule.id} data-schedule-category={category} className={`flex min-h-0 items-center gap-2 rounded-xl border border-l-4 border-white/10 bg-[#071126]/70 px-3 py-1.5 ${categoryStyle.darkAccent}`}><span className={`rounded-md px-1.5 py-1 text-[8px] font-black ring-1 ring-inset ${categoryStyle.darkBadge}`}>{category === 'leave' ? absenceLabel(schedule) : categoryStyle.label}</span>{schedule.is_urgent && <Siren size={13} className="shrink-0 text-rose-300" />}<span className="min-w-0 flex-1 truncate text-xs font-black text-white lg:text-sm">{cleanTitle(schedule.title)}</span><span className="shrink-0 text-[9px] font-bold text-slate-300">{schedule.date.slice(5).replace('-', '.')}</span></div>;
   })}</div>;
 }
 
 function AbsenceList({ items }: { items: KioskSchedule[] }) {
   if (items.length === 0) return <Empty label="예정된 휴가·조퇴·외출이 없습니다." />;
-  return <div className="grid h-full min-h-0 gap-1 overflow-hidden lg:gap-1.5" style={{ gridTemplateRows: `repeat(${items.length}, minmax(0, 1fr))` }}>{items.map((schedule) => <div key={schedule.id} className="flex min-h-0 items-center gap-2 rounded-xl border border-amber-200/15 bg-amber-950/35 px-3 py-1.5"><span className="rounded-md bg-amber-300/20 px-2 py-1 text-[9px] font-black text-amber-200 ring-1 ring-inset ring-amber-200/20">{absenceLabel(schedule)}</span><span className="shrink-0 text-xs font-black tracking-tight text-amber-50 lg:text-sm 2xl:text-base">{schedule.end_date && schedule.end_date > schedule.date ? `${formatAbsenceDate(schedule.date)}–${formatAbsenceDate(schedule.end_date)}` : formatAbsenceDate(schedule.date)}</span><span className="min-w-0 flex-1 truncate text-xs font-black text-white lg:text-sm 2xl:text-base">{cleanTitle(schedule.title)}</span></div>)}</div>;
+  return <div className="grid h-full min-h-0 gap-1 overflow-hidden lg:gap-1.5" style={{ gridTemplateRows: `repeat(${items.length}, minmax(0, 1fr))` }}>{items.map((schedule) => <div key={schedule.id} data-schedule-category="leave" className={`flex min-h-0 items-center gap-2 rounded-xl border border-l-4 border-orange-200/15 bg-orange-950/35 px-3 py-1.5 ${scheduleCategoryStyles.leave.darkAccent}`}><span className={`rounded-md px-2 py-1 text-[9px] font-black ring-1 ring-inset ${scheduleCategoryStyles.leave.darkBadge}`}>{absenceLabel(schedule)}</span><span className="shrink-0 text-xs font-black tracking-tight text-orange-50 lg:text-sm 2xl:text-base">{schedule.end_date && schedule.end_date > schedule.date ? `${formatAbsenceDate(schedule.date)}–${formatAbsenceDate(schedule.end_date)}` : formatAbsenceDate(schedule.date)}</span><span className="min-w-0 flex-1 truncate text-xs font-black text-white lg:text-sm 2xl:text-base">{cleanTitle(schedule.title)}</span></div>)}</div>;
 }
 
 function Empty({ label }: { label: string }) {

@@ -40,22 +40,22 @@ const kindConfig = {
     label: '연차',
     shortLabel: '연',
     icon: Palmtree,
-    badge: 'border-amber-200 bg-amber-50 text-amber-700',
-    dot: 'bg-amber-400',
+    badge: 'border-orange-200 bg-orange-50 text-orange-700',
+    dot: 'bg-orange-500',
   },
   early: {
     label: '조퇴',
     shortLabel: '조',
     icon: Clock3,
-    badge: 'border-sky-200 bg-sky-50 text-sky-700',
-    dot: 'bg-sky-400',
+    badge: 'border-orange-300 bg-orange-100 text-orange-800',
+    dot: 'bg-orange-600',
   },
   outing: {
     label: '외출',
     shortLabel: '외',
     icon: DoorOpen,
-    badge: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-    dot: 'bg-emerald-400',
+    badge: 'border-orange-200 border-dashed bg-white text-orange-700',
+    dot: 'bg-orange-400',
   },
 } satisfies Record<AbsenceKind, {
   label: string;
@@ -240,9 +240,9 @@ export default function MonthlyAbsenceBoard({
       <section role="dialog" aria-modal="true" aria-label="월간 휴가 현황" className="flex max-h-[94vh] w-full max-w-7xl flex-col overflow-hidden rounded-[26px] bg-white shadow-2xl sm:rounded-[34px]">
         <header className="flex flex-col gap-4 border-b border-slate-100 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-7">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-amber-50 text-amber-600"><CalendarDays size={21} /></div>
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-orange-50 text-orange-700"><CalendarDays size={21} /></div>
             <div className="min-w-0">
-              <p className="text-[10px] font-black uppercase tracking-[0.15em] text-amber-600">Monthly absence</p>
+              <p className="text-[10px] font-black uppercase tracking-[0.15em] text-orange-700">Monthly absence</p>
               <h2 className="truncate text-xl font-black tracking-tight text-slate-900 sm:text-2xl">{year}년 {month + 1}월 휴가 현황</h2>
             </div>
           </div>
@@ -270,7 +270,7 @@ export default function MonthlyAbsenceBoard({
             <div className="flex min-h-[360px] flex-col items-center justify-center px-6 text-center">
               <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-3xl bg-slate-100 text-slate-300"><CalendarDays size={27} /></div>
               <p className="text-sm font-black text-slate-700">표시할 휴가·조퇴·외출 일정이 없습니다.</p>
-              {!showWholeMonth && <button onClick={() => setShowWholeMonth(true)} className="mt-3 text-xs font-black text-amber-600">이번 달 전체 보기</button>}
+              {!showWholeMonth && <button onClick={() => setShowWholeMonth(true)} className="mt-3 text-xs font-black text-orange-700">이번 달 전체 보기</button>}
             </div>
           ) : (
             <>
