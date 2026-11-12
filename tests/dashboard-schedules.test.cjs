@@ -92,7 +92,7 @@ test('print output does not cap many events or truncate long titles', () => {
   assert.doesNotMatch(source, /line-clamp|text-overflow:\s*ellipsis|scale\(/);
 });
 
-test('compact dashboard has one shared category control and one fixed pair of day panels', () => {
+test('dashboard exposes a seven-day hub, shared filtering and direct information previews', () => {
   const today = helpers.toLocalDateKey(new Date());
   const schedules = [item(1, today, { schedule_type: 'meeting' }), item(2, today, { schedule_type: 'leave', title: '휴가) 김직원' }), item(3, helpers.shiftDateKey(today, -1), { is_todo: true })];
   const noop = () => {};
@@ -100,9 +100,13 @@ test('compact dashboard has one shared category control and one fixed pair of da
   assert.equal((html.match(/aria-label="일정 유형"/g) ?? []).length, 1);
   assert.equal((html.match(/data-dashboard-summary=/g) ?? []).length, 4);
   assert.equal((html.match(/data-dashboard-day=/g) ?? []).length, 2);
+  assert.equal((html.match(/data-dashboard-week-date=/g) ?? []).length, 7);
+  assert.equal((html.match(/data-dashboard-context=/g) ?? []).length, 3);
   assert.match(html, /주간 일정/);
   assert.match(html, /이번 달 휴가/);
   assert.match(html, /할 일/);
+  assert.match(html, /오늘 휴가·조퇴·외출/);
+  assert.match(html, /달력 보기/);
   assert.match(html, /data-dashboard-count[^>]*>2</, 'all counts include both work and leave');
   assert.match(html, /주간 인쇄/);
   assert.doesNotMatch(html, /앞으로 7일|유형 선택 · 목록 필터|미완료 유형별 건수|유형 간 인원 중복 가능|업무 전체는 휴가/);

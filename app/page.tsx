@@ -1371,6 +1371,13 @@ export default function IntegratedPortal() {
                 <SharedDashboard
                   schedules={visibleSchedules}
                   onChangeView={setViewMode}
+                  onOpenCalendarDate={(date) => {
+                    const target = new Date(`${date}T12:00:00`);
+                    if (!Number.isFinite(target.getTime()) || getLocalDateKey(target) !== date) return;
+                    setCurrentMonth(new Date(target.getFullYear(), target.getMonth(), 1));
+                    setSelectedCalendarDate(date);
+                    setViewMode('calendar');
+                  }}
                   onOpenChat={() => setIsChatOpen(true)}
                   onOpenSchedule={setSelectedSchedule}
                   onToggleScheduleComplete={onToggleScheduleComplete}
