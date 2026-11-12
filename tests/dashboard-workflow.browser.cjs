@@ -277,9 +277,12 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, 
     assert.equal(await legend().getByRole('button').count(), 0, 'legend never filters or behaves like buttons');
     assert.equal(await legend().locator('[data-dashboard-legend-category]').count(), 5, 'five categories appear once without an unnecessary all button');
     assert.equal(await dashboard().locator('[data-dashboard-week-date]').count(), 7, 'all seven dates are visible without horizontal navigation');
-    for (const [offset, label] of ['오늘', '내일', 'D-2', 'D-3', 'D-4', 'D-5', 'D-6'].entries()) {
+    for (const [offset, label] of ['오늘', '내일', '', '', '', '', ''].entries()) {
       const date = `2026-11-${12 + offset}`;
-      assert.equal(await dateTrigger(date).getByText(label, { exact: true }).count(), 1, `${date}: proximity is readable directly on its full-day card`);
+      if (label) assert.equal(await dateTrigger(date).getByText(label, { exact: true }).count(), 1, `${date}: today and tomorrow retain their short orientation labels`);
+      assert.equal(await dateTrigger(date).getByText(/^D-\d+$/).count(), 0, `${date}: calendar dates never show an event countdown`);
+      assert.doesNotMatch(await dateTrigger(date).getAttribute('aria-label') ?? '', /D-\d+/, `${date}: the date's accessible label does not announce a countdown`);
+      assert.doesNotMatch(await dateTrigger(date).getAttribute('title') ?? '', /D-\d+/, `${date}: the date's tooltip does not duplicate an event countdown`);
       assert.equal(await dateTrigger(date).getAttribute('type'), 'button', `${date}: the entire day card is one semantic trigger`);
       assert.equal(await dateTrigger(date).locator('button').count(), 0, `${date}: no nested event buttons bypass the day's preview`);
     }
@@ -395,6 +398,8 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, 
     await page.mouse.move(5, 5);
     await dateTrigger('2026-11-18').hover(); await page.waitForTimeout(470);
     await assertPeekBounds(dateTrigger('2026-11-18'));
+    assert.doesNotMatch(await peek().getByRole('heading').innerText(), /D-\d+/, 'the selected date heading is not itself an event countdown');
+    assert.equal(await peek().locator('[data-schedule-id="8"]').getByText('D-6', { exact: true }).count(), 1, 'the actual event keeps its countdown inside the selected-day preview');
     await peek().evaluate((element) => { window.__previewSurface = element; });
     await summaryTrigger('notice').hover(); await page.waitForTimeout(470);
     await assertPeekBounds(summaryTrigger('notice'));
@@ -718,7 +723,7 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, 
     assert.deepEqual(errors, []); assert.deepEqual(writes, ['/rest/v1/schedules']);
     console.log(JSON.stringify({ passed: true, pageCount, longPageCount, cases: [
       'one static noninteractive category legend', 'all categories remain visible', 'all includes leave',
-      'seven visible date tiles with today, tomorrow and D-N labels', 'responsive three, two and one-row weekly tiles',
+      'seven visible date tiles with only today and tomorrow orientation labels', 'event-level countdowns remain in weekly and selected-day previews', 'responsive three, two and one-row weekly tiles',
       'weekly carousel exposes every event in order and wraps without loss', 'hover, keyboard focus and open previews pause rotation',
       'global pause, hidden documents and reduced motion stop automatic content changes', 'unmount cleans up rotating tiles',
       'six viewport sizes and mixed information fit', 'rapid crossings never flash a preview',

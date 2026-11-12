@@ -105,7 +105,7 @@ test('dashboard exposes a seven-day hub, noninteractive category legend and dire
   assert.equal((html.match(/data-dashboard-week-date=/g) ?? []).length, 7);
   assert.match(html, /오늘/);
   assert.match(html, /내일/);
-  assert.match(html, /D-6/);
+  assert.doesNotMatch(html, /D-\d+/, 'calendar date tiles do not show event countdowns');
   assert.match(html, /data-week-schedule-id=/);
   assert.equal((html.match(/data-dashboard-context=/g) ?? []).length, 3);
   assert.match(html, /주간 일정/);

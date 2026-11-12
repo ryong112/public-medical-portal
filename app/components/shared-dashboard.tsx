@@ -284,7 +284,7 @@ export default function SharedDashboard({ schedules, holidaysByDate = {}, onChan
   ];
   const detailFor = (key: DetailKey | null) => {
     const date = key?.startsWith('date:') ? key.slice(5) : null;
-    return date ? { key, label: `${getDayProximityLabel(date, today)} · ${weekdayDate(date)}${holidaysByDate[date]?.length ? ` · ${holidaysByDate[date].join(' · ')}` : ''} 일정`, items: schedules.filter((schedule) => scheduleOccursOn(schedule, date)).sort(sortSchedules) } : key === 'today-absence' ? { key, label: '오늘 휴가·조퇴·외출', items: todayAbsenceItems } : cards.find((card) => card.key === key);
+    return date ? { key, label: `${date === today ? '오늘 · ' : date === tomorrow ? '내일 · ' : ''}${weekdayDate(date)}${holidaysByDate[date]?.length ? ` · ${holidaysByDate[date].join(' · ')}` : ''} 일정`, items: schedules.filter((schedule) => scheduleOccursOn(schedule, date)).sort(sortSchedules) } : key === 'today-absence' ? { key, label: '오늘 휴가·조퇴·외출', items: todayAbsenceItems } : cards.find((card) => card.key === key);
   };
   const selected = detailFor(detailKey);
   const preview = detailFor(peek.active?.key ?? null);
@@ -339,7 +339,7 @@ export default function SharedDashboard({ schedules, holidaysByDate = {}, onChan
       </div></header>
       <div className={styles.weekGrid}>{getSevenDayKeys(today).map((date) => {
         const items = schedules.filter((schedule) => scheduleOccursOn(schedule, date)).sort(sortSchedules);
-        return <WeeklyDayTile key={date} date={date} today={today} items={items} proximityLabel={getDayProximityLabel(date, today)} holidayNames={holidaysByDate[date]} triggerProps={peek.getTriggerProps(`date:${date}`)} autoPlay={weekAutoPlay} paused={Boolean(peek.active) || Boolean(detailKey)} />;
+        return <WeeklyDayTile key={date} date={date} today={today} items={items} dayLabel={date === today ? '오늘' : date === tomorrow ? '내일' : undefined} holidayNames={holidaysByDate[date]} triggerProps={peek.getTriggerProps(`date:${date}`)} autoPlay={weekAutoPlay} paused={Boolean(peek.active) || Boolean(detailKey)} />;
       })}</div>
     </section>
     <div className={styles.workspace}>

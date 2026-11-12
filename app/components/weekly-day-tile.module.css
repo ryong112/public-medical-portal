@@ -11,7 +11,7 @@
 .count { color: #475569; font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .count > span { margin-left: 2px; }
 .proximity { display: flex; align-items: center; gap: 5px; width: 100%; min-width: 0; height: 21px; flex-shrink: 0; color: #64748b; font-size: 12px; line-height: 17px; font-weight: 650; }
-.proximityLabel { flex-shrink: 0; white-space: nowrap; }
+.dayLabel { flex-shrink: 0; white-space: nowrap; }
 .holidayName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #dc2626; }
 .currentProximity { color: #1d4ed8; }
 .viewport { display: block; position: relative; min-width: 0; height: calc(var(--week-tile-visible-rows) * var(--week-tile-row-height)); flex-shrink: 0; overflow: hidden; }

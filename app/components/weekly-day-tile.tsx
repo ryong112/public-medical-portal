@@ -12,7 +12,7 @@ interface WeeklyDayTileProps {
   date: string;
   today: string;
   items: DashboardSchedule[];
-  proximityLabel: string;
+  dayLabel?: '오늘' | '내일';
   holidayNames?: string[];
   triggerProps: ButtonHTMLAttributes<HTMLButtonElement>;
   autoPlay?: boolean;
@@ -29,7 +29,7 @@ const motionAllowed = () => document.visibilityState === 'visible' && !window.ma
 const serverMotionAllowed = () => false;
 const cleanTitle = (title: string) => title.replace(/^(?:회의|출장|내부일정|휴가|연차|조퇴|외출)\s*[)）]\s*/u, '').trim();
 
-export default function WeeklyDayTile({ date, today, items, proximityLabel, holidayNames = [], triggerProps, autoPlay = true, paused = false }: WeeklyDayTileProps) {
+export default function WeeklyDayTile({ date, today, items, dayLabel, holidayNames = [], triggerProps, autoPlay = true, paused = false }: WeeklyDayTileProps) {
   const button = useRef<HTMLButtonElement>(null);
   const [visibleRows, setVisibleRows] = useState(3);
   const [hovered, setHovered] = useState(false);
@@ -91,7 +91,7 @@ export default function WeeklyDayTile({ date, today, items, proximityLabel, holi
   const dayKind = holidayNames.length ? 'holiday' : dateValue?.getDay() === 0 ? 'sunday' : dateValue?.getDay() === 6 ? 'saturday' : 'weekday';
   const weekday = dateValue ? new Intl.DateTimeFormat('ko-KR', { weekday: 'short' }).format(dateValue) : '';
   const dateLabel = dateValue ? new Intl.DateTimeFormat('ko-KR', { month: 'long', day: 'numeric', weekday: 'long' }).format(dateValue) : date;
-  const accessibleLabel = [dateLabel, holidayLabel, proximityLabel, `일정 ${items.length}건 전체 보기`].filter(Boolean).join(', ');
+  const accessibleLabel = [dateLabel, holidayLabel, dayLabel, `일정 ${items.length}건 전체 보기`].filter(Boolean).join(', ');
   const indices = getWeekCarouselIndices(items.length, effectiveIndex, visibleRows, true);
 
   return <button {...triggerProps} type="button" ref={button}
@@ -112,7 +112,7 @@ export default function WeeklyDayTile({ date, today, items, proximityLabel, holi
       <span className={styles.count}>{items.length}<span>건</span></span>
     </span>
     <span className={`${styles.proximity} ${date === today ? styles.currentProximity : ''}`}>
-      <span className={styles.proximityLabel} data-week-proximity>{proximityLabel}</span>
+      {dayLabel && <span className={styles.dayLabel} data-week-day-label>{dayLabel}</span>}
       {holidayLabel && <span className={styles.holidayName} data-week-holiday-name>{holidayLabel}</span>}
     </span>
     <span className={styles.viewport} data-week-carousel-viewport aria-hidden="true">
