@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test:whiteboard": "node --test tests/whiteboard-import.test.cjs tests/whiteboard-analysis.test.cjs tests/whiteboard-request.test.cjs tests/whiteboard-review.test.cjs",
-    "test:schedules": "node --test tests/schedule-category.test.cjs tests/schedule-classification.test.cjs tests/schedule-workflow.test.cjs tests/dashboard-schedules.test.cjs tests/absence-calendar.test.cjs",
+    "test:schedules": "node --test tests/schedule-category.test.cjs tests/schedule-classification.test.cjs tests/schedule-workflow.test.cjs tests/dashboard-schedules.test.cjs tests/absence-calendar.test.cjs tests/preview-pagination.test.cjs",
     "test:documents": "node --test tests/document-upload.test.cjs tests/document-preview.test.cjs"
   },
   "dependencies": {

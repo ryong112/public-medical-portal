@@ -42,6 +42,7 @@ export function useAnchoredPreview<Key extends string>(): AnchoredPreviewControl
   const candidate = useRef<{ key: Key; anchor: HTMLElement; x: number; y: number } | null>(null);
   const hoveredTrigger = useRef<HTMLElement | null>(null);
   const panelHovered = useRef(false);
+  const interactionMode = useRef<'pointer' | 'keyboard'>('pointer');
   const pointerPosition = useRef<{ x: number; y: number } | null>(null);
   const suppressedAnchor = useRef<HTMLElement | null>(null);
   const suppressedFocusAnchor = useRef<HTMLElement | null>(null);
@@ -114,8 +115,9 @@ export function useAnchoredPreview<Key extends string>(): AnchoredPreviewControl
       leaveTimer.current = null;
       const current = activeRef.current;
       const focused = document.activeElement;
-      if (!current || current.pinned || panelHovered.current || hoveredTrigger.current
-        || current.anchor.contains(focused) || panelRef.current?.contains(focused)) return;
+      const keyboardFocusInside = interactionMode.current === 'keyboard'
+        && (current?.anchor.contains(focused) || panelRef.current?.contains(focused));
+      if (!current || current.pinned || panelHovered.current || hoveredTrigger.current || keyboardFocusInside) return;
       // Keep the tiny visual gap traversable without an invisible DOM layer
       // intercepting clicks on adjacent dates or their representative titles.
       const point = pointerPosition.current;
@@ -144,7 +146,14 @@ export function useAnchoredPreview<Key extends string>(): AnchoredPreviewControl
 
   useEffect(() => {
     const trackPointer = (event: PointerEvent) => { pointerPosition.current = { x: event.clientX, y: event.clientY }; };
+    const trackWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && panelRef.current?.contains(event.target as Node | null)) interactionMode.current = 'pointer';
+    };
+    const trackKeyboard = (event: KeyboardEvent) => {
+      if (event.key === 'Tab' || event.key.startsWith('Arrow') || ['Enter', ' ', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) interactionMode.current = 'keyboard';
+    };
     const outside = (event: PointerEvent) => {
+      interactionMode.current = 'pointer';
       const target = event.target as Node | null;
       const current = activeRef.current;
       if (current && target && !current.anchor.contains(target) && !panelRef.current?.contains(target)) close();
@@ -167,10 +176,14 @@ export function useAnchoredPreview<Key extends string>(): AnchoredPreviewControl
     };
     document.addEventListener('pointerdown', outside, true);
     document.addEventListener('pointermove', trackPointer, { passive: true });
+    document.addEventListener('wheel', trackWheel, { passive: true, capture: true });
+    document.addEventListener('keydown', trackKeyboard, true);
     document.addEventListener('keydown', escape);
     return () => {
       document.removeEventListener('pointerdown', outside, true);
       document.removeEventListener('pointermove', trackPointer);
+      document.removeEventListener('wheel', trackWheel, true);
+      document.removeEventListener('keydown', trackKeyboard, true);
       document.removeEventListener('keydown', escape);
       cancelOpen();
       cancelLeave();
@@ -191,6 +204,7 @@ export function useAnchoredPreview<Key extends string>(): AnchoredPreviewControl
     'aria-controls': dialogId,
     onPointerEnter: (event) => {
       if (event.pointerType !== 'mouse' && event.pointerType !== 'pen') return;
+      interactionMode.current = 'pointer';
       const anchor = event.currentTarget;
       hoveredTrigger.current = anchor;
       if (suppressedFocusAnchor.current === anchor) suppressedFocusAnchor.current = null;
@@ -232,7 +246,7 @@ export function useAnchoredPreview<Key extends string>(): AnchoredPreviewControl
   return {
     active, dialogId, panelRef, getTriggerProps, close, togglePin,
     panelEvents: {
-      onPointerEnter: () => { panelHovered.current = true; cancelLeave(); cancelOpen(); },
+      onPointerEnter: () => { interactionMode.current = 'pointer'; panelHovered.current = true; cancelLeave(); cancelOpen(); },
       onPointerLeave: () => { panelHovered.current = false; scheduleLeave(); },
       onFocusCapture: () => { cancelLeave(); cancelOpen(); },
       onBlurCapture: (event) => {

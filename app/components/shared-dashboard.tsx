@@ -7,6 +7,7 @@ import { ArrowUpRight, BellRing, CalendarDays, Check, ChevronLeft, ChevronRight,
 import AnchoredPreview, { useAnchoredPreview } from './anchored-preview';
 import AbsenceMiniCalendar from './absence-mini-calendar';
 import { getAbsencePeople } from '@/lib/absence-calendar';
+import { consumePreviewWheel, createPreviewWheelGesture, getPreviewPageWindow, normalizePreviewWheel } from '@/lib/preview-pagination';
 import styles from './shared-dashboard.module.css';
 
 type DashboardView = 'files' | 'calendar' | 'external_calendar' | 'dashboard';
@@ -45,32 +46,77 @@ interface ListProps {
   showDate?: boolean;
   onOpen: (schedule: Schedule) => void;
   onComplete: (schedule: Schedule) => void;
+  navigation?: 'arrows' | 'dots';
 }
-function SchedulePages({ items, label, listKey, today, showDate = false, onOpen, onComplete }: ListProps) {
+function SchedulePages({ items, label, listKey, today, showDate = false, onOpen, onComplete, navigation = 'arrows' }: ListProps) {
   const list = useRef<HTMLDivElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const [pageSize, setPageSize] = useState(1);
   const [page, setPage] = useState(0);
+  const [dotLimit, setDotLimit] = useState(7);
+  const wheelGesture = useRef(createPreviewWheelGesture());
   useEffect(() => {
     const element = list.current;
     if (!element) return;
-    const observer = new ResizeObserver(([entry]) => {
+    const measure = (height: number) => {
       const css = getComputedStyle(element);
       const rowHeight = Number.parseFloat(css.getPropertyValue('--dashboard-row-height')) || 64;
       const navigationHeight = Number.parseFloat(css.getPropertyValue('--dashboard-nav-height')) || 32;
-      const withoutNavigation = Math.max(1, Math.floor((entry.contentRect.height + 6.5) / (rowHeight + 6)));
+      const withoutNavigation = Math.max(1, Math.floor((height + 6.5) / (rowHeight + 6)));
       // Measure the fixed outer list allocation, not the viewport after navigation
       // renders. This keeps pagination stable when its controls appear/disappear.
-      const usableHeight = entry.contentRect.height - (items.length > withoutNavigation ? navigationHeight : 0);
+      const usableHeight = height - (navigation === 'arrows' && items.length > withoutNavigation ? navigationHeight : 0);
       setPageSize(Math.max(1, Math.floor((usableHeight + 6.5) / (rowHeight + 6))));
-    });
+      setDotLimit(Math.min(7, Math.max(3, Math.floor((height - 22) / 24))));
+    };
+    const observer = new ResizeObserver(([entry]) => measure(entry.contentRect.height));
+    let resizeFrame: number | null = null;
+    const resized = () => {
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
+      // Media queries can change row density without changing the list's box.
+      resizeFrame = requestAnimationFrame(() => { resizeFrame = null; measure(element.clientHeight); });
+    };
     observer.observe(element);
-    return () => observer.disconnect();
-  }, [items.length]);
+    window.addEventListener('resize', resized);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', resized);
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
+    };
+  }, [items.length, navigation]);
   const pages = Math.max(1, Math.ceil(items.length / pageSize));
   const visiblePage = Math.min(page, pages - 1);
   const rows = items.slice(visiblePage * pageSize, (visiblePage + 1) * pageSize);
-  return <div ref={list} className={`${styles.pagedList} ${listKey !== 'detail' ? styles.dayPagedList : ''}`} style={{ '--dashboard-item-count': Math.max(1, items.length) } as CSSProperties}>
+  useEffect(() => {
+    const element = list.current;
+    if (!element || navigation !== 'dots' || pages < 2) return;
+    const wheel = (event: WheelEvent) => {
+      if (event.ctrlKey || Math.abs(event.deltaX) > Math.abs(event.deltaY) || event.deltaY === 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const result = consumePreviewWheel(wheelGesture.current, normalizePreviewWheel(event.deltaY, event.deltaMode, element.clientHeight), performance.now());
+      wheelGesture.current = result.state;
+      if (result.direction) setPage(Math.max(0, Math.min(pages - 1, visiblePage + result.direction)));
+    };
+    element.addEventListener('wheel', wheel, { passive: false });
+    return () => element.removeEventListener('wheel', wheel);
+  }, [navigation, pages, visiblePage]);
+  const changePage = (next: number) => {
+    wheelGesture.current = createPreviewWheelGesture();
+    setPage(Math.max(0, Math.min(pages - 1, next)));
+  };
+  return <div ref={list} className={`${styles.pagedList} ${listKey !== 'detail' ? styles.dayPagedList : ''} ${navigation === 'dots' ? styles.dotPagedList : ''}`} style={{ '--dashboard-item-count': Math.max(1, items.length) } as CSSProperties}
+    data-preview-wheel-pages={navigation === 'dots' ? '' : undefined} data-preview-page-current={navigation === 'dots' ? visiblePage + 1 : undefined} data-preview-page-total={navigation === 'dots' ? pages : undefined}
+    tabIndex={navigation === 'dots' && pages > 1 ? 0 : undefined} role={navigation === 'dots' ? 'group' : undefined} aria-label={navigation === 'dots' ? `${label} 목록` : undefined}
+    onKeyDown={navigation === 'dots' ? (event) => {
+      const target = event.target as HTMLElement;
+      if (event.altKey || event.ctrlKey || event.metaKey || (target !== event.currentTarget && !target.closest('[data-preview-page-index]'))) return;
+      const destination = ['ArrowDown', 'ArrowRight', 'PageDown'].includes(event.key) ? visiblePage + 1 : ['ArrowUp', 'ArrowLeft', 'PageUp'].includes(event.key) ? visiblePage - 1 : event.key === 'Home' ? 0 : event.key === 'End' ? pages - 1 : null;
+      if (destination === null || pages < 2) return;
+      event.preventDefault(); event.stopPropagation();
+      list.current?.focus({ preventScroll: true });
+      changePage(destination);
+    } : undefined}>
     <div ref={viewport} data-dashboard-list={listKey} className={styles.listViewport}>
       {rows.length ? rows.map((schedule) => {
         const category = getScheduleCategory(schedule);
@@ -93,7 +139,12 @@ function SchedulePages({ items, label, listKey, today, showDate = false, onOpen,
         </div>;
       }) : <p className={styles.empty}>{label === '오늘 일정' ? '오늘은 일정이 없습니다.' : label === '내일 일정' ? '내일은 일정이 없습니다.' : '등록된 일정이 없습니다.'}</p>}
     </div>
-    {pages > 1 && <nav className={styles.pagination} aria-label={`${label} 페이지`}>
+    {pages > 1 && navigation === 'dots' && <nav className={`${styles.dotPagination} ${pages > dotLimit ? styles.compressedDots : ''}`} data-preview-pagination data-preview-compressed={pages > dotLimit ? 'true' : undefined} aria-label={`${label} 페이지, 전체 ${pages}페이지`}>
+      <span className={styles.srOnly} aria-live="polite">{visiblePage + 1} / {pages}페이지</span>
+      {getPreviewPageWindow(visiblePage, pages, dotLimit).map((index) => <button type="button" key={index} data-preview-page-index={index} aria-label={`${label} ${index + 1}페이지 / ${pages}페이지`} aria-current={index === visiblePage ? 'page' : undefined} title={`${index + 1} / ${pages}페이지`} onClick={() => changePage(index)}><span data-page-dot aria-hidden="true" /></button>)}
+      {pages > dotLimit && <span className={styles.dotTotal} aria-hidden="true" title={`${visiblePage + 1} / ${pages}페이지`}>{visiblePage + 1}/{pages}</span>}
+    </nav>}
+    {pages > 1 && navigation === 'arrows' && <nav className={styles.pagination} aria-label={`${label} 페이지`}>
       <span className={styles.pageCount} aria-live="polite">{items.length ? `${visiblePage + 1} / ${pages}` : '0건'}</span>
       <button type="button" aria-label={`${label} 이전 페이지`} disabled={visiblePage === 0} onClick={() => setPage(visiblePage - 1)}><ChevronLeft size={17} /></button>
       <button type="button" aria-label={`${label} 다음 페이지`} disabled={visiblePage >= pages - 1} onClick={() => setPage(visiblePage + 1)}><ChevronRight size={17} /></button>
@@ -169,8 +220,16 @@ function UpcomingAbsences({ items, today, onOpen }: { items: Schedule[]; today: 
 export default function SharedDashboard({ schedules, onChangeView, onOpenChat, onOpenSchedule, onToggleScheduleComplete, onOpenAbsenceBoard, onPrintWeek, onOpenCalendarDate }: SharedDashboardProps) {
   const [detailKey, setDetailKey] = useState<DetailKey | null>(null);
   const [detailOpener, setDetailOpener] = useState<HTMLElement | null>(null);
+  const [previewRowHeight, setPreviewRowHeight] = useState(64);
   const peek = useAnchoredPreview<DetailKey>();
   const menu = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    // The preview is portaled outside the dashboard's container queries. Its
+    // row density follows viewport media queries, not the home card density.
+    const observer = new ResizeObserver(() => setPreviewRowHeight(window.innerHeight <= 720 ? window.innerWidth <= 600 ? 48 : 56 : 64));
+    observer.observe(document.documentElement);
+    return () => observer.disconnect();
+  }, []);
   useEffect(() => {
     const outside = (event: PointerEvent) => { if (menu.current && !menu.current.contains(event.target as Node)) menu.current.open = false; };
     const escape = (event: KeyboardEvent) => { if (event.key === 'Escape' && menu.current?.open) { menu.current.open = false; menu.current.querySelector('summary')?.focus(); } };
@@ -277,9 +336,9 @@ export default function SharedDashboard({ schedules, onChangeView, onOpenChat, o
         </section>)}
       </aside>
     </div>
-    <AnchoredPreview controller={peek} title={preview?.label ?? ''} preferredHeight={peek.active?.key === 'absence' ? 480 : Math.min(430, Math.max(155, (preview?.items.length ?? 0) * 70 + 100))}>
+    <AnchoredPreview controller={peek} title={preview?.label ?? ''} preferredHeight={peek.active?.key === 'absence' ? 480 : Math.min(620, Math.max(155, Math.max(1, preview?.items.length ?? 0) * (previewRowHeight + 6) + 98))}>
       {peek.active?.key === 'absence' ? <AbsenceMiniCalendar schedules={schedules} referenceDate={today} onOpenSchedule={openSchedule} onOpenAbsenceBoard={onOpenAbsenceBoard ? () => { peek.close({ immediate: true }); onOpenAbsenceBoard(); } : undefined} /> : preview && <div className={styles.peekList}>
-        <SchedulePages key={`peek:${preview.key}`} items={preview.items} label={preview.label} listKey="detail" today={today} showDate onOpen={openSchedule} onComplete={onToggleScheduleComplete} />
+        <SchedulePages key={`peek:${preview.key}`} items={preview.items} label={preview.label} listKey="detail" today={today} showDate onOpen={openSchedule} onComplete={onToggleScheduleComplete} navigation="dots" />
         <button type="button" className={styles.peekAll} onClick={() => openAll(peek.active!.key)}>전체 목록 보기 <ArrowUpRight size={14} /></button>
       </div>}
     </AnchoredPreview>

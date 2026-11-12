@@ -162,6 +162,20 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, 
     }
     throw new Error('Pagination did not reach its final page');
   };
+  const visitAllPeekRows = async (list) => {
+    const first = list.locator('[data-preview-page-index="0"]');
+    if (await first.count()) await first.click();
+    const visited = new Set();
+    for (let turns = 0; turns < 150; turns += 1) {
+      for (const id of await rows(list).evaluateAll((elements) => elements.map((element) => Number(element.dataset.scheduleId)))) visited.add(id);
+      const current = Number(await list.getAttribute('data-preview-page-current'));
+      const total = Number(await list.getAttribute('data-preview-page-total'));
+      if (current === total) return visited;
+      await list.focus(); await list.press('PageDown');
+      await page.waitForFunction((oldPage) => Number(document.querySelector('[data-preview-wheel-pages]')?.getAttribute('data-preview-page-current')) > oldPage, current);
+    }
+    throw new Error('Preview dot paging did not reach its final page');
+  };
   try {
     await page.goto(baseUrl);
     await dashboard().waitFor();
@@ -293,6 +307,12 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, 
     await hoveredDate.hover(); await page.waitForTimeout(470); await peek().waitFor();
     assert.equal(await peek().evaluate((element) => getComputedStyle(element).animationName), 'none', 'reduced motion avoids the growing animation');
     await dismissPeek(); await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await summaryTrigger('week').hover(); await page.waitForTimeout(470); await peek().waitFor();
+    await page.waitForTimeout(100);
+    assert.equal(await peek().locator('[data-schedule-id]').count(), 7, 'an ordinary seven-event week expands to show all rows at once when the viewport permits it');
+    assert.equal(await peek().locator('[data-preview-pagination]').count(), 0, 'a list that fits the expanded window does not show unnecessary page dots');
+    await assertPeekBounds(summaryTrigger('week')); await screenshot('week-expanded-1366x768');
+    await dismissPeek();
     const calendarFixtures = [...normalFixtures,
       event(40, 'leave', '휴가) 과거 제목 이름', { owner_name: '기간 담당', date: '2026-11-11', end_date: '2026-11-13', start_time: null, end_time: null, absence_type: 'annual' }),
       event(41, 'leave', '휴가) 월말 담당', { owner_name: '월말 담당', date: '2026-11-30', end_date: '2026-12-02', start_time: null, end_time: null, absence_type: 'annual' }),
@@ -315,7 +335,29 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, 
     await calendar.getByRole('button', { name: '이전 달 휴가', exact: true }).click();
     await calendar.locator('[data-absence-date="2026-11-12"]').click();
     await screenshot('hover-absence-1366x768');
-    await dismissPeek();
+    assert.equal(await peek().getAttribute('data-preview-pinned'), 'false', 'selecting a calendar day never implicitly pins a hovered preview');
+    await page.mouse.move(5, 5); await page.waitForTimeout(500);
+    assert.equal(await peek().count(), 0, 'mouse selection leaves focus behind, but exiting the absence preview still closes it');
+    await summaryTrigger('absence').hover(); await page.waitForTimeout(470); await calendar.waitFor();
+    await calendar.getByRole('button', { name: '다음 달 휴가', exact: true }).click();
+    await page.mouse.move(5, 5); await page.waitForTimeout(500);
+    assert.equal(await peek().count(), 0, 'mouse month navigation also closes on pointer exit');
+    await summaryTrigger('absence').hover(); await page.waitForTimeout(470); await calendar.waitFor();
+    await peek().getByRole('button', { name: '미리보기 고정', exact: true }).click();
+    await calendar.locator('[data-absence-date="2026-11-13"]').click();
+    await page.mouse.move(5, 5); await page.waitForTimeout(500);
+    assert.equal(await peek().getAttribute('data-preview-pinned'), 'true', 'only an explicit pin preserves a calendar after mouse date selection and exit');
+    await peek().getByRole('button', { name: '미리보기 고정', exact: true }).click();
+    await page.mouse.move(5, 5); await page.waitForTimeout(500);
+    assert.equal(await peek().count(), 0, 'unpinning returns the calendar to ordinary hover dismissal');
+    await page.keyboard.press('Tab'); await summaryTrigger('absence').focus(); await calendar.waitFor();
+    await calendar.locator('[data-absence-date="2026-11-13"]').focus();
+    await page.keyboard.press('ArrowRight');
+    await page.mouse.move(5, 5); await page.waitForTimeout(500);
+    assert.equal(await peek().count(), 1, 'keyboard focus inside an unpinned calendar remains usable after pointer exit');
+    await calendar.getByRole('button', { name: '월간 현황표', exact: true }).focus(); await page.keyboard.press('Tab');
+    await page.waitForTimeout(500);
+    assert.equal(await peek().count(), 0, 'tabbing completely out of the calendar releases keyboard persistence');
     const touchContext = await browser.newContext({ viewport: { width: 390, height: 844 }, timezoneId: 'Asia/Seoul', isMobile: true, hasTouch: true });
     await touchContext.route('**/*', mockRoute);
     await touchContext.routeWebSocket((url) => !['127.0.0.1', 'localhost'].includes(url.hostname), (socket) => socket.close());
@@ -337,6 +379,18 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, 
     }
     await touchPage.getByRole('button', { name: '미리보기 닫기', exact: true }).tap();
     await touchPage.waitForTimeout(220); assert.equal(await touchPage.locator('[data-anchored-preview]').count(), 0);
+    fixtures.splice(0, fixtures.length, ...Array.from({ length: 30 }, (_, index) => event(600 + index, 'meeting', `터치 페이지 일정 ${index}`)));
+    await touchPage.reload(); await touchPage.locator('[data-dashboard-root]').waitFor();
+    await touchPage.locator('[data-dashboard-summary="week"] [data-anchored-preview-trigger]').tap();
+    const touchPages = touchPage.locator('[data-preview-wheel-pages]'); await touchPages.waitFor(); await touchPage.waitForTimeout(100);
+    const touchTotal = Number(await touchPages.getAttribute('data-preview-page-total'));
+    assert.ok(touchTotal > 1, 'narrow touch preview exposes multiple pages for long lists');
+    await touchPages.locator(`[data-preview-page-index="${touchTotal - 1}"]`).tap();
+    assert.equal(Number(await touchPages.getAttribute('data-preview-page-current')), touchTotal, 'touch can jump directly to the final page without a wheel');
+    assert.equal(await touchPages.locator('[aria-current="page"]').count(), 1, 'touch still marks exactly one active page');
+    const touchDotsFile = path.join(os.tmpdir(), 'my-portal-hub-dashboard-wheel-dots-320x640.png');
+    await touchPage.addStyleTag({ content: 'nextjs-portal { display: none !important; }' });
+    await touchPage.screenshot({ path: touchDotsFile }); screenshots.push(touchDotsFile);
     await touchContext.close();
     await replaceFixtures(normalFixtures); await settleLayout(viewports[0]);
     const assertDirectDetails = async (preview, title) => {
@@ -448,7 +502,54 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, 
       assert.ok(current >= 1 && current <= total, `${day}: page index clamps after resizing`);
       assert.equal(await nextButton(panel).isDisabled(), true, `${day}: resized final page is still the final page`);
     }
+    await settleLayout({ width: 1366, height: 768 });
     await summaryTrigger('week').click(); await peek().waitFor();
+    const wheelPages = peek().locator('[data-preview-wheel-pages]'); await wheelPages.waitFor(); await page.waitForTimeout(100);
+    const currentPeekPage = async () => Number(await wheelPages.getAttribute('data-preview-page-current'));
+    const wheelTotal = Number(await wheelPages.getAttribute('data-preview-page-total'));
+    assert.ok(wheelTotal > 1, 'long preview lists retain accessible pages instead of growing outside the screen');
+    assert.equal(await peek().getByRole('button', { name: /이전 페이지|다음 페이지/ }).count(), 0, 'the mini list replaces old footer arrows with its right-side dots');
+    assert.ok(await wheelPages.locator('[data-preview-page-index]').count() <= 7, 'dot rail stays bounded even for many pages');
+    const activeDot = wheelPages.locator('[data-preview-page-index][aria-current="page"]');
+    assert.equal(await activeDot.count(), 1);
+    const inactiveDot = wheelPages.locator('[data-preview-page-index]:not([aria-current="page"])').first();
+    const activeColor = await activeDot.locator('[data-page-dot]').evaluate((element) => getComputedStyle(element).backgroundColor);
+    const inactiveColor = await inactiveDot.locator('[data-page-dot]').evaluate((element) => getComputedStyle(element).backgroundColor);
+    assert.notEqual(activeColor, inactiveColor, 'current page is visually darker than unselected page dots');
+    const activeBounds = await activeDot.boundingBox(); assert.ok(activeBounds.width >= 22 && activeBounds.height >= 22, 'small visible dots retain usable click targets');
+    const initialPage = await currentPeekPage();
+    await wheelPages.hover(); await page.mouse.wheel(0, 120); await page.waitForTimeout(30);
+    assert.equal(await currentPeekPage(), initialPage + 1, 'one deliberate wheel movement advances one page');
+    for (let index = 0; index < 5; index += 1) { await page.mouse.wheel(0, 120); await page.waitForTimeout(25); }
+    assert.equal(await currentPeekPage(), initialPage + 1, 'trackpad inertia in one burst cannot skip multiple pages');
+    await screenshot('wheel-dots-1366x768');
+    await page.waitForTimeout(450); await page.mouse.wheel(0, -120); await page.waitForTimeout(40);
+    assert.equal(await currentPeekPage(), initialPage, 'a fresh reverse gesture moves back one page');
+    await page.waitForTimeout(450);
+    await wheelPages.dispatchEvent('wheel', { deltaY: 120, deltaMode: 0, ctrlKey: true, bubbles: true, cancelable: true });
+    await wheelPages.dispatchEvent('wheel', { deltaX: 120, deltaY: 2, deltaMode: 0, bubbles: true, cancelable: true });
+    await page.waitForTimeout(40); assert.equal(await currentPeekPage(), initialPage, 'zoom and primarily horizontal wheel gestures never change pages');
+    await wheelPages.dispatchEvent('wheel', { deltaY: 1, deltaMode: 0, bubbles: true, cancelable: true });
+    await page.waitForTimeout(40); assert.equal(await currentPeekPage(), initialPage, 'a tiny wheel movement does not accidentally advance a page');
+    await page.waitForTimeout(450);
+    await wheelPages.dispatchEvent('wheel', { deltaY: 4, deltaMode: 1, bubbles: true, cancelable: true });
+    await page.waitForTimeout(40); assert.equal(await currentPeekPage(), initialPage + 1, 'line-mode wheel deltas are normalized');
+    await wheelPages.locator(`[data-preview-page-index="${wheelTotal - 1}"]`).click();
+    await page.waitForTimeout(450); await wheelPages.hover(); await page.mouse.wheel(0, 120); await page.waitForTimeout(50);
+    assert.equal(await currentPeekPage(), wheelTotal, 'scrolling at the end never wraps to another page');
+    await wheelPages.locator('[data-preview-page-index="0"]').click();
+    await page.waitForTimeout(450); await wheelPages.hover(); await page.mouse.wheel(0, -120); await page.waitForTimeout(50);
+    assert.equal(await currentPeekPage(), 1, 'scrolling above the beginning never wraps');
+    await wheelPages.focus(); await wheelPages.press('PageDown');
+    assert.equal(await currentPeekPage(), 2, 'keyboard page navigation remains available without using a wheel');
+    for (const height of [730, 710, 730]) {
+      await settleLayout({ width: 1366, height });
+      await assertFits(`wheel preview breakpoint 1366x${height}`);
+      await assertPeekBounds(summaryTrigger('week'));
+    }
+    await settleLayout({ width: 1366, height: 768 });
+    assert.equal((await visitAllPeekRows(wheelPages)).size, 85, 'dot and keyboard navigation can still access every preview item');
+    await assertPeekBounds(summaryTrigger('week'));
     await peek().getByRole('button', { name: '전체 목록 보기', exact: true }).click();
     const fullWeek = page.locator('dialog[open]');
     await fullWeek.waitFor();
@@ -465,6 +566,10 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, 
     const longAbsenceList = page.locator('[data-absence-selected-list]');
     assert.equal(await longAbsenceList.locator('[data-absence-schedule-id]').count(), 20, 'all 20 absences are retained within the calendar');
     assert.ok(await longAbsenceList.evaluate((element) => element.scrollHeight > element.clientHeight), 'only the local absence list scrolls for large leave counts');
+    assert.equal(await peek().locator('[data-preview-wheel-pages]').count(), 0, 'calendar lists do not inherit wheel page navigation');
+    await longAbsenceList.hover(); const absenceScrollTop = await longAbsenceList.evaluate((element) => element.scrollTop);
+    await page.mouse.wheel(0, 320); await page.waitForTimeout(100);
+    assert.ok(await longAbsenceList.evaluate((element) => element.scrollTop) > absenceScrollTop, 'wheel inside the calendar scrolls its local leave list normally');
     await longAbsenceList.locator('[data-absence-schedule-id="319"]').click();
     const lastAbsenceDetails = page.getByRole('dialog', { name: '일정 상세', exact: true });
     await lastAbsenceDetails.waitFor();
@@ -486,7 +591,7 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, 
     const longPageCount = (longPdf.toString('latin1').match(/\/Type\s*\/Page\b/g) ?? []).length;
     assert.ok(longPageCount > 1, 'busy week print retains every row across pages');
     assert.deepEqual(errors, []); assert.deepEqual(writes, ['/rest/v1/schedules']);
-    console.log(JSON.stringify({ passed: true, pageCount, longPageCount, cases: ['one static noninteractive category legend', 'all categories remain visible', 'all includes leave', 'seven visible date tiles', 'six viewport sizes and mixed information fit', 'rapid crossings never flash a preview', 'preview grows from its actual card and stays within viewport', 'pointer transfer into preview preserves it', 'Escape suppresses reopening under the pointer', 'changing category keeps exactly one window', 'click pin and outside dismissal', 'reduced motion avoids grow animation', 'absence weekday and unique person count', 'cross-month absence range on every date', 'touch calendar at 390 and 320 pixels', 'one-click notice, todo, absence and weekly details', 'date tile opens only the exact date', 'absence calendar excludes work', 'calendar action selects the requested date after another month', 'sparse independent card heights and no trapped whitespace', 'compact empty state and no redundant navigation', 'summary keyboard and focus restoration', 'overdue completion', 'all 85 busy-day rows reachable', 'resize clamps last page', 'long title detail', 'ordinary and busy week print'], screenshots,
+    console.log(JSON.stringify({ passed: true, pageCount, longPageCount, cases: ['one static noninteractive category legend', 'all categories remain visible', 'all includes leave', 'seven visible date tiles', 'six viewport sizes and mixed information fit', 'rapid crossings never flash a preview', 'preview grows from its actual card and stays within viewport', 'pointer transfer into preview preserves it', 'Escape suppresses reopening under the pointer', 'changing category keeps exactly one window', 'click pin and outside dismissal', 'reduced motion avoids grow animation', 'absence weekday and unique person count', 'cross-month absence range on every date', 'mouse-selected calendar closes after exit', 'explicit pin and unpin preserve intended dismissal', 'keyboard calendar focus persists until tabbed out', 'touch calendar at 390 and 320 pixels', 'touch directly selects dot pages', 'one-click notice, todo, absence and weekly details', 'date tile opens only the exact date', 'absence calendar excludes work', 'calendar action selects the requested date after another month', 'sparse independent card heights and no trapped whitespace', 'compact empty state and no redundant navigation', 'summary keyboard and focus restoration', 'overdue completion', 'all 85 busy-day rows reachable', 'bounded dark-current dot rail', 'wheel gestures do not skip pages through inertia', 'wheel direction units and ignored zoom/horizontal input', 'wheel boundaries never wrap', 'popup breakpoint resize never clips rows', 'dot and keyboard navigation retains every preview item', 'calendar local scrolling is not intercepted', 'resize clamps last page', 'long title detail', 'ordinary and busy week print'], screenshots,
       sparseCardSizes: measurements.filter(({ label }) => label.startsWith('sparse ')).map(({ label, nodes }) => ({ label, cards: nodes.filter(({ selector }) => selector.startsWith('[data-dashboard-day=')).map(({ selector, height }) => ({ selector, height })) })),
       layoutsChecked: measurements.map(({ label, viewport, document }) => ({ label, viewport, document })) }, null, 2));
   } catch (error) {
