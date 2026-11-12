@@ -88,7 +88,7 @@ const photo = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="960" h
 
     // Four separate rows survive; next month's DB event never appears in review.
     analysis = {
-      schedules: [photoRow(), photoRow({ title: '두번째 일정', start_time: '11:00', end_time: '12:00' }), photoRow({ title: '세번째 일정', start_time: '', end_time: '' }), photoRow({ title: '네번째 일정', start_time: '', end_time: '' })],
+      schedules: [photoRow(), photoRow({ title: '두번째 일정', start_time: '11:00', end_time: '12:00' }), photoRow({ title: '세번째 일정', start_time: '', end_time: '' }), photoRow({ title: '네번째 일정', start_time: '', end_time: '', confidence: 0.6 })],
       visible_months: ['2026-11'], visible_schedule_count: 4, analysis_warnings: [],
     };
     await openAndAnalyze();
@@ -96,6 +96,13 @@ const photo = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="960" h
     assert.ok((await page.getByLabel('일정 제목', { exact: true }).evaluateAll((inputs) => inputs.map((input) => input.value))).every((title) => !title.includes('다음달')));
     assert.equal(await page.getByText('파랑 · 내부일정', { exact: true }).count(), 4);
     assert.equal(requests.at(-1).targetMonth, '2026-11');
+    // Review filter changes visibility only, never silently drops selected rows.
+    await page.getByRole('button', { name: '확인 필요한 일정 1건' }).click();
+    assert.equal(await page.getByLabel('일정 제목', { exact: true }).count(), 1);
+    assert.equal(await page.getByLabel('일정 제목', { exact: true }).inputValue(), '네번째 일정');
+    assert.equal(await page.getByRole('button', { name: '선택 일정 4건 반영' }).count(), 1);
+    await page.getByRole('button', { name: '전체 4건', exact: true }).click();
+    assert.equal(await page.getByLabel('일정 제목', { exact: true }).count(), 4);
     await page.screenshot({ path: path.join(os.tmpdir(), 'my-portal-whiteboard-desktop.png') });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByLabel('일정 제목', { exact: true }).last().scrollIntoViewIfNeeded();
@@ -121,7 +128,7 @@ const photo = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="960" h
     assert.equal(writes.at(-1).body.end_date, '2026-11-07');
     assert.equal(writes.at(-1).query, '?id=eq.2');
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ passed: true, cases: ['zero-result add', 'last-delete add', 'four photo rows', 'future-month isolation', 'mobile fixed actions', 'manual addition saved', 'existing overnight range preserved'], screenshot }, null, 2));
+    console.log(JSON.stringify({ passed: true, cases: ['zero-result add', 'last-delete add', 'four photo rows', 'future-month isolation', 'review filter preserves selections', 'mobile fixed actions', 'manual addition saved', 'existing overnight range preserved'], screenshot }, null, 2));
   } catch (error) {
     console.error(await page.locator('body').innerText());
     console.error('Browser errors:', errors);

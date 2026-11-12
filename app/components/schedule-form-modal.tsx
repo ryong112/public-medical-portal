@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { AlertTriangle, Bell, CalendarPlus, CalendarRange, Check, ChevronDown, Clock3, ListChecks, RotateCcw, Siren, X } from 'lucide-react';
+import { useEffect, useId, useRef, useState } from 'react';
+import { AlertTriangle, Bell, CalendarPlus, CalendarRange, Check, ChevronDown, Clock3, FileText, ListChecks, MapPin, Paperclip, RotateCcw, Search, Siren, Users, X } from 'lucide-react';
 import DirectTimeInput from '@/app/components/direct-time-input';
 import { scheduleCategoryStyles } from '@/lib/schedule-category';
 
@@ -20,6 +20,10 @@ export interface NewScheduleInput {
   is_todo: boolean;
   schedule_type: ScheduleType;
   absence_type: AbsenceType;
+  owner_name?: string | null;
+  attendee_names?: string[];
+  location?: string | null;
+  linked_file_ids?: number[];
 }
 
 export interface ScheduleRecurrenceSubmission {
@@ -35,6 +39,9 @@ interface ScheduleFormModalProps {
   initialSchedule?: NewScheduleInput & { id?: number | string };
   existingSchedules?: Array<NewScheduleInput & { id?: number | string }>;
   copyMode?: boolean;
+  availableFiles?: Array<{ id: number; name: string; category?: string | null }>;
+  people?: string[];
+  metadataAvailable?: boolean;
   onClose: () => void;
   onSubmit: (schedules: NewScheduleInput[], recurrence?: ScheduleRecurrenceSubmission) => Promise<void>;
 }
@@ -129,7 +136,22 @@ const normalizeAbsenceType = (value?: string): AbsenceType => {
   return 'annual';
 };
 
-export default function ScheduleFormModal({ date, initialSchedule, existingSchedules = [], copyMode = false, onClose, onSubmit }: ScheduleFormModalProps) {
+const normalizeAttendees = (value: string) => [...new Set(value.split(/[,，;\n]/u).map((name) => name.trim().replace(/\s+/gu, ' ')).filter(Boolean))];
+const normalizeFileIds = (value?: number[]) => [...new Set((Array.isArray(value) ? value : []).filter((id) => Number.isSafeInteger(id) && id > 0))];
+const removeStoredDraft = (key: string) => {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // Storage can be unavailable in private or restricted browsing sessions.
+  }
+};
+
+const fieldClassName = 'w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-base font-medium text-slate-900 outline-none transition-colors placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-500 sm:text-sm';
+
+export default function ScheduleFormModal({ date, initialSchedule, existingSchedules = [], copyMode = false, availableFiles = [], people = [], metadataAvailable = true, onClose, onSubmit }: ScheduleFormModalProps) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
+  const formId = useId();
   const defaults = getDefaultTimes(date);
   const initialTimeMode: TimeMode = initialSchedule
     ? initialSchedule.start_time && initialSchedule.end_time ? 'both' : initialSchedule.start_time ? 'start' : initialSchedule.end_time ? 'end' : 'none'
@@ -147,13 +169,32 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
   const [isUrgent, setIsUrgent] = useState(initialSchedule?.is_urgent ?? false);
   const [scheduleType, setScheduleType] = useState<ScheduleType>(initialSchedule?.schedule_type ?? 'unclassified');
   const [absenceType, setAbsenceType] = useState<AbsenceType>(normalizeAbsenceType(initialSchedule?.absence_type));
+  const [ownerName, setOwnerName] = useState(initialSchedule?.owner_name ?? '');
+  const [attendees, setAttendees] = useState(initialSchedule?.attendee_names?.join(', ') ?? '');
+  const [location, setLocation] = useState(initialSchedule?.location ?? '');
+  const [linkedFileIds, setLinkedFileIds] = useState(() => normalizeFileIds(initialSchedule?.linked_file_ids));
+  const [fileSearch, setFileSearch] = useState('');
+  const [detailsOpen, setDetailsOpen] = useState(Boolean(initialSchedule?.owner_name || initialSchedule?.attendee_names?.length || initialSchedule?.location || initialSchedule?.linked_file_ids?.length));
   const [recurrenceMode, setRecurrenceMode] = useState<RecurrenceMode>('none');
   const [monthlyWeek, setMonthlyWeek] = useState<MonthlyWeek>('first');
-  const [isMonthlyWeekOpen, setIsMonthlyWeekOpen] = useState(false);
   const [error, setError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [savedDraft, setSavedDraft] = useState<ScheduleDraft | null>(null);
   const draftStorageKey = `schedule-draft:${date}`;
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    dialog?.showModal();
+    titleRef.current?.focus({ preventScroll: true });
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      dialog?.close();
+      document.body.style.overflow = previousOverflow;
+      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+    };
+  }, []);
 
   useEffect(() => {
     if (initialSchedule) return;
@@ -164,7 +205,7 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
       const parsed = JSON.parse(stored) as ScheduleDraft;
       if (parsed?.title?.trim()) restoreTimer = window.setTimeout(() => setSavedDraft(parsed), 0);
     } catch {
-      window.localStorage.removeItem(draftStorageKey);
+      removeStoredDraft(draftStorageKey);
     }
     return () => {
       if (restoreTimer !== undefined) window.clearTimeout(restoreTimer);
@@ -185,13 +226,21 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
       is_todo: isTodo,
       schedule_type: scheduleType,
       absence_type: absenceType,
+      owner_name: ownerName.trim() || null,
+      attendee_names: normalizeAttendees(attendees),
+      location: location.trim() || null,
+      linked_file_ids: linkedFileIds,
       dateMode,
       timeMode,
       recurrenceMode,
       monthlyWeek,
     };
-    window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
-  }, [absenceType, dateMode, dateValue, draftStorageKey, endDateValue, endTime, initialSchedule, isNotice, isTodo, isUrgent, monthlyWeek, recurrenceMode, scheduleType, startTime, timeMode, title]);
+    try {
+      window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
+    } catch {
+      // Draft storage must never prevent the user from saving the schedule.
+    }
+  }, [absenceType, attendees, dateMode, dateValue, draftStorageKey, endDateValue, endTime, initialSchedule, isNotice, isTodo, isUrgent, linkedFileIds, location, monthlyWeek, ownerName, recurrenceMode, scheduleType, startTime, timeMode, title]);
 
   const conflicts = (() => {
     const currentEndDate = dateMode === 'range' ? endDateValue : dateValue;
@@ -222,6 +271,11 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
     setIsUrgent(savedDraft.is_urgent);
     setScheduleType(savedDraft.schedule_type);
     setAbsenceType(normalizeAbsenceType(savedDraft.absence_type));
+    setOwnerName(savedDraft.owner_name ?? '');
+    setAttendees(savedDraft.attendee_names?.join(', ') ?? '');
+    setLocation(savedDraft.location ?? '');
+    setLinkedFileIds(normalizeFileIds(savedDraft.linked_file_ids));
+    setDetailsOpen(Boolean(savedDraft.owner_name || savedDraft.attendee_names?.length || savedDraft.location || savedDraft.linked_file_ids?.length));
     setRecurrenceMode(savedDraft.recurrenceMode ?? 'none');
     setMonthlyWeek(savedDraft.monthlyWeek ?? 'first');
     setSavedDraft(null);
@@ -229,6 +283,7 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (isSaving) return;
     if (!title.trim()) {
       setError('일정 제목을 입력해 주십시오.');
       return;
@@ -257,6 +312,12 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
         is_todo: isTodo,
         schedule_type: scheduleType,
         absence_type: absenceType,
+        ...(metadataAvailable ? {
+          owner_name: ownerName.trim() || null,
+          attendee_names: normalizeAttendees(attendees),
+          location: location.trim() || null,
+          linked_file_ids: linkedFileIds,
+        } : {}),
       };
       const recurringDates = initialSchedule || dateMode === 'range' ? [dateValue] : createRecurringDates(dateValue, recurrenceMode, monthlyWeek);
       const recurrence = !initialSchedule && dateMode === 'single' && recurrenceMode !== 'none'
@@ -272,231 +333,217 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
         recurringDates.map((recurringDate) => ({ ...schedule, date: recurringDate, end_date: dateMode === 'range' ? endDateValue : null })),
         recurrence,
       );
-      if (!initialSchedule) window.localStorage.removeItem(draftStorageKey);
+      if (!initialSchedule) removeStoredDraft(draftStorageKey);
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : '일정을 등록하지 못했습니다.');
       setIsSaving(false);
     }
   };
 
+  const attendeeNames = normalizeAttendees(attendees);
+  const selectedFiles = linkedFileIds.map((id) => availableFiles.find((file) => file.id === id) ?? { id, name: '문서 #' + id + ' (현재 목록에서 확인할 수 없음)' });
+  const filteredFiles = availableFiles.filter((file) => [file.name, file.category].filter(Boolean).join(' ').toLocaleLowerCase().includes(fileSearch.trim().toLocaleLowerCase()));
+  const personSuggestions = [...new Set(people.map((person) => person.trim()).filter(Boolean))];
+  const recurrenceCount = createRecurringDates(dateValue, recurrenceMode, monthlyWeek).length;
+  const scheduleTitle = copyMode ? '일정 복사' : initialSchedule ? '일정 수정' : '일정 추가';
+  const toggleFile = (id: number) => setLinkedFileIds((current) => current.includes(id) ? current.filter((fileId) => fileId !== id) : [...current, id]);
+
   return (
-    <div className="fixed inset-0 z-[240] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <form onSubmit={handleSubmit} className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-[30px] bg-white p-6 shadow-2xl md:p-8">
-        <div className="mb-7 flex items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-blue-600">
-              <CalendarPlus size={23} />
-            </div>
+    <dialog
+      ref={dialogRef}
+      aria-labelledby={formId + '-heading'}
+      aria-describedby={formId + '-description'}
+      aria-modal="true"
+      onCancel={(event) => { event.preventDefault(); if (!isSaving) onClose(); }}
+      onClick={(event) => {
+        if (event.target !== event.currentTarget || isSaving) return;
+        const bounds = event.currentTarget.getBoundingClientRect();
+        if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) onClose();
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== 'Tab') return;
+        const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), summary, [href], [tabindex="0"]')).filter((item) => item.getClientRects().length > 0 && !item.closest('[inert]'));
+        const first = items[0];
+        const last = items.at(-1);
+        if (!first) { event.preventDefault(); return; }
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      }}
+      className="fixed inset-0 m-auto max-h-[calc(100dvh-1.5rem)] w-[calc(100%-1.5rem)] max-w-2xl overflow-hidden rounded-3xl bg-white p-0 text-slate-900 shadow-2xl backdrop:bg-slate-950/55 backdrop:backdrop-blur-sm"
+    >
+      <form onSubmit={handleSubmit} aria-busy={isSaving} className="flex max-h-[calc(100dvh-1.5rem)] flex-col">
+        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-100 px-4 py-4 sm:px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600"><CalendarPlus size={21} /></span>
             <div>
-              <h2 className="text-xl font-black text-slate-900">{copyMode ? '일정 복사' : initialSchedule ? '일정 수정' : '일정 추가'}</h2>
-              <p className="mt-1 text-xs font-bold text-slate-400">날짜와 내용을 입력해 주십시오.</p>
+              <h2 id={formId + '-heading'} className="text-lg font-extrabold text-slate-900">{scheduleTitle}</h2>
+              <p id={formId + '-description'} className="mt-0.5 text-xs leading-relaxed text-slate-500">제목과 날짜를 입력하세요. 나머지 정보는 선택할 수 있습니다.</p>
             </div>
           </div>
-          <button type="button" onClick={onClose} aria-label="닫기" className="rounded-xl bg-slate-100 p-2 text-slate-500 transition-colors hover:bg-slate-200">
-            <X size={18} />
-          </button>
-        </div>
+          <button type="button" disabled={isSaving} onClick={onClose} aria-label="일정 창 닫기" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-slate-100 disabled:opacity-40"><X size={20} /></button>
+        </header>
 
-        {savedDraft && (
-          <div className="mb-5 flex items-center gap-3 rounded-2xl border border-blue-100 bg-blue-50 p-3">
-            <RotateCcw size={18} className="shrink-0 text-blue-600" />
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-black text-slate-700">작성 중이던 일정이 있습니다.</p>
-              <p className="mt-0.5 truncate text-[10px] font-bold text-slate-400">{savedDraft.title}</p>
+        <div inert={isSaving} className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-4 py-5 sm:px-6">
+          {savedDraft && (
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-blue-100 bg-blue-50 p-3">
+              <RotateCcw size={17} className="shrink-0 text-blue-600" />
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-slate-700">작성 중이던 일정이 있습니다.</p>
+                <p className="mt-0.5 truncate text-xs text-slate-500">{savedDraft.title}</p>
+              </div>
+              <button type="button" onClick={restoreDraft} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white">복원</button>
+              <button type="button" onClick={() => { removeStoredDraft(draftStorageKey); setSavedDraft(null); }} className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-slate-600">삭제</button>
             </div>
-            <button type="button" onClick={restoreDraft} className="shrink-0 rounded-lg bg-blue-600 px-3 py-2 text-[10px] font-black text-white">복원</button>
-            <button type="button" onClick={() => { window.localStorage.removeItem(draftStorageKey); setSavedDraft(null); }} className="shrink-0 rounded-lg bg-white px-3 py-2 text-[10px] font-black text-slate-500">삭제</button>
-          </div>
-        )}
+          )}
 
-        <div className="mb-5">
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <span className="text-xs font-black text-slate-600">날짜</span>
-            {dateMode === 'range' && endDateValue > dateValue && (
-              <span className="rounded-lg bg-blue-50 px-2.5 py-1 text-[10px] font-black text-blue-600">
-                {getRangeDayCount(dateValue, endDateValue) - 1}박 {getRangeDayCount(dateValue, endDateValue)}일
-              </span>
+          <label className="block">
+            <span className="mb-2 block text-sm font-bold text-slate-700">일정 제목 <span className="text-xs font-medium text-blue-600">필수</span></span>
+            <input ref={titleRef} required maxLength={500} name="title" value={title} onChange={(event) => { setTitle(event.target.value); setError(''); }} placeholder="예: 신규 사업 협의회" className={fieldClassName} />
+          </label>
+
+          <fieldset className="min-w-0">
+            <legend className="mb-2 text-sm font-bold text-slate-700">날짜 <span className="text-xs font-medium text-blue-600">필수</span></legend>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <div className="inline-flex rounded-xl bg-slate-100 p-1">
+                <button type="button" aria-pressed={dateMode === 'single'} onClick={() => { setDateMode('single'); setEndDateValue(dateValue); setRecurrenceMode('none'); setError(''); }} className={'rounded-lg px-4 py-2 text-xs font-bold transition-colors ' + (dateMode === 'single' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800')}>하루 일정</button>
+                <button type="button" aria-pressed={dateMode === 'range'} onClick={() => { setDateMode('range'); if (endDateValue <= dateValue) { const nextDate = parseLocalDate(dateValue); nextDate.setDate(nextDate.getDate() + 1); setEndDateValue(formatLocalDate(nextDate)); } setRecurrenceMode('none'); setError(''); }} className={'inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-bold transition-colors ' + (dateMode === 'range' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-800')}><CalendarRange size={14} />기간 일정</button>
+              </div>
+              {dateMode === 'range' && endDateValue > dateValue && <span className="text-xs font-semibold text-blue-700">{getRangeDayCount(dateValue, endDateValue) - 1}박 {getRangeDayCount(dateValue, endDateValue)}일</span>}
+            </div>
+            {dateMode === 'single' ? (
+              <input type="date" aria-label="일정 날짜" required value={dateValue} onChange={(event) => { setDateValue(event.target.value); setEndDateValue(event.target.value); setError(''); }} className={fieldClassName} />
+            ) : (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label className="min-w-0"><span className="mb-1.5 block text-xs font-semibold text-slate-600">시작일</span><input type="date" required value={dateValue} max={endDateValue} onChange={(event) => { const nextStart = event.target.value; setDateValue(nextStart); if (nextStart && endDateValue <= nextStart) { const nextDate = parseLocalDate(nextStart); nextDate.setDate(nextDate.getDate() + 1); setEndDateValue(formatLocalDate(nextDate)); } setError(''); }} className={fieldClassName} /></label>
+                <label className="min-w-0"><span className="mb-1.5 block text-xs font-semibold text-slate-600">종료일</span><input type="date" required value={endDateValue} min={dateValue} onChange={(event) => { setEndDateValue(event.target.value); setError(''); }} className={fieldClassName} /></label>
+              </div>
             )}
-          </div>
-          <div className="mb-2 grid grid-cols-2 gap-2 rounded-2xl bg-slate-100 p-1.5">
-            <button type="button" onClick={() => { setDateMode('single'); setEndDateValue(dateValue); setRecurrenceMode('none'); setError(''); }} className={`rounded-xl py-2.5 text-xs font-black transition-all ${dateMode === 'single' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>하루 일정</button>
-            <button type="button" onClick={() => { setDateMode('range'); if (endDateValue <= dateValue) { const nextDate = parseLocalDate(dateValue); nextDate.setDate(nextDate.getDate() + 1); setEndDateValue(formatLocalDate(nextDate)); } setRecurrenceMode('none'); setError(''); }} className={`flex items-center justify-center gap-1.5 rounded-xl py-2.5 text-xs font-black transition-all ${dateMode === 'range' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}><CalendarRange size={14} /> 기간 일정</button>
-          </div>
-          {dateMode === 'single' ? (
-            <input type="date" value={dateValue} onChange={(event) => { setDateValue(event.target.value); setEndDateValue(event.target.value); setError(''); }} className="w-full rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 py-3.5 text-sm font-bold text-slate-900 outline-none transition-all focus:border-blue-500 focus:bg-white" />
-          ) : (
-            <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2 rounded-2xl border-2 border-blue-100 bg-blue-50/40 p-3">
-              <label className="min-w-0">
-                <span className="mb-1.5 block text-[10px] font-black text-blue-600">시작일</span>
-                <input type="date" value={dateValue} max={endDateValue} onChange={(event) => { const nextStart = event.target.value; setDateValue(nextStart); if (endDateValue <= nextStart) { const nextDate = parseLocalDate(nextStart); nextDate.setDate(nextDate.getDate() + 1); setEndDateValue(formatLocalDate(nextDate)); } setError(''); }} className="w-full min-w-0 rounded-xl border border-blue-100 bg-white px-2 py-3 text-xs font-black text-slate-800 outline-none focus:border-blue-500 sm:px-3 sm:text-sm" />
-              </label>
-              <span className="pb-3 text-sm font-black text-blue-300">→</span>
-              <label className="min-w-0">
-                <span className="mb-1.5 block text-[10px] font-black text-blue-600">종료일</span>
-                <input type="date" value={endDateValue} min={dateValue} onChange={(event) => { setEndDateValue(event.target.value); setError(''); }} className="w-full min-w-0 rounded-xl border border-blue-100 bg-white px-2 py-3 text-xs font-black text-slate-800 outline-none focus:border-blue-500 sm:px-3 sm:text-sm" />
-              </label>
-            </div>
-          )}
-        </div>
+          </fieldset>
 
-        <label className="block">
-          <input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="일정 제목을 입력해 주십시오." className="w-full rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 py-3.5 text-sm font-bold text-slate-900 outline-none transition-all focus:border-blue-500 focus:bg-white" />
-        </label>
-
-        <div className="mt-5">
-          <span className="mb-2 block text-xs font-black text-slate-600">일정 유형</span>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-            {[
-              { value: 'meeting' as const, label: '회의)' },
-              { value: 'business_trip' as const, label: '출장)' },
-              { value: 'internal' as const, label: '내부일정)' },
-              { value: 'leave' as const, label: '연차·조퇴·외출)' },
-              { value: 'unclassified' as const, label: '미분류)' },
-            ].map((type) => (
-              <button key={type.value} type="button" aria-pressed={scheduleType === type.value} onClick={() => setScheduleType(type.value)} className={`inline-flex items-center justify-center gap-1.5 rounded-xl border px-2 py-2.5 text-[10px] font-black transition-colors ${scheduleType === type.value ? scheduleCategoryStyles[type.value === 'unclassified' ? 'general' : type.value].filterActive : scheduleCategoryStyles[type.value === 'unclassified' ? 'general' : type.value].filter}`}><span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full ${scheduleType === type.value ? 'bg-white' : scheduleCategoryStyles[type.value === 'unclassified' ? 'general' : type.value].dot}`} />{type.label}</button>
-            ))}
-          </div>
-          {scheduleType === 'internal' && <p className="mt-2 text-[10px] font-medium text-blue-700">내부에서 진행하는 협의회·간담회·업무협약식 등</p>}
-          {scheduleType === 'leave' && (
-            <div className="mt-3 rounded-2xl bg-orange-50 p-3">
-              <span className="mb-2 block text-[10px] font-black text-orange-700">휴가 구분</span>
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { value: 'annual' as const, label: '연차' },
-                  { value: 'early' as const, label: '조퇴' },
-                  { value: 'outing' as const, label: '외출' },
-                ].map((type) => (
-                  <button key={type.value} type="button" aria-pressed={absenceType === type.value} onClick={() => setAbsenceType(type.value)} className={`rounded-xl border px-2 py-2.5 text-[10px] font-black transition-colors ${absenceType === type.value ? scheduleCategoryStyles.leave.filterActive : scheduleCategoryStyles.leave.filter}`}>{type.label}</button>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-4">
-          <div className="mb-3 flex items-center gap-2 text-xs font-black text-slate-600"><Clock3 size={15} /> 일정 시간</div>
-          <div className="mb-3 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
-            {[
-              { value: 'both' as const, label: '시작·종료' },
-              { value: 'start' as const, label: '시작만' },
-              { value: 'end' as const, label: '종료만' },
-              { value: 'none' as const, label: '시간 미정' },
-            ].map((mode) => (
-              <button key={mode.value} type="button" onClick={() => { setTimeMode(mode.value); if ((mode.value === 'both' || mode.value === 'start') && !startTime) setStartTime(defaults.start); if ((mode.value === 'both' || mode.value === 'end') && !endTime) setEndTime(defaults.end); setError(''); }} className={`rounded-lg px-2 py-2 text-[10px] font-black transition-colors ${timeMode === mode.value ? 'bg-slate-900 text-white' : 'bg-white text-slate-400 hover:text-slate-700'}`}>{mode.label}</button>
-            ))}
-          </div>
-          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
-            <DirectTimeInput
-              label="시작"
-              disabled={timeMode === 'end' || timeMode === 'none'}
-              value={timeMode === 'end' || timeMode === 'none' ? '' : startTime}
-              onChange={(nextTime) => {
-                setStartTime(nextTime);
-                if (timeMode === 'both') setEndTime(addMinutes(nextTime, 60));
-                setError('');
-              }}
-            />
-            <span className="mt-5 text-slate-300">→</span>
-            <DirectTimeInput
-              label="종료"
-              disabled={timeMode === 'start' || timeMode === 'none'}
-              value={timeMode === 'start' || timeMode === 'none' ? '' : endTime}
-              minimumTime={timeMode === 'both' ? startTime : undefined}
-              durationFrom={timeMode === 'both' ? startTime : undefined}
-              onChange={(nextTime) => {
-                setEndTime(nextTime);
-                setError('');
-              }}
-            />
-          </div>
-        </div>
-
-        {!initialSchedule && dateMode === 'single' && (
-          <div className="mt-5 rounded-2xl border border-blue-100 bg-blue-50/40 p-3">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <p className="min-w-0 text-[10px] font-bold text-slate-400"><strong className="mr-2 text-xs font-black text-slate-700">정기 일정</strong>{parseLocalDate(dateValue).getFullYear()}년 말까지 등록</p>
-              {recurrenceMode !== 'none' && <span className="shrink-0 rounded-lg bg-blue-600 px-2.5 py-1 text-[10px] font-black text-white">{createRecurringDates(dateValue, recurrenceMode, monthlyWeek).length}건</span>}
-            </div>
-            <div className="grid grid-cols-4 gap-1.5">
+          <fieldset className="min-w-0">
+            <legend className="mb-2 text-sm font-bold text-slate-700">일정 유형</legend>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
               {[
-                { value: 'none' as const, label: '반복 안 함' },
-                { value: 'weekly' as const, label: `매주 ${weekdayNames[parseLocalDate(dateValue).getDay()]}요일` },
-                { value: 'biweekly' as const, label: `2주마다 ${weekdayNames[parseLocalDate(dateValue).getDay()]}요일` },
-              ].map((option) => (
-                <button key={option.value} type="button" onClick={() => { setRecurrenceMode(option.value); setIsMonthlyWeekOpen(false); }} className={`min-w-0 rounded-xl px-1 py-2.5 text-[9px] font-black tracking-tight transition-all sm:px-2 sm:text-[10px] ${recurrenceMode === option.value ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-slate-500 hover:bg-blue-100'}`}>{option.label}</button>
+                { value: 'meeting' as const, label: '회의' },
+                { value: 'business_trip' as const, label: '출장' },
+                { value: 'internal' as const, label: '내부일정' },
+                { value: 'leave' as const, label: '연차·조퇴·외출' },
+                { value: 'unclassified' as const, label: '미분류' },
+              ].map((type) => (
+                <button key={type.value} type="button" aria-pressed={scheduleType === type.value} onClick={() => setScheduleType(type.value)} className={'inline-flex min-h-10 items-center justify-center gap-1.5 rounded-xl border px-2 py-2 text-xs font-bold transition-colors ' + (scheduleType === type.value ? scheduleCategoryStyles[type.value === 'unclassified' ? 'general' : type.value].filterActive : scheduleCategoryStyles[type.value === 'unclassified' ? 'general' : type.value].filter)}><span aria-hidden="true" className={'h-1.5 w-1.5 shrink-0 rounded-full ' + (scheduleType === type.value ? 'bg-white' : scheduleCategoryStyles[type.value === 'unclassified' ? 'general' : type.value].dot)} />{type.label}</button>
               ))}
-              <div className="relative">
-                <button type="button" onClick={() => { setRecurrenceMode('monthly'); setIsMonthlyWeekOpen((current) => !current); }} className={`flex h-full w-full min-w-0 items-center justify-center gap-0.5 rounded-xl px-1 py-2.5 text-[9px] font-black tracking-tight transition-all sm:px-2 sm:text-[10px] ${recurrenceMode === 'monthly' ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-slate-500 hover:bg-blue-100'}`}>
-                  <span className="truncate">매월 {monthlyWeekLabels[monthlyWeek]} {weekdayNames[parseLocalDate(dateValue).getDay()]}요일</span>
-                  <ChevronDown size={11} className={`shrink-0 transition-transform ${isMonthlyWeekOpen ? 'rotate-180' : ''}`} />
-                </button>
-                {isMonthlyWeekOpen && (
-                  <div className="absolute bottom-full right-0 z-20 mb-2 w-44 overflow-hidden rounded-xl border border-blue-100 bg-white p-1.5 shadow-xl">
-                    {(Object.keys(monthlyWeekLabels) as MonthlyWeek[]).map((week) => (
-                      <button key={week} type="button" onClick={() => { setMonthlyWeek(week); setRecurrenceMode('monthly'); setIsMonthlyWeekOpen(false); }} className={`block w-full rounded-lg px-3 py-2 text-left text-[10px] font-black transition-colors ${monthlyWeek === week ? 'bg-blue-50 text-blue-600' : 'text-slate-500 hover:bg-slate-50'}`}>
-                        매월 {monthlyWeekLabels[week]} {weekdayNames[parseLocalDate(dateValue).getDay()]}요일
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
             </div>
-          </div>
-        )}
+            {scheduleType === 'internal' && <p className="mt-2 text-xs leading-relaxed text-slate-500">내부에서 진행하는 협의회·간담회·업무협약식 등</p>}
+            {scheduleType === 'leave' && (
+              <fieldset className="mt-3 rounded-xl bg-orange-50 p-3">
+                <legend className="sr-only">휴가 구분</legend>
+                <div className="grid grid-cols-3 gap-2">
+                  {[{ value: 'annual' as const, label: '연차' }, { value: 'early' as const, label: '조퇴' }, { value: 'outing' as const, label: '외출' }].map((type) => <button key={type.value} type="button" aria-pressed={absenceType === type.value} onClick={() => setAbsenceType(type.value)} className={'rounded-lg border px-2 py-2 text-xs font-bold ' + (absenceType === type.value ? scheduleCategoryStyles.leave.filterActive : scheduleCategoryStyles.leave.filter)}>{type.label}</button>)}
+                </div>
+              </fieldset>
+            )}
+          </fieldset>
 
-        <fieldset className="mt-4 grid grid-cols-3 gap-1.5 rounded-2xl border border-slate-200 bg-slate-100 p-1.5 sm:gap-2 sm:p-2">
-          <legend className="sr-only">일정 표시 설정</legend>
-          <button
-            type="button"
-            aria-pressed={isNotice}
-            title="이 일정을 공지사항에 추가합니다."
-            onClick={() => setIsNotice((current) => !current)}
-            className={`relative flex min-h-12 min-w-0 items-center justify-center gap-1.5 rounded-xl border px-1.5 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-1 ${isNotice ? 'border-violet-300 bg-violet-100 text-violet-800 shadow-sm ring-1 ring-violet-200' : 'border-slate-200 bg-white text-slate-700 shadow-sm hover:border-violet-200 hover:bg-violet-50'}`}
-          >
-            <Bell size={15} className={`shrink-0 ${isNotice ? 'text-violet-700' : 'text-violet-500'}`} />
-            <span className="truncate text-[11px] font-black tracking-tight sm:text-xs">공지사항</span>
-            {isNotice && <span className="absolute right-1.5 top-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-violet-600 text-white" aria-hidden="true"><Check size={9} strokeWidth={3} /></span>}
-          </button>
+          <fieldset className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
+            <legend className="sr-only">일정 시간</legend>
+            <p className="mb-3 flex items-center gap-2 text-sm font-bold text-slate-700"><Clock3 size={16} />일정 시간</p>
+            <div className="mb-3 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+              {[
+                { value: 'both' as const, label: '시작·종료' },
+                { value: 'start' as const, label: '시작만' },
+                { value: 'end' as const, label: '종료만' },
+                { value: 'none' as const, label: '시간 미정' },
+              ].map((mode) => <button key={mode.value} type="button" aria-pressed={timeMode === mode.value} onClick={() => { setTimeMode(mode.value); if ((mode.value === 'both' || mode.value === 'start') && !startTime) setStartTime(defaults.start); if ((mode.value === 'both' || mode.value === 'end') && !endTime) setEndTime(defaults.end); setError(''); }} className={'rounded-lg px-2 py-2 text-xs font-bold transition-colors ' + (timeMode === mode.value ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 hover:bg-slate-200')}>{mode.label}</button>)}
+            </div>
+            {timeMode !== 'none' ? (
+              <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
+                <DirectTimeInput label="시작" disabled={timeMode === 'end'} value={timeMode === 'end' ? '' : startTime} onChange={(nextTime) => { setStartTime(nextTime); if (timeMode === 'both' && dateMode === 'single') setEndTime(addMinutes(nextTime, 60)); setError(''); }} />
+                <DirectTimeInput label="종료" disabled={timeMode === 'start'} value={timeMode === 'start' ? '' : endTime} minimumTime={timeMode === 'both' && dateMode === 'single' ? startTime : undefined} durationFrom={timeMode === 'both' && dateMode === 'single' ? startTime : undefined} onChange={(nextTime) => { setEndTime(nextTime); setError(''); }} />
+              </div>
+            ) : <p className="text-xs leading-relaxed text-slate-500">시간 없이 날짜만 저장합니다.</p>}
+          </fieldset>
 
-          <button
-            type="button"
-            aria-pressed={isTodo}
-            title="이 일정을 TO DO LIST에 추가합니다."
-            onClick={() => setIsTodo((current) => !current)}
-            className={`relative flex min-h-12 min-w-0 items-center justify-center gap-1.5 rounded-xl border px-1.5 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 ${isTodo ? 'border-blue-300 bg-blue-100 text-blue-800 shadow-sm ring-1 ring-blue-200' : 'border-slate-200 bg-white text-slate-700 shadow-sm hover:border-blue-200 hover:bg-blue-50'}`}
-          >
-            <ListChecks size={15} className={`shrink-0 ${isTodo ? 'text-blue-700' : 'text-blue-500'}`} />
-            <span className="truncate text-[11px] font-black tracking-tight sm:text-xs">TO DO</span>
-            {isTodo && <span className="absolute right-1.5 top-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-blue-600 text-white" aria-hidden="true"><Check size={9} strokeWidth={3} /></span>}
-          </button>
+          <fieldset>
+            <legend className="mb-2 text-sm font-bold text-slate-700">표시 설정 <span className="font-normal text-slate-500">선택</span></legend>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { label: '공지사항', active: isNotice, onToggle: () => setIsNotice((current) => !current), Icon: Bell, activeClass: 'border-violet-300 bg-violet-50 text-violet-800', title: '이 일정을 공지사항에 추가합니다.' },
+                { label: 'TO DO', active: isTodo, onToggle: () => setIsTodo((current) => !current), Icon: ListChecks, activeClass: 'border-blue-300 bg-blue-50 text-blue-800', title: '이 일정을 TO DO LIST에 추가합니다.' },
+                { label: '긴급', active: isUrgent, onToggle: () => setIsUrgent((current) => !current), Icon: Siren, activeClass: 'border-rose-300 bg-rose-50 text-rose-800', title: '브리핑과 공지사항에 긴급 표시를 추가합니다.' },
+              ].map(({ label, active, onToggle, Icon, activeClass, title: description }) => (
+                <button key={label} type="button" aria-pressed={active} title={description} onClick={onToggle} className={'relative flex min-h-11 min-w-0 items-center justify-center gap-1.5 rounded-xl border px-1 py-2 text-xs font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ' + (active ? activeClass : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50')}><Icon size={15} className="shrink-0" /><span>{label}</span>{active && <Check aria-hidden="true" size={12} className="absolute right-1 top-1" />}</button>
+              ))}
+            </div>
+          </fieldset>
 
-          <button
-            type="button"
-            aria-pressed={isUrgent}
-            title="브리핑과 공지사항에 긴급 표시를 추가합니다."
-            onClick={() => setIsUrgent((current) => !current)}
-            className={`relative flex min-h-12 min-w-0 items-center justify-center gap-1.5 rounded-xl border px-1.5 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:ring-offset-1 ${isUrgent ? 'border-rose-300 bg-rose-100 text-rose-800 shadow-sm ring-1 ring-rose-200' : 'border-slate-200 bg-white text-slate-700 shadow-sm hover:border-rose-200 hover:bg-rose-50'}`}
-          >
-            <Siren size={15} className={`shrink-0 ${isUrgent ? 'text-rose-700' : 'text-rose-500'}`} />
-            <span className="truncate text-[11px] font-black tracking-tight sm:text-xs">긴급</span>
-            {isUrgent && <span className="absolute right-1.5 top-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-rose-600 text-white" aria-hidden="true"><Check size={9} strokeWidth={3} /></span>}
-          </button>
-        </fieldset>
+          {!initialSchedule && dateMode === 'single' && (
+            <details className="group rounded-2xl border border-slate-200">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-bold text-slate-700 [&::-webkit-details-marker]:hidden">
+                <span>반복 일정 <span className="ml-1 text-xs font-normal text-slate-500">{recurrenceMode === 'none' ? '반복 안 함' : String(recurrenceCount) + '건 · 올해 말까지'}</span></span>
+                <ChevronDown size={16} className="shrink-0 transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="border-t border-slate-100 p-3 sm:p-4">
+                <p className="mb-3 text-xs leading-relaxed text-slate-500">{dateValue ? parseLocalDate(dateValue).getFullYear() + '년 12월 31일' : '선택한 연도 말'}까지 등록합니다.</p>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {[
+                    { value: 'none' as const, label: '반복 안 함' },
+                    { value: 'weekly' as const, label: '매주 ' + (weekdayNames[parseLocalDate(dateValue).getDay()] ?? '') + '요일' },
+                    { value: 'biweekly' as const, label: '2주마다' },
+                    { value: 'monthly' as const, label: '매월' },
+                  ].map((option) => <button key={option.value} type="button" aria-pressed={recurrenceMode === option.value} onClick={() => setRecurrenceMode(option.value)} className={'rounded-lg px-2 py-2.5 text-xs font-bold ' + (recurrenceMode === option.value ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-blue-50')}>{option.label}</button>)}
+                </div>
+                {recurrenceMode === 'monthly' && <label className="mt-3 block"><span className="mb-1.5 block text-xs font-semibold text-slate-600">매월 반복할 주</span><select value={monthlyWeek} onChange={(event) => setMonthlyWeek(event.target.value as MonthlyWeek)} className={fieldClassName}>{(Object.keys(monthlyWeekLabels) as MonthlyWeek[]).map((week) => <option key={week} value={week}>{monthlyWeekLabels[week]} {weekdayNames[parseLocalDate(dateValue).getDay()]}요일</option>)}</select></label>}
+                {recurrenceMode !== 'none' && <p className="mt-3 text-xs font-semibold text-blue-700">총 {recurrenceCount}개 일정이 함께 등록됩니다.</p>}
+              </div>
+            </details>
+          )}
 
-        {conflicts.length > 0 && (
-          <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
-            <div className="flex items-center gap-2 text-xs font-black"><AlertTriangle size={15} /> 겹칠 수 있는 일정 {conflicts.length}건</div>
-            <p className="mt-1.5 line-clamp-2 text-[10px] font-bold leading-relaxed opacity-80">{conflicts.slice(0, 3).map((schedule) => schedule.title).join(' · ')}</p>
-          </div>
-        )}
+          <details open={detailsOpen} onToggle={(event) => setDetailsOpen(event.currentTarget.open)} className="group rounded-2xl border border-slate-200">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-bold text-slate-700 [&::-webkit-details-marker]:hidden">
+              <span>추가 정보 <span className="ml-1 text-xs font-normal text-slate-500">담당자·참석자·장소·문서</span></span>
+              <ChevronDown size={16} className="shrink-0 transition-transform group-open:rotate-180" />
+            </summary>
+            <div className="space-y-4 border-t border-slate-100 p-3 sm:p-4">
+              {!metadataAvailable && <p role="status" className="rounded-xl bg-amber-50 p-3 text-xs leading-relaxed text-amber-800">추가 정보 저장 기능을 준비 중입니다. 지금은 제목·날짜·시간 등 기본 일정만 저장할 수 있습니다.</p>}
+              <fieldset disabled={!metadataAvailable} className="min-w-0 space-y-4 disabled:opacity-60">
+                <legend className="sr-only">선택 일정 정보</legend>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="min-w-0"><span className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-slate-700"><Users size={14} />담당자</span><input value={ownerName} maxLength={120} onChange={(event) => setOwnerName(event.target.value)} list={formId + '-people'} placeholder="담당자 이름" autoComplete="off" className={fieldClassName} /></label>
+                  <label className="min-w-0"><span className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-slate-700"><MapPin size={14} />장소</span><input value={location} maxLength={300} onChange={(event) => setLocation(event.target.value)} placeholder="예: 본관 2층 회의실" className={fieldClassName} /></label>
+                </div>
+                <datalist id={formId + '-people'}>{personSuggestions.map((name) => <option key={name} value={name} />)}</datalist>
+                <div>
+                  <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-700">참석자</span><input value={attendees} maxLength={2000} onChange={(event) => setAttendees(event.target.value)} onBlur={() => setAttendees(normalizeAttendees(attendees).join(', '))} aria-describedby={formId + '-attendees-help'} placeholder="예: 김민수, 이지영" className={fieldClassName} /></label>
+                  <p id={formId + '-attendees-help'} className="mt-1.5 text-xs leading-relaxed text-slate-500">여러 명은 쉼표로 구분하세요. 중복된 이름은 한 번만 저장합니다.</p>
+                  {personSuggestions.some((name) => !attendeeNames.includes(name)) && <div className="mt-2 flex flex-wrap gap-1.5" aria-label="참석자 빠른 추가">{personSuggestions.filter((name) => !attendeeNames.includes(name)).slice(0, 8).map((name) => <button key={name} type="button" onClick={() => setAttendees([...attendeeNames, name].join(', '))} className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-600 hover:border-blue-300 hover:text-blue-700">+ {name}</button>)}</div>}
+                </div>
+                <div>
+                  <p className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-slate-700"><Paperclip size={14} />연결 문서 <span className="font-normal text-slate-500">{linkedFileIds.length > 0 ? String(linkedFileIds.length) + '개 선택' : '선택'}</span></p>
+                  <p className="mb-2 text-xs leading-relaxed text-slate-500">자료실에 이미 등록된 문서를 연결합니다. 원본 파일은 변경되지 않습니다.</p>
+                  {selectedFiles.length > 0 && <ul className="mb-2 space-y-1.5">{selectedFiles.map((file) => <li key={file.id} className="flex min-w-0 items-center gap-2 rounded-lg bg-blue-50 px-3 py-2"><FileText size={14} className="shrink-0 text-blue-600" /><span className="min-w-0 flex-1 break-words text-xs font-medium text-blue-800">{file.name}</span><button type="button" onClick={() => toggleFile(file.id)} aria-label={file.name + ' 연결 해제'} className="shrink-0 rounded-md p-1 text-blue-600 hover:bg-blue-100"><X size={14} /></button></li>)}</ul>}
+                  <label className="relative block">
+                    <span className="sr-only">연결할 문서 검색</span><Search size={15} className="pointer-events-none absolute left-3 top-3.5 text-slate-400" />
+                    <input type="search" value={fileSearch} onChange={(event) => setFileSearch(event.target.value)} placeholder="문서명 또는 분류 검색" className={fieldClassName + ' pl-9'} />
+                  </label>
+                  <div className="mt-2 max-h-40 overflow-y-auto rounded-xl border border-slate-200" aria-label="연결 가능한 문서">
+                    {filteredFiles.length ? filteredFiles.map((file) => <label key={file.id} className="flex cursor-pointer items-start gap-2.5 border-b border-slate-100 px-3 py-2.5 last:border-b-0 hover:bg-slate-50"><input type="checkbox" checked={linkedFileIds.includes(file.id)} onChange={() => toggleFile(file.id)} className="mt-0.5 h-4 w-4 shrink-0 accent-blue-600" /><span className="min-w-0 text-xs leading-relaxed text-slate-700"><span className="block break-words font-medium">{file.name}</span>{file.category && <span className="text-slate-500">{file.category}</span>}</span></label>) : <p className="px-3 py-4 text-xs text-slate-500">{availableFiles.length ? '검색 결과가 없습니다.' : '연결할 문서가 없습니다. 자료실에 문서를 먼저 등록하세요.'}</p>}
+                  </div>
+                </div>
+              </fieldset>
+            </div>
+          </details>
 
-        {error && <p className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-xs font-bold text-red-600">{error}</p>}
-
-        <div className="mt-7 flex gap-3">
-          <button type="button" onClick={onClose} className="flex-1 rounded-2xl bg-slate-100 py-3.5 text-sm font-black text-slate-600 transition-colors hover:bg-slate-200">취소</button>
-          <button disabled={isSaving} className="flex-1 rounded-2xl bg-blue-600 py-3.5 text-sm font-black text-white shadow-lg transition-all hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60">{isSaving ? '저장 중...' : copyMode ? '복사한 일정 추가' : initialSchedule ? '변경사항 저장' : dateMode === 'range' ? `${getRangeDayCount(dateValue, endDateValue) - 1}박 ${getRangeDayCount(dateValue, endDateValue)}일 일정 추가` : recurrenceMode === 'none' ? '일정 추가' : `${createRecurringDates(dateValue, recurrenceMode, monthlyWeek).length}개 일정 추가`}</button>
+          {conflicts.length > 0 && <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800"><div className="flex items-center gap-2 text-xs font-bold"><AlertTriangle size={15} />시간이 겹칠 수 있는 일정 {conflicts.length}건</div><p className="mt-1.5 text-xs leading-relaxed">{conflicts.slice(0, 3).map((schedule) => schedule.title).join(' · ')}</p><p className="mt-1 text-xs">시간 겹침 안내이며, 저장은 계속할 수 있습니다.</p></div>}
         </div>
+
+        <footer className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
+          {error && <p role="alert" className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-semibold leading-relaxed text-red-700">{error}</p>}
+          <div className="flex gap-3">
+            <button type="button" disabled={isSaving} onClick={onClose} className="min-h-11 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50">취소</button>
+            <button type="submit" disabled={isSaving} className="min-h-11 flex-[2] rounded-xl bg-blue-600 px-3 py-3 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60">{isSaving ? '저장 중...' : copyMode ? '복사한 일정 추가' : initialSchedule ? '변경사항 저장' : recurrenceMode !== 'none' && dateMode === 'single' ? String(recurrenceCount) + '개 일정 추가' : '일정 추가'}</button>
+          </div>
+        </footer>
       </form>
-    </div>
+    </dialog>
   );
 }

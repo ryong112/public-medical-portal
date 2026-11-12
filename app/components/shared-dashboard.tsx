@@ -1,36 +1,12 @@
-import { useState } from 'react';
-import { getScheduleCategory, scheduleCategoryStyles } from '@/lib/schedule-category';
-import {
-  ArrowRight,
-  BellRing,
-  CalendarDays,
-  Check,
-  FolderOpen,
-  MessageCircle,
-  Siren,
-} from 'lucide-react';
+import { useRef, useState } from 'react';
+import { getScheduleCategory, scheduleCategoryStyles, type ScheduleCategory } from '@/lib/schedule-category';
+import { type DashboardSchedule as Schedule, formatScheduleDateRange, formatScheduleTime, getAbsenceTypeLabel, getDashboardTodos, getScheduleEndDate, getTodoStatus, scheduleOccursOn, scheduleOverlaps, shiftDateKey, toLocalDateKey } from '@/lib/dashboard-schedules';
+import { ArrowRight, BellRing, CalendarDays, Check, ChevronDown, ChevronUp, FolderOpen, MessageCircle, Printer, Siren, X } from 'lucide-react';
 
 type DashboardView = 'files' | 'calendar' | 'external_calendar' | 'dashboard';
-type DailyScheduleFilter = 'all' | 'general' | 'internal' | 'business_trip' | 'meeting' | 'leave';
-type WeeklyScheduleFilter = Exclude<DailyScheduleFilter, 'leave'>;
-type ScheduleFilterCounts = Record<DailyScheduleFilter, number>;
-
-interface Schedule {
-  id: number;
-  title: string;
-  date: string;
-  end_date?: string | null;
-  start_time: string | null;
-  end_time: string | null;
-  is_notice?: boolean;
-  is_completed?: boolean;
-  is_todo?: boolean;
-  is_urgent?: boolean;
-  schedule_type?: 'meeting' | 'business_trip' | 'internal' | 'leave' | 'unclassified';
-  absence_type?: 'annual' | 'early' | 'outing' | 'early_am' | 'early_pm';
-  created_at?: string;
-}
-
+type ScheduleFilter = 'all' | ScheduleCategory;
+type WeeklyScheduleFilter = Exclude<ScheduleFilter, 'leave'>;
+type ScheduleFilterCounts = Record<ScheduleFilter, number>;
 interface AbsenceGroup {
   key: string;
   person: string;
@@ -38,7 +14,6 @@ interface AbsenceGroup {
   dateLabel: string;
   schedules: Schedule[];
 }
-
 interface SharedDashboardProps {
   schedules: Schedule[];
   onChangeView: (view: DashboardView) => void;
@@ -46,512 +21,186 @@ interface SharedDashboardProps {
   onOpenSchedule: (schedule: Schedule) => void;
   onToggleScheduleComplete: (schedule: Schedule) => void;
   onOpenAbsenceBoard?: () => void;
+  onPrintWeek?: () => void;
 }
 
-const toLocalDateKey = (date: Date) => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-};
-
-const formatScheduleTime = (schedule: Schedule) => {
-  if (schedule.start_time && schedule.end_time) return `${schedule.start_time} - ${schedule.end_time}`;
-  if (schedule.start_time) return `${schedule.start_time}부터`;
-  if (schedule.end_time) return `${schedule.end_time}까지`;
-  return '시간 미정';
-};
-
-const getScheduleSortTime = (schedule: Schedule) => schedule.start_time ?? schedule.end_time ?? '99:99';
-
-const getScheduleEndDate = (schedule: Schedule) => schedule.end_date && schedule.end_date >= schedule.date ? schedule.end_date : schedule.date;
-
-const scheduleOccursOn = (schedule: Schedule, dateKey: string) => schedule.date <= dateKey && getScheduleEndDate(schedule) >= dateKey;
-
-const scheduleOverlaps = (schedule: Schedule, startDate: string, endDate: string) => schedule.date <= endDate && getScheduleEndDate(schedule) >= startDate;
-
-const formatScheduleDateRange = (schedule: Schedule) => {
-  const endDate = getScheduleEndDate(schedule);
-  return endDate === schedule.date ? schedule.date : `${schedule.date} ~ ${endDate}`;
-};
-
-const expandScheduleDateKeys = (schedule: Schedule, minimumDate?: string, maximumDate?: string) => {
-  const startKey = minimumDate && schedule.date < minimumDate ? minimumDate : schedule.date;
-  const scheduleEnd = getScheduleEndDate(schedule);
-  const endKey = maximumDate && scheduleEnd > maximumDate ? maximumDate : scheduleEnd;
-  if (startKey > endKey) return [];
-
-  const dates: string[] = [];
-  const cursor = new Date(`${startKey}T00:00:00`);
-  const end = new Date(`${endKey}T00:00:00`);
-  while (cursor <= end) {
-    dates.push(toLocalDateKey(cursor));
-    cursor.setDate(cursor.getDate() + 1);
+const dailyFilters: Array<{ value: ScheduleFilter; label: string }> = [
+  { value: 'all', label: '업무 전체' }, { value: 'general', label: '일반' },
+  { value: 'internal', label: '내부일정' }, { value: 'business_trip', label: '출장' },
+  { value: 'meeting', label: '회의' }, { value: 'leave', label: '휴가' },
+];
+const weeklyFilters = dailyFilters.filter((filter) => filter.value !== 'leave') as Array<{ value: WeeklyScheduleFilter; label: string }>;
+const isAbsence = (schedule: Schedule) => getScheduleCategory(schedule) === 'leave';
+const sortTime = (a: Schedule, b: Schedule) => (a.start_time ?? a.end_time ?? '99:99').localeCompare(b.start_time ?? b.end_time ?? '99:99');
+const cleanTitle = (title: string) => title.replace(/^(?:회의|출장|내부일정|휴가|연차|조퇴|외출)\s*[)）]\s*/u, '').trim();
+const matchesFilter = (schedule: Schedule, filter: ScheduleFilter) => filter === 'all' ? !isAbsence(schedule) : getScheduleCategory(schedule) === filter;
+const countCategories = (schedules: Schedule[], workOnly = false): ScheduleFilterCounts => {
+  const counts: ScheduleFilterCounts = { all: 0, general: 0, internal: 0, business_trip: 0, meeting: 0, leave: 0 };
+  for (const schedule of schedules) {
+    const category = getScheduleCategory(schedule);
+    counts[category] += 1;
+    if (!workOnly || category !== 'leave') counts.all += 1;
   }
-  return dates;
-};
-
-const getAbsenceTypeLabel = (schedule: Schedule) => {
-  if (schedule.absence_type === 'early' || schedule.absence_type === 'early_am' || schedule.absence_type === 'early_pm' || schedule.title.includes('조퇴')) return '조퇴';
-  if (schedule.absence_type === 'outing' || schedule.title.includes('외출')) return '외출';
-  return '연차';
-};
-
-const isAbsenceSchedule = (schedule: Schedule) => getScheduleCategory(schedule) === 'leave';
-
-const dailyScheduleFilters: Array<{ value: DailyScheduleFilter; label: string }> = [
-  { value: 'all', label: '전체' },
-  { value: 'general', label: '일반' },
-  { value: 'internal', label: '내부일정' },
-  { value: 'business_trip', label: '출장' },
-  { value: 'meeting', label: '회의' },
-  { value: 'leave', label: '휴가' },
-];
-const weeklyScheduleFilters: Array<{ value: WeeklyScheduleFilter; label: string }> = [
-  { value: 'all', label: '전체' },
-  { value: 'general', label: '일반' },
-  { value: 'internal', label: '내부일정' },
-  { value: 'business_trip', label: '출장' },
-  { value: 'meeting', label: '회의' },
-];
-
-const getDailyScheduleCategory = getScheduleCategory;
-
-const getFilterStyle = (filter: DailyScheduleFilter, selected: boolean, allColor: 'blue' | 'violet') => filter === 'all'
-  ? selected
-    ? allColor === 'blue' ? 'border-blue-600 bg-blue-600 text-white shadow-sm' : 'border-violet-600 bg-violet-600 text-white shadow-sm'
-    : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'
-  : selected ? `${scheduleCategoryStyles[filter].filterActive} shadow-sm` : scheduleCategoryStyles[filter].filter;
-
-const cleanScheduleTitle = (title: string) => title.replace(/^(?:회의|출장|내부일정|휴가|연차|조퇴|외출)\s*[)）]\s*/u, '').trim();
-
-const matchesDailyScheduleFilter = (schedule: Schedule, filter: DailyScheduleFilter) => filter === 'all' || getDailyScheduleCategory(schedule) === filter;
-
-const countScheduleCategories = (schedules: Schedule[], excludeAbsencesFromAll = false): ScheduleFilterCounts => {
-  const counts: ScheduleFilterCounts = {
-    all: excludeAbsencesFromAll ? schedules.filter((schedule) => !isAbsenceSchedule(schedule)).length : schedules.length,
-    general: 0,
-    internal: 0,
-    business_trip: 0,
-    meeting: 0,
-    leave: 0,
-  };
-  for (const schedule of schedules) counts[getDailyScheduleCategory(schedule)] += 1;
   return counts;
 };
-
 const getAbsencePeople = (schedule: Schedule) => {
-  const names = schedule.title
-    .replace(/^(?:휴가|연차|오전\s*조퇴|오후\s*조퇴|조퇴|외출)\s*[-:)]?\s*/u, '')
-    .split(/[,，/·]+/u)
-    .map((name) => name.trim())
-    .filter(Boolean);
-  return [...new Set(names.length > 0 ? names : [schedule.title.trim()])];
+  if (schedule.owner_name?.trim()) return [schedule.owner_name.trim()];
+  const names = schedule.title.replace(/^(?:휴가|연차|오전\s*조퇴|오후\s*조퇴|조퇴|외출)\s*[-:：)）]?\s*/u, '').split(/[,，/·]+/u).map((name) => name.trim()).filter(Boolean);
+  return [...new Set(names.length ? names : [schedule.title.trim()])];
 };
-
-const formatAbsenceDateRanges = (dateKeys: string[]) => {
-  const dates = [...new Set(dateKeys)].sort().map((key) => {
-    const [year, month, day] = key.split('-').map(Number);
-    return new Date(year, month - 1, day);
-  });
-  const ranges: Array<{ start: Date; end: Date }> = [];
-
-  for (const date of dates) {
-    const lastRange = ranges.at(-1);
-    if (!lastRange) {
-      ranges.push({ start: date, end: date });
-      continue;
-    }
-    const nextDay = new Date(lastRange.end);
-    nextDay.setDate(nextDay.getDate() + 1);
-    if (toLocalDateKey(nextDay) === toLocalDateKey(date)) lastRange.end = date;
-    else ranges.push({ start: date, end: date });
-  }
-
-  return ranges.map(({ start, end }) => {
-    const startLabel = `${start.getMonth() + 1}. ${start.getDate()}`;
-    if (toLocalDateKey(start) === toLocalDateKey(end)) return `${startLabel}.`;
-    if (start.getMonth() === end.getMonth()) return `${startLabel}~${end.getDate()}.`;
-    return `${startLabel}~${end.getMonth() + 1}. ${end.getDate()}.`;
-  }).join(', ');
-};
-
-const groupAbsenceSchedules = (schedules: Schedule[], minimumDate?: string, maximumDate?: string): AbsenceGroup[] => {
-  const groupMap = new Map<string, Schedule[]>();
+const groupAbsences = (schedules: Schedule[], minimum: string, maximum: string): AbsenceGroup[] => {
+  const people = new Map<string, Schedule[]>();
   for (const schedule of schedules) {
-    for (const person of getAbsencePeople(schedule)) {
-      groupMap.set(person, [...(groupMap.get(person) ?? []), schedule]);
-    }
+    for (const person of getAbsencePeople(schedule)) people.set(person, [...(people.get(person) ?? []), schedule]);
   }
-
-  return [...groupMap.entries()].map(([key, groupedSchedules]) => ({
-    key,
-    person: key,
-    typeLabel: [...new Set(groupedSchedules.map(getAbsenceTypeLabel))].join(' · '),
-    dateLabel: formatAbsenceDateRanges(groupedSchedules.flatMap((schedule) => expandScheduleDateKeys(schedule, minimumDate, maximumDate))),
-    schedules: groupedSchedules,
+  return [...people.entries()].map(([person, items]) => ({
+    key: person, person, typeLabel: [...new Set(items.map(getAbsenceTypeLabel))].join(' · '),
+    dateLabel: [...new Set(items.map((schedule) => {
+      const start = schedule.date < minimum ? minimum : schedule.date;
+      const end = getScheduleEndDate(schedule) > maximum ? maximum : getScheduleEndDate(schedule);
+      return start === end ? start : `${start} ~ ${end}`;
+    }))].join(', '),
+    schedules: items,
   }));
 };
+const filterStyle = (filter: ScheduleFilter, selected: boolean, color: 'blue' | 'violet') => filter === 'all'
+  ? selected ? color === 'blue' ? 'border-blue-600 bg-blue-600 text-white' : 'border-violet-600 bg-violet-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
+  : selected ? scheduleCategoryStyles[filter].filterActive : scheduleCategoryStyles[filter].filter;
 
-export default function SharedDashboard({
-  schedules,
-  onChangeView,
-  onOpenChat,
-  onOpenSchedule,
-  onToggleScheduleComplete,
-  onOpenAbsenceBoard,
-}: SharedDashboardProps) {
-  const [todayFilter, setTodayFilter] = useState<DailyScheduleFilter>('all');
-  const [tomorrowFilter, setTomorrowFilter] = useState<DailyScheduleFilter>('all');
+function CategoryCounts({ counts, pending = false }: { counts: ScheduleFilterCounts; pending?: boolean }) {
+  return <div className="mb-3">
+    <p className="mb-2 text-xs font-medium text-slate-500">{pending ? '미완료 유형별 건수' : '유형별 건수'} · 집계</p>
+    <dl className="flex flex-wrap gap-x-3 gap-y-2 text-xs">{dailyFilters.slice(1).map(({ value, label }) => (
+      <div key={value} data-summary-category={value} className="flex items-center gap-1.5">
+        <span aria-hidden="true" className={`h-2 w-2 rounded-full ${scheduleCategoryStyles[value as ScheduleCategory].dot}`} />
+        <dt className="text-slate-600">{label}</dt><dd className="font-bold tabular-nums text-slate-900">{counts[value]}</dd>
+      </div>
+    ))}</dl>
+  </div>;
+}
+function ScheduleMetadata({ schedule }: { schedule: Schedule }) {
+  const fields = [schedule.owner_name?.trim() && `담당 ${schedule.owner_name.trim()}`, schedule.location?.trim() && `장소 ${schedule.location.trim()}`].filter(Boolean);
+  return fields.length ? <p className="mt-1 break-words text-xs font-medium leading-relaxed text-slate-600">{fields.join(' · ')}</p> : null;
+}
+
+export default function SharedDashboard({ schedules, onChangeView, onOpenChat, onOpenSchedule, onToggleScheduleComplete, onOpenAbsenceBoard, onPrintWeek }: SharedDashboardProps) {
+  const [todayFilter, setTodayFilter] = useState<ScheduleFilter>('all');
+  const [tomorrowFilter, setTomorrowFilter] = useState<ScheduleFilter>('all');
   const [weeklyFilter, setWeeklyFilter] = useState<WeeklyScheduleFilter>('all');
-  const [selectedAbsence, setSelectedAbsence] = useState<AbsenceGroup | null>(null);
+  const [expandedCard, setExpandedCard] = useState<string | null>(null);
+  const [selectedPerson, setSelectedPerson] = useState<string | null>(null);
+  const detailButtons = useRef<Record<string, HTMLButtonElement | null>>({});
   const now = new Date();
-  const todayKey = toLocalDateKey(now);
-  const tomorrow = new Date(now);
-  tomorrow.setDate(now.getDate() + 1);
-  const tomorrowKey = toLocalDateKey(tomorrow);
-  const weekEnd = new Date(now);
-  weekEnd.setDate(now.getDate() + 6);
-  const weekEndKey = toLocalDateKey(weekEnd);
-  const monthEndKey = toLocalDateKey(new Date(now.getFullYear(), now.getMonth() + 1, 0));
-
-  const todaySchedules = schedules
-    .filter((schedule) => scheduleOccursOn(schedule, todayKey))
-    .sort((a, b) => getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
-  const filteredTodaySchedules = todaySchedules.filter((schedule) => matchesDailyScheduleFilter(schedule, todayFilter));
-  const todayWorkSchedules = todayFilter === 'leave'
-    ? filteredTodaySchedules
-    : filteredTodaySchedules.filter((schedule) => !isAbsenceSchedule(schedule));
-  const todayCategoryCounts = countScheduleCategories(todaySchedules, true);
-  const todayAbsenceGroups = groupAbsenceSchedules(todaySchedules.filter(isAbsenceSchedule));
-  const todayTodoSchedules = todaySchedules
-    .filter((schedule) => schedule.is_todo)
-    .sort((a, b) => Number(Boolean(a.is_completed)) - Number(Boolean(b.is_completed)) || getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
-  const pendingTodoCount = todayTodoSchedules.filter((schedule) => !schedule.is_completed).length;
-  const completedTodoCount = todayTodoSchedules.filter((schedule) => schedule.is_completed).length;
-  const pendingTodoCategoryCounts = countScheduleCategories(todayTodoSchedules.filter((schedule) => !schedule.is_completed));
-  const tomorrowSchedules = schedules
-    .filter((schedule) => scheduleOccursOn(schedule, tomorrowKey))
-    .sort((a, b) => getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
-  const filteredTomorrowSchedules = tomorrowSchedules.filter((schedule) => matchesDailyScheduleFilter(schedule, tomorrowFilter));
-  const tomorrowVisibleSchedules = tomorrowFilter === 'leave'
-    ? filteredTomorrowSchedules
-    : filteredTomorrowSchedules.filter((schedule) => !isAbsenceSchedule(schedule));
-  const tomorrowCategoryCounts = countScheduleCategories(tomorrowSchedules, true);
-  const todayFilterLabel = dailyScheduleFilters.find((filter) => filter.value === todayFilter)?.label ?? '전체';
-  const tomorrowFilterLabel = dailyScheduleFilters.find((filter) => filter.value === tomorrowFilter)?.label ?? '전체';
-  const weeklySchedules = schedules
-    .filter((schedule) => scheduleOverlaps(schedule, todayKey, weekEndKey))
-    .sort((a, b) => a.date.localeCompare(b.date) || getScheduleSortTime(a).localeCompare(getScheduleSortTime(b)));
-  const weeklyWorkSchedules = weeklySchedules.filter((schedule) => !isAbsenceSchedule(schedule));
-  const weeklyCategoryCounts = countScheduleCategories(weeklyWorkSchedules);
-  const filteredWeeklySchedules = weeklySchedules.filter((schedule) => weeklyFilter === 'all'
-    ? !isAbsenceSchedule(schedule)
-    : getDailyScheduleCategory(schedule) === weeklyFilter);
-  const allUpcomingNotices = schedules
-    .filter((schedule) => schedule.is_notice && getScheduleEndDate(schedule) >= todayKey)
-    .sort((a, b) => a.date.localeCompare(b.date));
-  const noticeCategoryCounts = countScheduleCategories(allUpcomingNotices);
-  const monthlyAbsenceSchedules = schedules
-    .filter((schedule) => scheduleOverlaps(schedule, todayKey, monthEndKey))
-    .filter(isAbsenceSchedule)
-    .sort((a, b) => a.date.localeCompare(b.date));
-  const monthlyAbsenceGroups = groupAbsenceSchedules(monthlyAbsenceSchedules, todayKey, monthEndKey);
-  const monthlyAbsenceTypeCounts = {
-    annual: monthlyAbsenceGroups.filter((group) => group.schedules.some((schedule) => getAbsenceTypeLabel(schedule) === '연차')).length,
-    early: monthlyAbsenceGroups.filter((group) => group.schedules.some((schedule) => getAbsenceTypeLabel(schedule) === '조퇴')).length,
-    outing: monthlyAbsenceGroups.filter((group) => group.schedules.some((schedule) => getAbsenceTypeLabel(schedule) === '외출')).length,
+  const today = toLocalDateKey(now);
+  const tomorrow = shiftDateKey(today, 1);
+  const weekEnd = shiftDateKey(today, 6);
+  const monthEnd = toLocalDateKey(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+  const todaySchedules = schedules.filter((schedule) => scheduleOccursOn(schedule, today)).sort(sortTime);
+  const tomorrowSchedules = schedules.filter((schedule) => scheduleOccursOn(schedule, tomorrow)).sort(sortTime);
+  const todos = getDashboardTodos(schedules, today);
+  const pendingTodos = todos.filter((schedule) => !schedule.is_completed);
+  const overdueCount = pendingTodos.filter((schedule) => getTodoStatus(schedule, today) === '기한 지남').length;
+  const notices = schedules.filter((schedule) => schedule.is_notice && getScheduleEndDate(schedule) >= today).sort((a, b) => a.date.localeCompare(b.date) || sortTime(a, b));
+  const weekSchedules = schedules.filter((schedule) => scheduleOverlaps(schedule, today, weekEnd) && !isAbsence(schedule)).sort((a, b) => a.date.localeCompare(b.date) || sortTime(a, b));
+  const weekCounts = countCategories(weekSchedules, true);
+  const monthAbsences = schedules.filter((schedule) => isAbsence(schedule) && scheduleOverlaps(schedule, today, monthEnd)).sort((a, b) => a.date.localeCompare(b.date));
+  const absenceGroups = groupAbsences(monthAbsences, today, monthEnd);
+  const todayAbsences = groupAbsences(todaySchedules.filter(isAbsence), today, today);
+  const selectedAbsence = absenceGroups.find((absence) => absence.key === selectedPerson);
+  const absenceTypeCounts = {
+    annual: absenceGroups.filter((group) => group.schedules.some((schedule) => getAbsenceTypeLabel(schedule) === '연차')).length,
+    early: absenceGroups.filter((group) => group.schedules.some((schedule) => getAbsenceTypeLabel(schedule).includes('조퇴'))).length,
+    outing: absenceGroups.filter((group) => group.schedules.some((schedule) => getAbsenceTypeLabel(schedule) === '외출')).length,
   };
-  const summaryCards = [
-    { label: 'TO DO LIST', value: pendingTodoCount, unit: '개', color: 'text-blue-600', icon: <Check size={18} />, items: todayTodoSchedules, categoryCounts: pendingTodoCategoryCounts, isTodoCard: true, completedValue: completedTodoCount, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[], todayAbsenceItems: [] as AbsenceGroup[], isWeeklyCard: false },
-    { label: '진행 중인 공지사항', value: allUpcomingNotices.length, unit: '건', color: 'text-red-500', icon: <BellRing size={18} />, items: allUpcomingNotices, categoryCounts: noticeCategoryCounts, isTodoCard: false, completedValue: 0, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[], todayAbsenceItems: [] as AbsenceGroup[], isWeeklyCard: false },
-    { label: '주간 일정', value: weeklyWorkSchedules.length, unit: '건', color: 'text-violet-600', icon: <CalendarDays size={18} />, items: filteredWeeklySchedules, categoryCounts: weeklyCategoryCounts, isTodoCard: false, completedValue: 0, isAbsenceCard: false, absenceItems: [] as AbsenceGroup[], todayAbsenceItems: [] as AbsenceGroup[], isWeeklyCard: true },
-    { label: '이번 달 휴가', value: monthlyAbsenceGroups.length, unit: '명', color: 'text-orange-600', icon: <CalendarDays size={18} />, items: [] as Schedule[], categoryCounts: countScheduleCategories(monthlyAbsenceSchedules), isTodoCard: false, completedValue: 0, isAbsenceCard: true, absenceItems: monthlyAbsenceGroups, todayAbsenceItems: todayAbsenceGroups, isWeeklyCard: false },
+  const cards = [
+    { key: 'todo', label: 'TO DO LIST', icon: <Check size={18} />, color: 'text-blue-600', border: 'border-blue-100', value: pendingTodos.length, unit: '개', items: todos, counts: countCategories(pendingTodos) },
+    { key: 'notice', label: '진행 중인 공지사항', icon: <BellRing size={18} />, color: 'text-red-600', border: 'border-red-100', value: notices.length, unit: '건', items: notices, counts: countCategories(notices) },
+    { key: 'week', label: '앞으로 7일', icon: <CalendarDays size={18} />, color: 'text-violet-600', border: 'border-violet-100', value: weekSchedules.length, unit: '건', items: weekSchedules.filter((schedule) => matchesFilter(schedule, weeklyFilter)), counts: weekCounts },
+    { key: 'absence', label: '이달 남은 휴가', icon: <CalendarDays size={18} />, color: 'text-orange-700', border: 'border-orange-100', value: absenceGroups.length, unit: '명', items: [] as Schedule[], counts: countCategories(monthAbsences) },
   ];
-
-  const renderDailyFilters = (
-    selectedFilter: DailyScheduleFilter,
-    onSelect: (filter: DailyScheduleFilter) => void,
-    color: 'blue' | 'violet',
-    counts: ScheduleFilterCounts,
-  ) => (
-    <div className="flex max-w-full gap-1 overflow-x-auto pb-1 sm:flex-wrap sm:justify-end sm:overflow-visible sm:pb-0 sm:gap-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-      {dailyScheduleFilters.map((filter) => (
-        <button
-          key={filter.value}
-          onClick={() => onSelect(filter.value)}
-          aria-pressed={selectedFilter === filter.value}
-          aria-label={`${filter.label} ${counts[filter.value]}건`}
-          data-schedule-category={filter.value}
-          className={`inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border px-2.5 text-[9px] font-black transition-colors sm:text-[10px] ${getFilterStyle(filter.value, selectedFilter === filter.value, color)}`}
-        >
-          {filter.value !== 'all' && <span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full ${selectedFilter === filter.value ? 'bg-white' : scheduleCategoryStyles[filter.value].dot}`} />}
-          <span>{filter.label}</span>
-          <span className={`min-w-4 rounded-md px-1 text-center text-[8px] tabular-nums sm:text-[9px] ${selectedFilter === filter.value ? 'bg-white/20 text-white' : 'bg-white text-slate-700 shadow-sm'}`}>{counts[filter.value]}</span>
+  const closeDetails = (key: string) => {
+    setExpandedCard(null);
+    setSelectedPerson(null);
+    detailButtons.current[key]?.focus();
+  };
+  const renderFilters = (selected: ScheduleFilter, select: (filter: ScheduleFilter) => void, color: 'blue' | 'violet', counts: ScheduleFilterCounts, weekly = false) => (
+    <div className="flex flex-wrap gap-2" role="group" aria-label={weekly ? '앞으로 7일 일정 유형 필터' : `${color === 'blue' ? '오늘' : '내일'} 일정 유형 필터`}>
+      {(weekly ? weeklyFilters : dailyFilters).map(({ value, label }) => (
+        <button key={value} type="button" onClick={() => select(value)} aria-pressed={selected === value} aria-label={`${label} ${counts[value]}건`} data-schedule-category={value} className={`inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-2 text-xs font-bold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 ${filterStyle(value, selected === value, color)}`}>
+          {value !== 'all' && <span aria-hidden="true" className={`h-2 w-2 shrink-0 rounded-full ${selected === value ? 'bg-white' : scheduleCategoryStyles[value].dot}`} />}
+          <span>{label}</span><span className={`rounded px-1.5 tabular-nums ${selected === value ? 'bg-white/20' : 'bg-white/80 text-slate-800'}`}>{counts[value]}</span>
         </button>
       ))}
     </div>
   );
-
-  const renderDailySchedule = (schedule: Schedule) => {
-    const category = getDailyScheduleCategory(schedule);
-    const categoryStyle = scheduleCategoryStyles[category];
-    const categoryLabel = category === 'leave' ? getAbsenceTypeLabel(schedule) : categoryStyle.label;
-    return (
-    <div
-      key={schedule.id}
-      data-schedule-category={category}
-      className={`group flex w-full items-center gap-2 rounded-xl border border-l-4 p-3 text-left shadow-sm transition-all sm:gap-3 sm:rounded-2xl sm:p-3.5 ${categoryStyle.accent} ${schedule.is_completed ? 'border-slate-200 bg-slate-50/80' : schedule.is_urgent ? 'border-red-200 bg-red-50/50 hover:border-red-300' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/50'}`}
-    >
-      {schedule.is_todo ? (
-        <button
-          onClick={() => onToggleScheduleComplete(schedule)}
-          aria-label={schedule.is_completed ? '완료 취소' : '완료 처리'}
-          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border-2 transition-all ${schedule.is_completed ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-slate-300 bg-white text-transparent hover:border-emerald-500'}`}
-        >
-          <Check size={15} strokeWidth={3} />
-        </button>
-      ) : (
-        <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${categoryStyle.icon}`}><CalendarDays size={15} /></span>
-      )}
-      <button onClick={() => onOpenSchedule(schedule)} className="flex min-w-0 flex-1 items-center gap-2 text-left sm:gap-3">
-        <div className={`w-11 shrink-0 text-[10px] font-black sm:w-16 sm:text-xs ${schedule.is_completed ? 'text-slate-400 line-through' : schedule.is_urgent ? 'text-red-600' : categoryStyle.time}`}>{schedule.start_time ?? schedule.end_time ?? '미정'}</div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
-            {schedule.is_urgent && <Siren size={15} className="shrink-0 text-red-500" />}
-            <span className={`shrink-0 rounded-md px-1.5 py-1 text-[8px] font-black ring-1 ring-inset sm:text-[9px] ${categoryStyle.badge}`}>{categoryLabel}</span>
-            <p className={`truncate text-xs font-black sm:text-sm ${schedule.is_completed ? 'text-slate-400 line-through' : 'text-slate-900'}`}>{cleanScheduleTitle(schedule.title)}</p>
-          </div>
-          <p className={`mt-1 text-[11px] font-bold ${schedule.is_completed ? 'text-slate-300 line-through' : 'text-slate-400'}`}>{schedule.end_date && schedule.end_date > schedule.date ? `${formatScheduleDateRange(schedule)} · ` : ''}{formatScheduleTime(schedule)}</p>
+  const renderSchedule = (schedule: Schedule, showDate = false, showTodoStatus = false) => {
+    const category = getScheduleCategory(schedule);
+    const style = scheduleCategoryStyles[category];
+    const status = getTodoStatus(schedule, today);
+    return <div key={schedule.id} data-schedule-category={category} className={`flex w-full items-start gap-2 rounded-xl border border-l-4 p-3 ${style.accent} ${schedule.is_completed ? 'border-slate-200 bg-slate-50' : schedule.is_urgent ? 'border-red-200 bg-red-50/50' : 'border-slate-200 bg-white'}`}>
+      {schedule.is_todo && <button type="button" onClick={() => onToggleScheduleComplete(schedule)} aria-label={`${schedule.title} ${schedule.is_completed ? '완료 취소' : '완료 처리'}`} aria-pressed={Boolean(schedule.is_completed)} className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 ${schedule.is_completed ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-300 bg-white text-slate-400 hover:border-emerald-600'}`}><Check size={18} strokeWidth={3} /></button>}
+      <button type="button" onClick={() => onOpenSchedule(schedule)} className="min-w-0 flex-1 rounded text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600">
+        <div className="flex flex-wrap items-center gap-1.5 text-xs font-bold">
+          <span className={`rounded-md px-2 py-1 ring-1 ring-inset ${style.badge}`}>{category === 'leave' ? getAbsenceTypeLabel(schedule) : style.label}</span>
+          {schedule.is_urgent && <span className="inline-flex items-center gap-1 rounded-md bg-red-100 px-2 py-1 text-red-700"><Siren size={13} />긴급</span>}
+          {schedule.is_notice && <span className="rounded-md bg-red-50 px-2 py-1 text-red-600">공지</span>}
+          {schedule.is_todo && <span className="rounded-md bg-blue-50 px-2 py-1 text-blue-700">TO DO</span>}
+          {schedule.is_todo && showTodoStatus && <span className={`rounded-md px-2 py-1 ${status === '기한 지남' ? 'bg-red-100 text-red-700' : status === '완료' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>{status}</span>}
         </div>
-        {schedule.is_todo && <span className="hidden rounded-lg bg-blue-50 px-2 py-1 text-[9px] font-black text-blue-600 2xl:inline-flex">TO DO</span>}
-        {schedule.is_notice && <span className="hidden rounded-lg bg-red-50 px-2 py-1 text-[9px] font-black text-red-500 2xl:inline-flex">공지</span>}
-        <ArrowRight size={15} className="hidden text-slate-300 transition-transform group-hover:translate-x-1 sm:block" />
+        <p className={`mt-2 break-words text-sm font-bold leading-relaxed ${schedule.is_completed ? 'text-slate-500 line-through' : 'text-slate-900'}`}>{cleanTitle(schedule.title)}</p>
+        <p className={`mt-1 text-xs font-medium leading-relaxed ${style.time}`}>{showDate || getScheduleEndDate(schedule) !== schedule.date ? `${formatScheduleDateRange(schedule)} · ` : ''}{formatScheduleTime(schedule)}</p>
+        <ScheduleMetadata schedule={schedule} />
       </button>
-    </div>
-    );
+    </div>;
   };
 
-  return (
-    <div className="flex h-full min-h-0 flex-col overflow-y-auto pb-4 custom-scrollbar sm:pb-5">
-      <section className="relative shrink-0 overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 px-5 py-5 text-white shadow-xl sm:rounded-[28px] sm:px-6 sm:py-6 lg:px-8">
-        <div className="absolute -right-20 -top-24 h-64 w-64 rounded-full bg-blue-500/20 blur-3xl" />
-        <div className="absolute -bottom-24 left-1/3 h-56 w-56 rounded-full bg-violet-500/20 blur-3xl" />
-        <div className="relative flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
-          <div>
-            <h2 className="text-[clamp(1.55rem,3vw,2.5rem)] font-black tracking-tight">
-              공공의료지원과 일정
-            </h2>
-            <p className="mt-2 text-sm font-medium text-slate-400">
-              {new Intl.DateTimeFormat('ko-KR', {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-                weekday: 'long',
-              }).format(now)}
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-1.5 sm:gap-2">
-            <button
-              onClick={() => onChangeView('files')}
-              className="flex items-center gap-2 rounded-xl bg-white/10 px-3 py-2.5 text-[11px] font-black transition-colors hover:bg-white/20 sm:rounded-2xl sm:px-4 sm:py-3 sm:text-xs"
-            >
-              <FolderOpen size={16} /> 문서함
-            </button>
-            <button
-              onClick={() => onChangeView('calendar')}
-              className="flex items-center gap-2 rounded-xl bg-white/10 px-3 py-2.5 text-[11px] font-black transition-colors hover:bg-white/20 sm:rounded-2xl sm:px-4 sm:py-3 sm:text-xs"
-            >
-              <CalendarDays size={16} /> 일정 보기
-            </button>
-            <button
-              onClick={onOpenChat}
-              className="flex items-center gap-2 rounded-xl bg-blue-500 px-3 py-2.5 text-[11px] font-black transition-colors hover:bg-blue-400 sm:rounded-2xl sm:px-4 sm:py-3 sm:text-xs"
-            >
-              <MessageCircle size={16} /> 공유방
-            </button>
-          </div>
+  return <div className="h-full min-h-0 overflow-y-auto pb-5 custom-scrollbar">
+    <section className="relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 px-5 py-5 text-white shadow-xl sm:rounded-[28px] sm:p-6 lg:px-8">
+      <div aria-hidden="true" className="absolute -right-20 -top-24 h-64 w-64 rounded-full bg-blue-500/20 blur-3xl" />
+      <div className="relative flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
+        <div><h2 className="text-[clamp(1.55rem,3vw,2.5rem)] font-black tracking-tight">공공의료지원과 일정</h2><p className="mt-2 text-sm text-slate-300">{new Intl.DateTimeFormat('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' }).format(now)}</p></div>
+        <div className="flex flex-wrap gap-2 text-xs font-bold">
+          <button type="button" onClick={() => onChangeView('files')} className="flex min-h-11 items-center gap-2 rounded-xl bg-white/10 px-3 py-2.5 hover:bg-white/20"><FolderOpen size={16} />문서함</button>
+          <button type="button" onClick={() => onChangeView('calendar')} className="flex min-h-11 items-center gap-2 rounded-xl bg-white/10 px-3 py-2.5 hover:bg-white/20"><CalendarDays size={16} />일정 보기</button>
+          {onPrintWeek && <button type="button" onClick={onPrintWeek} className="flex min-h-11 items-center gap-2 rounded-xl bg-white/10 px-3 py-2.5 hover:bg-white/20"><Printer size={16} />주간 인쇄</button>}
+          <button type="button" onClick={onOpenChat} className="flex min-h-11 items-center gap-2 rounded-xl bg-blue-500 px-3 py-2.5 hover:bg-blue-400"><MessageCircle size={16} />공유방</button>
         </div>
-      </section>
-
-      <section className="mt-3 grid shrink-0 grid-cols-2 gap-2.5 sm:mt-4 sm:gap-3 lg:grid-cols-4">
-        {summaryCards.map((item, index) => (
-          <div key={item.label} tabIndex={0} className={`group relative rounded-2xl border-2 bg-white p-3 shadow-sm outline-none transition-all hover:z-30 hover:-translate-y-0.5 hover:shadow-lg focus:z-30 focus:ring-4 sm:rounded-[22px] sm:p-4 ${item.isTodoCard ? 'border-blue-100 focus:border-blue-300 focus:ring-blue-50' : item.isWeeklyCard ? 'border-violet-100 focus:border-violet-300 focus:ring-violet-50' : item.isAbsenceCard ? 'border-orange-100 focus:border-orange-300 focus:ring-orange-50' : 'border-red-100 focus:border-red-300 focus:ring-red-50'}`}>
-            <div className={`mb-3 flex items-center gap-1.5 text-[10px] font-black sm:mb-4 sm:gap-2 sm:text-xs ${item.color}`}>
-              {item.icon} {item.label}
-              {item.isAbsenceCard && onOpenAbsenceBoard && <button onClick={onOpenAbsenceBoard} className="ml-auto rounded-lg bg-orange-50 px-2 py-1 text-[9px] font-black text-orange-700 transition-colors hover:bg-orange-100">현황표</button>}
-            </div>
-            {item.isWeeklyCard && (
-              <div className="mb-3 grid grid-cols-3 gap-1.5">
-                {weeklyScheduleFilters.map((filter) => (
-                  <button
-                    key={`weekly-${filter.value}`}
-                    onClick={() => setWeeklyFilter(filter.value)}
-                    aria-pressed={weeklyFilter === filter.value}
-                    aria-label={`${filter.label} ${weeklyCategoryCounts[filter.value]}건`}
-                    data-schedule-category={filter.value}
-                    className={`inline-flex h-8 min-w-0 items-center justify-center gap-1 rounded-lg border px-1.5 text-[9px] font-black transition-colors sm:text-[10px] ${getFilterStyle(filter.value, weeklyFilter === filter.value, 'violet')}`}
-                  >
-                    {filter.value !== 'all' && <span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full ${weeklyFilter === filter.value ? 'bg-white' : scheduleCategoryStyles[filter.value].dot}`} />}
-                    <span className="truncate">{filter.value === 'internal' ? '내부' : filter.label}</span>
-                    <span className={`min-w-4 rounded-md px-1 text-center text-[8px] tabular-nums ${weeklyFilter === filter.value ? 'bg-white/20 text-white' : 'bg-white text-slate-700'}`}>{weeklyCategoryCounts[filter.value]}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-            {!item.isWeeklyCard && !item.isAbsenceCard && (
-              <div className="mb-3 grid grid-cols-3 gap-1.5">
-                {dailyScheduleFilters.slice(1).map((filter) => (
-                  <div key={`${item.label}-${filter.value}`} data-schedule-category={filter.value} className={`inline-flex h-8 min-w-0 items-center justify-center gap-1 rounded-lg border px-1.5 text-[9px] font-black sm:text-[10px] ${filter.value === 'all' ? '' : scheduleCategoryStyles[filter.value].filter}`}>
-                    {filter.value !== 'all' && <span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full ${scheduleCategoryStyles[filter.value].dot}`} />}
-                    <span className="truncate">{filter.value === 'internal' ? '내부' : filter.label}</span>
-                    <span className="min-w-4 rounded-md bg-white px-1 text-center text-[8px] tabular-nums text-slate-700">{item.categoryCounts[filter.value]}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {item.isTodoCard ? (
-              <div className="flex flex-wrap items-end gap-x-3 gap-y-1">
-                <strong className="text-xl font-black text-slate-900 md:text-2xl">미시행 {item.value}<span className="ml-0.5 text-xs text-slate-400">개</span></strong>
-                <span className="pb-0.5 text-xs font-black text-emerald-600">완료 {item.completedValue}개</span>
-              </div>
-            ) : item.isAbsenceCard ? (
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <strong className="shrink-0 text-2xl font-black text-slate-900 md:text-3xl">{item.value}<span className="ml-1 text-xs text-slate-400">{item.unit}</span></strong>
-                  <div className="flex items-center gap-1 text-[8px] font-black sm:text-[9px]">
-                    <span className="rounded-md bg-orange-50 px-1.5 py-1 text-orange-700">연차 {monthlyAbsenceTypeCounts.annual}</span>
-                    <span className="rounded-md bg-orange-50 px-1.5 py-1 text-orange-700">조퇴 {monthlyAbsenceTypeCounts.early}</span>
-                    <span className="rounded-md bg-orange-50 px-1.5 py-1 text-orange-700">외출 {monthlyAbsenceTypeCounts.outing}</span>
-                  </div>
-                  <div className="flex max-h-16 min-w-0 flex-1 flex-wrap gap-1.5 overflow-y-auto custom-scrollbar">
-                    {item.absenceItems.map((absence) => (
-                      <button key={`absence-chip-${absence.key}`} onClick={() => setSelectedAbsence(absence)} className="min-w-8 rounded-lg bg-orange-50 px-2 py-1.5 text-[9px] font-black text-orange-700 transition-colors hover:bg-orange-100 sm:px-2.5 sm:text-[10px]">{absence.person}</button>
-                    ))}
-                  </div>
-                </div>
-                <div className="mt-3 border-t border-orange-100 pt-2.5">
-                  <div className="mb-1.5 flex items-center gap-1.5 text-[9px] font-black text-orange-600 sm:text-[10px]"><CalendarDays size={12} /> 오늘 휴가·조퇴·외출</div>
-                  {item.todayAbsenceItems.length > 0 ? (
-                    <div className="flex max-h-16 flex-wrap gap-1.5 overflow-y-auto custom-scrollbar">
-                      {item.todayAbsenceItems.map((absence) => (
-                        <button key={`today-absence-${absence.key}`} onClick={() => onOpenSchedule(absence.schedules[0])} className="flex items-center gap-1.5 rounded-lg border border-orange-100 bg-orange-50 px-2 py-1.5 text-left transition-colors hover:border-orange-300 hover:bg-orange-100">
-                          <span className="text-[10px] font-black text-slate-800">{absence.person}</span>
-                          <span className="text-[8px] font-black text-orange-600 sm:text-[9px]">{absence.typeLabel}</span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : <p className="text-[9px] font-bold text-slate-400">오늘 등록된 휴가·조퇴·외출이 없습니다.</p>}
-                </div>
-              </div>
-            ) : (
-              <strong className="text-2xl font-black text-slate-900 md:text-3xl">
-                {item.value}<span className="ml-1 text-xs text-slate-400">{item.unit}</span>
-              </strong>
-            )}
-            <div className={`pointer-events-none absolute top-full z-40 w-[min(310px,calc(100vw-2rem))] pt-2 opacity-0 transition-all duration-150 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-y-0 group-focus-within:opacity-100 ${index % 2 === 0 ? 'left-0' : 'right-0'}`}>
-              <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white p-3 shadow-2xl">
-                <div className="mb-2 flex items-center justify-between border-b border-slate-100 px-1 pb-2">
-                  <span className="text-xs font-black text-slate-700">{item.isAbsenceCard && selectedAbsence ? `${selectedAbsence.person} 휴가 상세` : `${item.label} 상세${item.isWeeklyCard ? ` · ${weeklyScheduleFilters.find((filter) => filter.value === weeklyFilter)?.label}` : ''}`}</span>
-                  <span className="text-[10px] font-black text-slate-400">{item.isAbsenceCard && selectedAbsence ? '1명' : item.isWeeklyCard ? `${item.items.length}건` : `${item.value}${item.unit}`}</span>
-                </div>
-                {item.isAbsenceCard && item.absenceItems.length > 0 ? (
-                  <div className="max-h-64 space-y-1 overflow-y-auto custom-scrollbar">
-                    {(selectedAbsence ? [selectedAbsence] : item.absenceItems).map((absence) => (
-                      <button key={absence.key} onClick={() => setSelectedAbsence(absence)} className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left transition-colors hover:bg-orange-50 focus:bg-orange-50 focus:outline-none">
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-orange-50 text-orange-500"><CalendarDays size={16} /></div>
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-xs font-black text-slate-800">{absence.person} <span className="text-orange-600">({absence.dateLabel})</span></p>
-                          <p className="mt-1 text-[10px] font-bold text-slate-400">{absence.typeLabel}</p>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                ) : item.items.length > 0 ? (
-                  <div className="max-h-64 space-y-1 overflow-y-auto custom-scrollbar">
-                    {item.items.map((schedule) => (
-                      <div key={`${item.label}-${schedule.id}`} className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 transition-colors hover:bg-slate-50">
-                        {item.isTodoCard && (
-                          <button
-                            onClick={() => onToggleScheduleComplete(schedule)}
-                            aria-label={schedule.is_completed ? '완료 취소' : '완료 처리'}
-                            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border-2 transition-all ${schedule.is_completed ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-slate-300 bg-white text-transparent hover:border-emerald-500'}`}
-                          >
-                            <Check size={14} strokeWidth={3} />
-                          </button>
-                        )}
-                        <button onClick={() => onOpenSchedule(schedule)} className="flex min-w-0 flex-1 items-center gap-3 py-0.5 text-left focus:outline-none">
-                        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${schedule.is_urgent ? 'bg-red-50 text-red-500' : schedule.is_completed ? 'bg-emerald-50 text-emerald-500' : scheduleCategoryStyles[getDailyScheduleCategory(schedule)].icon}`}>
-                          {schedule.is_urgent ? <Siren size={16} /> : schedule.is_completed ? <Check size={16} /> : <CalendarDays size={16} />}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex min-w-0 items-center gap-1.5"><span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[8px] font-black ring-1 ring-inset ${scheduleCategoryStyles[getDailyScheduleCategory(schedule)].badge}`}>{scheduleCategoryStyles[getDailyScheduleCategory(schedule)].label}</span><p className={`truncate text-xs font-black ${schedule.is_completed ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{cleanScheduleTitle(schedule.title)}</p></div>
-                          <p className="mt-1 text-[10px] font-bold text-slate-400">{formatScheduleDateRange(schedule)} · {formatScheduleTime(schedule)}</p>
-                        </div>
-                        {schedule.is_notice && <span className="shrink-0 rounded-md bg-red-50 px-1.5 py-1 text-[8px] font-black text-red-500">공지</span>}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="py-8 text-center text-xs font-bold text-slate-400">등록된 항목이 없습니다.</div>
-                )}
-              </div>
-            </div>
-          </div>
-        ))}
-      </section>
-
-      <section className="mt-3 grid min-h-[330px] flex-1 gap-3 sm:mt-4 sm:gap-4 lg:grid-cols-2">
-        <div className="flex min-h-0 flex-col rounded-2xl border-2 border-blue-100 bg-white p-4 shadow-sm sm:rounded-[28px] sm:p-5 lg:p-6">
-          <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-blue-500">Today</p>
-              <h3 className="mt-1 text-xl font-black text-slate-900">오늘 일정</h3>
-            </div>
-            <div className="flex w-full flex-col items-start gap-2 sm:w-auto sm:items-end">
-              {renderDailyFilters(todayFilter, setTodayFilter, 'blue', todayCategoryCounts)}
-              <button onClick={() => onChangeView('calendar')} className="flex items-center gap-1 text-[10px] font-black text-slate-400 hover:text-blue-600">전체 일정 보기 <ArrowRight size={13} /></button>
-            </div>
-          </div>
-
-          {todayWorkSchedules.length > 0 ? (
-            <div className="flex min-h-0 flex-1 flex-col">
-              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1 custom-scrollbar">
-                {todayWorkSchedules.map((schedule) => renderDailySchedule(schedule))}
-              </div>
-            </div>
-          ) : (
-            <div className="flex min-h-48 flex-col items-center justify-center rounded-2xl bg-slate-50 text-center">
-              <CalendarDays size={30} className="mb-3 text-slate-300" />
-              <p className="text-sm font-black text-slate-500">{todayFilter === 'leave' ? '오늘 휴가·조퇴·외출은 위 요약 카드에서 확인할 수 있습니다.' : todayFilter === 'all' && todayAbsenceGroups.length > 0 ? '오늘 등록된 일반 일정이 없습니다.' : todayFilter === 'all' ? '오늘 등록된 일정이 없습니다.' : `오늘 ${todayFilterLabel} 일정이 없습니다.`}</p>
-              <button onClick={() => onChangeView('calendar')} className="mt-3 text-xs font-black text-blue-500">일정 추가</button>
-            </div>
-          )}
-        </div>
-
-        <div className="flex min-h-0 flex-col rounded-2xl border-2 border-violet-100 bg-white p-4 shadow-sm sm:rounded-[28px] sm:p-5 lg:p-6">
-          <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-violet-500">Tomorrow</p>
-              <h3 className="mt-1 text-xl font-black text-slate-900">내일 일정</h3>
-            </div>
-            {renderDailyFilters(tomorrowFilter, setTomorrowFilter, 'violet', tomorrowCategoryCounts)}
-          </div>
-          {tomorrowVisibleSchedules.length > 0 ? (
-            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1 custom-scrollbar">
-              {tomorrowVisibleSchedules.map((schedule) => renderDailySchedule(schedule))}
-            </div>
-          ) : (
-            <div className="flex min-h-48 flex-col items-center justify-center rounded-2xl bg-slate-50 text-center">
-              <CalendarDays size={30} className="mb-3 text-slate-300" />
-              <p className="text-sm font-black text-slate-500">{tomorrowFilter === 'all' ? '내일 등록된 일정이 없습니다.' : `내일 ${tomorrowFilterLabel} 일정이 없습니다.`}</p>
-              <button onClick={() => onChangeView('calendar')} className="mt-3 text-xs font-black text-violet-500">일정 추가</button>
-            </div>
-          )}
-        </div>
-      </section>
-
-    </div>
-  );
+      </div>
+    </section>
+    <section className="mt-4 grid items-start gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="일정 요약">
+      {cards.map((card) => <section key={card.key} onKeyDown={(event) => { if (event.key === 'Escape' && expandedCard === card.key) { event.stopPropagation(); closeDetails(card.key); } }} className={`min-w-0 rounded-2xl border-2 bg-white p-4 shadow-sm ${card.border}`}>
+        <div className={`mb-3 flex flex-wrap items-center gap-2 text-sm font-bold ${card.color}`}>{card.icon}<h3>{card.label}</h3>{card.key === 'absence' && onOpenAbsenceBoard && <button type="button" onClick={onOpenAbsenceBoard} className="ml-auto min-h-10 rounded-lg bg-orange-50 px-2.5 text-xs hover:bg-orange-100">현황판</button>}</div>
+        {card.key === 'week' && <><p className="mb-2 text-xs leading-relaxed text-slate-500">{today} ~ {weekEnd}<br />휴가 제외 · 업무 전체 {card.value}건</p><p className="mb-2 text-xs font-medium text-slate-500">유형 선택 · 목록 필터</p>{renderFilters(weeklyFilter, (value) => setWeeklyFilter(value as WeeklyScheduleFilter), 'violet', weekCounts, true)}</>}
+        {(card.key === 'todo' || card.key === 'notice') && <CategoryCounts counts={card.counts} pending={card.key === 'todo'} />}
+        {card.key === 'absence' && <p className="mb-3 text-xs leading-relaxed text-slate-500">{today} ~ {monthEnd}<br />기간 내 휴가·조퇴·외출 인원 (중복 제외)</p>}
+        <div className="mt-3 flex flex-wrap items-baseline gap-2">{card.key === 'todo' && <span className="text-sm font-bold text-slate-700">미완료</span>}<strong className="text-3xl font-black tabular-nums text-slate-900">{card.key === 'week' ? card.items.length : card.value}<span className="ml-1 text-sm font-medium text-slate-500">{card.unit}</span></strong>{card.key === 'week' && <span className="text-xs text-slate-500">{weeklyFilters.find((filter) => filter.value === weeklyFilter)?.label}</span>}{card.key === 'todo' && <span className="text-xs font-bold text-emerald-700">완료 {todos.length - pendingTodos.length}개</span>}</div>
+        {card.key === 'todo' && <p className="mt-2 text-xs font-medium leading-relaxed text-slate-600"><span className={overdueCount ? 'font-bold text-red-600' : ''}>기한 지남 {overdueCount}개</span> · 오늘 {pendingTodos.length - overdueCount}개<br />지난 미완료 + 오늘 일정</p>}
+        {card.key === 'absence' && <>
+          <p className="mt-2 text-xs leading-relaxed text-orange-800">연차 {absenceTypeCounts.annual}명 · 조퇴 {absenceTypeCounts.early}명 · 외출 {absenceTypeCounts.outing}명<br /><span className="text-slate-500">유형 간 인원 중복 가능</span></p>
+          <div className="mt-3 flex flex-wrap gap-2">{absenceGroups.map((absence) => <button key={absence.key} type="button" onClick={() => { setSelectedPerson(absence.key); setExpandedCard('absence'); }} aria-expanded={expandedCard === 'absence' && selectedPerson === absence.key} aria-controls="dashboard-details-absence" className="min-h-10 rounded-lg bg-orange-50 px-2.5 py-2 text-xs font-bold text-orange-800 hover:bg-orange-100">{absence.person}</button>)}</div>
+          <div className="mt-3 border-t border-orange-100 pt-3"><h4 className="text-xs font-bold text-orange-700">오늘 휴가·조퇴·외출</h4>{todayAbsences.length ? <div className="mt-2 flex flex-wrap gap-2">{todayAbsences.map((absence) => <button key={absence.key} type="button" onClick={() => onOpenSchedule(absence.schedules[0])} className="min-h-10 rounded-lg border border-orange-100 bg-orange-50 px-2.5 py-2 text-left text-xs text-orange-800"><strong>{absence.person}</strong> · {absence.typeLabel}</button>)}</div> : <p className="mt-2 text-xs text-slate-500">등록된 일정이 없습니다.</p>}</div>
+        </>}
+        <button ref={(element) => { detailButtons.current[card.key] = element; }} type="button" onClick={() => { setSelectedPerson(null); setExpandedCard(expandedCard === card.key ? null : card.key); }} aria-expanded={expandedCard === card.key} aria-controls={`dashboard-details-${card.key}`} className={`mt-4 flex min-h-11 w-full items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm font-bold hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 ${card.color}`}>
+          {expandedCard === card.key ? '상세 접기' : '상세 보기'}{expandedCard === card.key ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        </button>
+        {expandedCard === card.key && <div id={`dashboard-details-${card.key}`} role="region" aria-label={`${card.label} 상세`} onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); closeDetails(card.key); } }} className="mt-3 border-t border-slate-200 pt-3">
+          <div className="mb-3 flex items-center justify-between gap-2"><h4 className="text-xs font-bold text-slate-700">{selectedAbsence && card.key === 'absence' ? `${selectedAbsence.person} 상세` : `${card.label} 상세`}</h4><button type="button" onClick={() => closeDetails(card.key)} aria-label={`${card.label} 상세 닫기`} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg hover:bg-slate-100"><X size={18} /></button></div>
+          {card.key === 'absence' ? <div className="space-y-3">{selectedAbsence && <button type="button" onClick={() => setSelectedPerson(null)} className="min-h-10 text-xs font-bold text-orange-700">전체 인원 보기</button>}{(selectedAbsence ? [selectedAbsence] : absenceGroups).map((absence) => <section key={absence.key} className="space-y-2"><h5 className="break-words text-sm font-bold text-slate-800">{absence.person} · {absence.typeLabel}</h5><p className="break-words text-xs text-slate-500">{absence.dateLabel}</p>{absence.schedules.map((schedule) => renderSchedule(schedule, true))}</section>)}{!absenceGroups.length && <p className="py-3 text-sm text-slate-500">등록된 항목이 없습니다.</p>}</div> : <div className="space-y-2">{card.items.length ? card.items.map((schedule) => renderSchedule(schedule, true, card.key === 'todo')) : <p className="py-3 text-sm text-slate-500">등록된 항목이 없습니다.</p>}</div>}
+        </div>}
+      </section>)}
+    </section>
+    <section className="mt-4 grid items-start gap-4 lg:grid-cols-2" aria-label="오늘과 내일 일정">
+      {[
+        { label: '오늘', key: today, schedules: todaySchedules, filter: todayFilter, select: setTodayFilter, color: 'blue' as const },
+        { label: '내일', key: tomorrow, schedules: tomorrowSchedules, filter: tomorrowFilter, select: setTomorrowFilter, color: 'violet' as const },
+      ].map((day) => {
+        const visible = day.schedules.filter((schedule) => matchesFilter(schedule, day.filter));
+        return <section key={day.label} className={`min-w-0 rounded-2xl border-2 bg-white p-4 shadow-sm sm:p-5 ${day.color === 'blue' ? 'border-blue-100' : 'border-violet-100'}`}>
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-2"><div><p className="text-xs font-medium text-slate-500">{day.key}</p><h3 className="mt-1 text-xl font-black text-slate-900">{day.label} 일정</h3></div><button type="button" onClick={() => onChangeView('calendar')} className="flex min-h-10 items-center gap-1 text-xs font-bold text-blue-700">전체 일정 보기<ArrowRight size={14} /></button></div>
+          {renderFilters(day.filter, day.select, day.color, countCategories(day.schedules, true))}<p className="mt-2 text-xs text-slate-500">업무 전체는 휴가·조퇴·외출을 제외합니다.</p>
+          <div className="mt-4 space-y-2">{visible.length ? visible.map((schedule) => renderSchedule(schedule, false, true)) : <div className="rounded-xl bg-slate-50 px-4 py-8 text-center"><CalendarDays size={28} className="mx-auto mb-3 text-slate-400" /><p className="text-sm text-slate-600">{day.label} {dailyFilters.find((filter) => filter.value === day.filter)?.label} 일정이 없습니다.</p><button type="button" onClick={() => onChangeView('calendar')} className="mt-3 min-h-10 text-sm font-bold text-blue-700">일정 추가</button></div>}</div>
+        </section>;
+      })}
+    </section>
+  </div>;
 }

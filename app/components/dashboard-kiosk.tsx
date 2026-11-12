@@ -188,7 +188,8 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
       nextWeek: active.filter((schedule) => getScheduleCategory(schedule) !== 'leave' && overlapsRange(schedule, nextWeekStart, nextWeekEnd)),
       absences: active.filter((schedule) => getScheduleCategory(schedule) === 'leave' && scheduleEnd(schedule) >= today && schedule.date <= nextWeekEnd),
       notices: active.filter((schedule) => schedule.is_notice),
-      todos: active.filter((schedule) => schedule.is_todo && !schedule.is_completed),
+      todos: schedules.filter((schedule) => schedule.date && schedule.is_todo && !schedule.is_completed)
+        .sort((left, right) => `${scheduleEnd(left)}-${left.start_time ?? '99:99'}`.localeCompare(`${scheduleEnd(right)}-${right.start_time ?? '99:99'}`)),
     };
   }, [nextWeekEnd, nextWeekStart, schedules, thisWeekEnd, today, tomorrow]);
 
@@ -460,7 +461,7 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
           </Panel>
 
           <Panel title="미완료 TO DO" count={data.todos.length} breakdown={getScheduleBreakdown(data.todos, true)} icon={<CheckCircle2 size={17} />} tone="emerald" className="lg:col-span-4">
-            <CompactList items={data.todos} empty="미완료 항목이 없습니다." />
+            <CompactList items={data.todos} empty="미완료 항목이 없습니다." today={today} />
           </Panel>
 
           <Panel title="이번 주·다음 주 휴가" count={data.absences.length} breakdown={getAbsenceBreakdown(data.absences)} icon={<CalendarDays size={17} />} tone="orange" className="lg:col-span-4">
@@ -537,12 +538,12 @@ function ScheduleRow({ schedule, showDate = false }: { schedule: KioskSchedule; 
   );
 }
 
-function CompactList({ items, empty }: { items: KioskSchedule[]; empty: string }) {
+function CompactList({ items, empty, today }: { items: KioskSchedule[]; empty: string; today?: string }) {
   if (items.length === 0) return <Empty label={empty} />;
   return <div className="grid h-full min-h-0 gap-1 overflow-hidden lg:gap-1.5" style={{ gridTemplateRows: `repeat(${items.length}, minmax(0, 1fr))` }}>{items.map((schedule) => {
     const category = getScheduleCategory(schedule);
     const categoryStyle = scheduleCategoryStyles[category];
-    return <div key={schedule.id} data-schedule-category={category} className={`flex min-h-0 items-center gap-2 rounded-xl border border-l-4 border-white/10 bg-[#071126]/70 px-3 py-1.5 ${categoryStyle.darkAccent}`}><span className={`rounded-md px-1.5 py-1 text-[8px] font-black ring-1 ring-inset ${categoryStyle.darkBadge}`}>{category === 'leave' ? absenceLabel(schedule) : categoryStyle.label}</span>{schedule.is_urgent && <Siren size={13} className="shrink-0 text-rose-300" />}<span className="min-w-0 flex-1 truncate text-xs font-black text-white lg:text-sm">{cleanTitle(schedule.title)}</span><span className="shrink-0 text-[9px] font-bold text-slate-300">{schedule.date.slice(5).replace('-', '.')}</span></div>;
+    return <div key={schedule.id} data-schedule-category={category} className={`flex min-h-0 items-center gap-2 rounded-xl border border-l-4 border-white/10 bg-[#071126]/70 px-3 py-1.5 ${categoryStyle.darkAccent}`}><span className={`rounded-md px-1.5 py-1 text-[8px] font-black ring-1 ring-inset ${categoryStyle.darkBadge}`}>{category === 'leave' ? absenceLabel(schedule) : categoryStyle.label}</span>{schedule.is_urgent && <Siren size={13} className="shrink-0 text-rose-300" />}<span className="min-w-0 flex-1 truncate text-xs font-black text-white lg:text-sm">{cleanTitle(schedule.title)}</span>{today && <span className={`shrink-0 text-xs font-bold ${scheduleEnd(schedule) < today ? 'text-rose-300' : 'text-slate-300'}`}>{scheduleEnd(schedule) < today ? '기한 지남' : happensOn(schedule, today) ? '오늘' : '예정'}</span>}<span className="shrink-0 text-[9px] font-bold text-slate-300">{schedule.date.slice(5).replace('-', '.')}</span></div>;
   })}</div>;
 }
 

@@ -1,5 +1,7 @@
 'use client';
 
+import { photoScheduleNeedsReview } from '@/lib/whiteboard-review';
+
 import { useEffect, useRef, useState } from 'react';
 import NextImage from 'next/image';
 import { AlertTriangle, Camera, Check, ImagePlus, LoaderCircle, Plus, ScanText, Trash2, X } from 'lucide-react';
@@ -142,6 +144,7 @@ export default function WhiteboardImportModal({ onClose, initialMonth, existingS
   const [previewUrl, setPreviewUrl] = useState('');
   const [drafts, setDrafts] = useState<AnalyzedSchedule[]>([]);
   const [hasAnalyzed, setHasAnalyzed] = useState(false);
+  const [reviewFilter, setReviewFilter] = useState<'all' | 'needs-review'>('all');
   const [targetMonth, setTargetMonth] = useState(initialMonth || currentMonthKey());
   const [photoMonths, setPhotoMonths] = useState<string[]>([]);
   const [analysisWarnings, setAnalysisWarnings] = useState<string[]>([]);
@@ -164,6 +167,9 @@ export default function WhiteboardImportModal({ onClose, initialMonth, existingS
   const compareSchedule = (draft: AnalyzedSchedule, schedules = photoExistingSchedules) => compareWhiteboardSchedule(draft, schedules);
   const busy = isPreparing || isAnalyzing || isSaving;
   const actionableCount = drafts.filter((draft) => draft.selected && compareSchedule(draft).status !== 'duplicate').length;
+  const needsReview = (draft: AnalyzedSchedule) => photoScheduleNeedsReview(draft, compareSchedule(draft).status);
+  const reviewCount = drafts.filter(needsReview).length;
+  const visibleDrafts = reviewFilter === 'needs-review' ? drafts.filter(needsReview) : drafts;
 
   const selectFile = async (file?: File) => {
     if (!file || busy) return;
@@ -176,6 +182,7 @@ export default function WhiteboardImportModal({ onClose, initialMonth, existingS
     setError('');
     setDrafts([]);
     setHasAnalyzed(false);
+    setReviewFilter('all');
     setPhotoMonths([]);
     setAnalysisWarnings([]);
     setAddedDraftId('');
@@ -267,6 +274,7 @@ export default function WhiteboardImportModal({ onClose, initialMonth, existingS
   };
 
   const addManualDraft = () => {
+    setReviewFilter('all');
     const id = `manual-${crypto.randomUUID()}`;
     const lastDate = [...drafts].reverse().find((draft) => isWhiteboardDate(draft.date) && !draft.outside_photo_month)?.date;
     setDrafts((current) => [...current, {
@@ -475,9 +483,15 @@ export default function WhiteboardImportModal({ onClose, initialMonth, existingS
                 </div>
               </div>
               <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-2" aria-label="사진 일정 검토 필터">
+                  <button type="button" aria-pressed={reviewFilter === 'all'} onClick={() => setReviewFilter('all')} className={`min-h-10 rounded-xl border px-3 text-xs font-bold ${reviewFilter === 'all' ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-700'}`}>전체 {drafts.length}건</button>
+                  <button type="button" aria-pressed={reviewFilter === 'needs-review'} onClick={() => setReviewFilter('needs-review')} className={`min-h-10 rounded-xl border px-3 text-xs font-bold ${reviewFilter === 'needs-review' ? 'border-amber-700 bg-amber-700 text-white' : 'border-amber-200 bg-amber-50 text-amber-900'}`}>확인 필요한 일정 {reviewCount}건</button>
+                </div>
+                {reviewFilter === 'needs-review' && <p className="text-xs leading-relaxed text-slate-600">날짜·글씨·색상 확인 또는 기존 일정 변경이 필요한 항목입니다. 필터는 표시만 바꾸며 숨겨진 일정의 선택 상태도 유지됩니다. 저장 대상은 하단 전체 건수를 확인해 주세요.</p>}
+                {reviewFilter === 'needs-review' && visibleDrafts.length === 0 && drafts.length > 0 && <p role="status" className="rounded-xl bg-emerald-50 p-4 text-sm text-emerald-800">추가 확인이 필요한 항목은 없습니다. 전체 목록에서 내용을 한 번 더 확인해 주세요.</p>}
                 {drafts.length === 0 && <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-600"><p className="font-black">확인할 일정이 없습니다.</p><p className="mt-2 text-xs">하단의 ‘일정 추가’로 사진에서 빠진 일정을 직접 입력할 수 있습니다.</p></div>}
                 <fieldset disabled={isSaving} className="min-w-0 space-y-3 disabled:opacity-60">
-                {drafts.map((draft) => (
+                {visibleDrafts.map((draft) => (
                   <div key={draft.id} className={`rounded-2xl border p-4 transition-colors ${draft.selected ? 'border-blue-200 bg-blue-50/30' : 'border-slate-100 bg-slate-50 opacity-65'}`}>
                     <div className="flex items-start gap-3">
                       <button

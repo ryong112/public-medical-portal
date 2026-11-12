@@ -76,7 +76,7 @@ const assertColor = async (locator, property, category) => {
   try {
     await page.goto(baseUrl);
     for (const category of ['internal', 'business_trip', 'meeting', 'general']) {
-      await assertColor(page.locator(`div[data-schedule-category="${category}"]`).first(), 'border-left-color', category);
+      await assertColor(page.locator(`div[data-schedule-category="${category}"].border-l-4`).first(), 'border-left-color', category);
       await assertColor(page.locator(`button[data-schedule-category="${category}"]`).first(), 'background-color', category);
     }
     await page.screenshot({ path: path.join(os.tmpdir(), 'my-portal-category-dashboard.png') });
@@ -100,13 +100,13 @@ const assertColor = async (locator, property, category) => {
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
     await page.screenshot({ path: path.join(os.tmpdir(), 'my-portal-category-mobile.png') });
     await page.getByRole('button', { name: '이 날짜에 일정 추가' }).click();
-    for (const [label, category] of [['출장)', 'business_trip'], ['회의)', 'meeting'], ['내부일정)', 'internal'], ['연차·조퇴·외출)', 'leave']]) {
+    for (const [label, category] of [['출장', 'business_trip'], ['회의', 'meeting'], ['내부일정', 'internal'], ['연차·조퇴·외출', 'leave']]) {
       const button = page.getByRole('button', { name: label, exact: true });
       await button.click();
       await assertColor(button, 'background-color', category);
       assert.equal(await button.getAttribute('aria-pressed'), 'true');
     }
-    await page.getByRole('button', { name: '닫기', exact: true }).click();
+    await page.getByRole('button', { name: '일정 창 닫기', exact: true }).click();
     await page.setViewportSize({ width: 1600, height: 1000 });
     await page.goto(`${baseUrl}/kiosk`);
     for (const category of ['internal', 'business_trip', 'meeting', 'leave', 'general']) {

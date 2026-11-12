@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Clock3 } from 'lucide-react';
 
 interface DirectTimeInputProps {
@@ -27,7 +27,8 @@ const parseDirectTime = (input: string) => {
     hour = Number(colonMatch[1]);
     minute = Number(colonMatch[2]);
   } else {
-    const digits = normalized.replace(/\D/gu, '');
+    if (!/^\d{1,4}$/u.test(normalized)) return null;
+    const digits = normalized;
     if (digits.length < 1 || digits.length > 4) return null;
     if (digits.length <= 2) {
       hour = Number(digits);
@@ -65,6 +66,7 @@ export default function DirectTimeInput({
   durationFrom,
   onChange,
 }: DirectTimeInputProps) {
+  const inputId = useId();
   const [draft, setDraft] = useState(value);
   const [isEditing, setIsEditing] = useState(false);
   const [error, setError] = useState('');
@@ -75,7 +77,7 @@ export default function DirectTimeInput({
     if (!parsed) {
       setDraft(value);
       setIsEditing(false);
-      setError('예: 930 또는 14:20');
+      setError('0~23시로 입력하세요. 예: 930 또는 14:20');
       return;
     }
     if (minimumTime && toMinutes(parsed) <= toMinutes(minimumTime)) {
@@ -98,21 +100,24 @@ export default function DirectTimeInput({
 
   return (
     <label className="block min-w-0">
-      <span className="mb-1.5 flex items-center justify-between gap-2 text-[10px] font-bold text-slate-400">
+      <span className="mb-1.5 flex flex-wrap items-center justify-between gap-1 text-xs font-semibold text-slate-600">
         <span>{label}</span>
-        {!disabled && duration && <span className="font-black text-blue-500">{duration}</span>}
+        {!disabled && duration && <span className="text-blue-600">{duration}</span>}
       </span>
-      <span className={`flex min-h-11 items-center rounded-xl border bg-white transition-colors focus-within:ring-2 ${
+      <span className={`flex min-h-11 min-w-0 items-center rounded-xl border bg-white transition-colors focus-within:ring-2 ${
         error ? 'border-red-300 focus-within:border-red-500 focus-within:ring-red-100' : 'border-slate-200 focus-within:border-blue-500 focus-within:ring-blue-100'
       } ${disabled ? 'cursor-not-allowed bg-slate-100' : ''}`}>
         <Clock3 size={14} className={`ml-3 shrink-0 ${disabled ? 'text-slate-300' : 'text-blue-500'}`} />
         <input
           type="text"
           inputMode="numeric"
+          autoComplete="off"
           disabled={disabled}
           value={disabled ? '' : isEditing ? draft : formatTwelveHourTime(value)}
           placeholder={disabled ? '선택 안 함' : '예: 1030'}
           aria-label={`${label} 시간 직접 입력`}
+          aria-invalid={Boolean(error)}
+          aria-describedby={`${inputId}-help${error ? ` ${inputId}-error` : ''}`}
           onFocus={(event) => {
             setDraft(value);
             setIsEditing(true);
@@ -130,17 +135,20 @@ export default function DirectTimeInput({
               event.currentTarget.blur();
             }
             if (event.key === 'Escape') {
+              event.preventDefault();
+              event.stopPropagation();
               setDraft(value);
               setIsEditing(false);
               setError('');
               event.currentTarget.blur();
             }
           }}
-          className="min-w-0 flex-1 bg-transparent px-2 py-2.5 text-sm font-black text-slate-800 outline-none placeholder:text-slate-300 disabled:cursor-not-allowed"
+          className="w-full min-w-0 flex-1 bg-transparent px-2 py-2.5 text-base font-bold tabular-nums text-slate-800 outline-none placeholder:text-slate-400 disabled:cursor-not-allowed"
         />
-        {!disabled && period && <span className="mr-2.5 shrink-0 rounded-lg bg-blue-50 px-2 py-1 text-[10px] font-black text-blue-600">{period}</span>}
+        {!disabled && period && <span className="mr-2.5 shrink-0 whitespace-nowrap rounded-md bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700">{period}</span>}
       </span>
-      {error && <span className="mt-1 block text-[9px] font-bold text-red-500">{error}</span>}
+      <span id={`${inputId}-help`} className="mt-1.5 block text-xs leading-relaxed text-slate-500">{disabled ? '사용하지 않는 시간입니다.' : '24시간 기준 입력 · 예: 930, 14:20'}</span>
+      {error && <span id={`${inputId}-error`} role="alert" className="mt-1 block text-xs font-semibold leading-relaxed text-red-600">{error}</span>}
     </label>
   );
 }

@@ -16,10 +16,17 @@ import QuickScheduleInput from '@/app/components/quick-schedule-input';
 import YearlyDocumentCleanupModal, { type YearlyCleanupCategory, type YearlyCleanupFile, type YearlyDocumentCleanupTarget } from '@/app/components/yearly-document-cleanup-modal';
 import { attachRecurrenceMetadata, createRecurrenceGroupId, isRecurringSchedule, type RecurrenceOccurrenceFields, type RecurrenceScope } from '@/lib/schedule-recurrence';
 import { getScheduleCategory, scheduleCategoryOrder, scheduleCategoryStyles } from '@/lib/schedule-category';
+import { findDuplicateSchedules, getSchedulePeople, scheduleMatchesPerson, type WorkflowSchedule } from '@/lib/schedule-workflow';
+import PortalMobileActions from '@/app/components/portal-mobile-actions';
+import WeeklySchedulePrint from '@/app/components/weekly-schedule-print';
+import DocumentLibrary, { type DocumentFile } from '@/app/components/document-library';
+import DocumentPreviewModal from '@/app/components/document-preview-modal';
+import DocumentUploadStatus from '@/app/components/document-upload-status';
+import { createDocumentUploads, createDocumentUploadRunner, type UploadItem } from '@/lib/document-upload';
 import JSZip from 'jszip';
 import { 
-  FileText, FilePlus,
-  FileSpreadsheet, FileBox, File, Download, Trash2,
+  FilePlus,
+  FileSpreadsheet, FileBox, Download, Trash2,
   GripVertical, Calendar as CalendarIcon, LayoutDashboard, Plus,
   ChevronLeft, ChevronRight, X, Clock, CalendarDays, Archive, Menu, Siren, Pencil, ScanLine, ShieldCheck, Search, History, Copy, MonitorPlay, Zap, FolderSync, ExternalLink
 } from 'lucide-react';
@@ -123,6 +130,37 @@ export default function IntegratedPortal() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('전체');
   const [uploading, setUploading] = useState(false);
+  const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
+  const uploadBusyRef = useRef(false);
+  const [previewFile, setPreviewFile] = useState<DocumentFile | null>(null);
+  const [metadataAvailable, setMetadataAvailable] = useState(false);
+  const metadataAvailableRef = useRef(false);
+  const [myScheduleName, setMyScheduleName] = useState('');
+  const [showMySchedules, setShowMySchedules] = useState(false);
+  const [isWeeklyPrintOpen, setIsWeeklyPrintOpen] = useState(false);
+  const [scheduleLoadError, setScheduleLoadError] = useState('');
+  const [uploadRunner] = useState(() => createDocumentUploadRunner({
+    upload: async (item) => {
+      const { error } = await supabase.storage.from('files').upload(item.storagePath, item.file, { upsert: true });
+      if (error) throw new Error(`파일 전송 실패: ${error.message}`);
+      const { data } = supabase.storage.from('files').getPublicUrl(item.storagePath);
+      return { url: data.publicUrl };
+    },
+    ensureMetadata: async (item) => {
+      if (metadataAvailableRef.current) {
+        const { error } = await supabase.rpc('register_uploaded_document', { p_name: item.file.name, p_url: item.url, p_size: item.file.size, p_category: item.targetCategory });
+        if (error) throw new Error(`목록 등록 실패: ${error.message}`);
+        return;
+      }
+      // The URL belongs to this upload's stable UUID path. Recheck before retrying
+      // a metadata request whose response may have been lost after committing.
+      const { data, error: lookupError } = await supabase.from('files').select('id').eq('url', item.url).limit(1);
+      if (lookupError) throw new Error(`등록 결과 확인 실패: ${lookupError.message}`);
+      if (data?.length) return;
+      const { error } = await supabase.from('files').insert({ name: item.file.name, url: item.url, size: item.file.size, category: item.targetCategory });
+      if (error) throw new Error(`목록 등록 실패: ${error.message}`);
+    },
+  }));
   const [isDownloadingAll, setIsDownloadingAll] = useState(false); 
   const [draggedItemIndex, setDraggedItemIndex] = useState<number | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -158,6 +196,7 @@ export default function IntegratedPortal() {
 
   useEffect(() => {
     setIsMounted(true);
+    try { setMyScheduleName(localStorage.getItem('portal-schedule-person') ?? ''); } catch { /* Storage may be disabled. */ }
   }, []);
 
   useEffect(() => {
@@ -287,6 +326,8 @@ export default function IntegratedPortal() {
       }
       setMyId(anonId);
       fetchMessages(); fetchFiles(); fetchCategories(); fetchSchedules();
+      void supabase.from('schedules').select('owner_name,attendee_names,location,linked_file_ids').limit(1)
+        .then(({ error }) => { metadataAvailableRef.current = !error; setMetadataAvailable(!error); });
 
       const chatChannel = supabase.channel('chat_main').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
         setMessages(prev => [...prev, payload.new]); 
@@ -345,7 +386,9 @@ export default function IntegratedPortal() {
     return '기간 일정';
   };
 
-  const getCalendarSchedulesForDate = (dateStr: string) => schedules
+  const visibleSchedules = showMySchedules ? schedules.filter((schedule) => scheduleMatchesPerson(schedule, myScheduleName)) : schedules;
+  const schedulePeople = getSchedulePeople(schedules);
+  const getCalendarSchedulesForDate = (dateStr: string) => visibleSchedules
     .filter((schedule) => schedule.date <= dateStr && getScheduleEndDate(schedule) >= dateStr)
     .slice()
     .sort((first, second) => {
@@ -616,7 +659,12 @@ export default function IntegratedPortal() {
   const fetchMessages = async () => { const { data } = await supabase.from('messages').select('*').order('created_at', { ascending: true }); if (data) setMessages(data.filter((message) => !pendingDeleteKeysRef.current.has(`message:${message.id}`))); };
   const fetchFiles = async () => { const { data } = await supabase.from('files').select('*').order('created_at', { ascending: false }); if (data) setFiles(data.filter((file) => !pendingDeleteKeysRef.current.has(`file:${file.id}`))); };
   const fetchCategories = async () => { const { data } = await supabase.from('categories').select('*').order('order_index', { ascending: true }); if (data) setCategories(data.filter((category) => !pendingDeleteKeysRef.current.has(`category:${category.id}`))); };
-  const fetchSchedules = async () => { const { data } = await supabase.from('schedules').select('*').order('start_time', { ascending: true }); if (data) setSchedules(data.filter((schedule) => schedule.recurrence_status !== 'cancelled' && !pendingDeleteKeysRef.current.has(`schedule:${schedule.id}`))); };
+  const fetchSchedules = async () => {
+    const { data, error } = await supabase.from('schedules').select('*').order('start_time', { ascending: true });
+    if (error) { setScheduleLoadError('일정을 새로 불러오지 못했습니다. 연결 상태를 확인한 뒤 다시 시도해 주세요.'); return; }
+    setScheduleLoadError('');
+    if (data) setSchedules(data.filter((schedule) => schedule.recurrence_status !== 'cancelled' && !pendingDeleteKeysRef.current.has(`schedule:${schedule.id}`)));
+  };
 
   const openActivityHistory = async () => {
     if (!isDeviceAdmin) return;
@@ -639,7 +687,7 @@ export default function IntegratedPortal() {
   const restoreActivityLog = async (log: ActivityLogRow) => {
     if (!log.record_id || !log.before_data || (log.table_name !== 'schedules' && log.table_name !== 'messages')) return;
     const allowedFields = log.table_name === 'schedules'
-      ? ['title', 'date', 'end_date', 'start_time', 'end_time', 'is_notice', 'is_urgent', 'is_completed', 'is_todo', 'schedule_type', 'absence_type', 'recurrence_group_id', 'recurrence_original_date', 'recurrence_index', 'recurrence_status', 'recurrence_is_exception', 'recurrence_cancelled_at']
+      ? ['title', 'date', 'end_date', 'start_time', 'end_time', 'is_notice', 'is_urgent', 'is_completed', 'is_todo', 'schedule_type', 'absence_type', 'recurrence_group_id', 'recurrence_original_date', 'recurrence_index', 'recurrence_status', 'recurrence_is_exception', 'recurrence_cancelled_at', ...(metadataAvailable ? ['owner_name', 'attendee_names', 'location', 'linked_file_ids'] : [])]
       : ['content', 'sender_id', 'created_at'];
     const restoredValues = Object.fromEntries(
       allowedFields
@@ -668,9 +716,17 @@ export default function IntegratedPortal() {
     if (targetFiles.length === 0) return alert("파일이 없습니다.");
     setIsDownloadingAll(true); const zip = new JSZip();
     try {
-      const promises = targetFiles.map(async (file) => { const res = await fetch(file.url); const blob = await res.blob(); zip.file(file.name, blob); });
+      const usedNames = new Set<string>();
+      const promises = targetFiles.map(async (file) => {
+        let name = String(file.name).replace(/[\\/]/gu, '_');
+        while (usedNames.has(name)) name = `${file.id}_${name}`;
+        usedNames.add(name);
+        const res = await fetch(file.url);
+        if (!res.ok) throw new Error(`${file.name} 다운로드 실패`);
+        zip.file(name, await res.blob());
+      });
       await Promise.all(promises); const content = await zip.generateAsync({ type: "blob" });
-      const link = document.createElement('a'); link.href = window.URL.createObjectURL(content); link.download = `${selectedCategory}_백업_${new Date().toLocaleDateString()}.zip`; link.click();
+      const link = document.createElement('a'); const url = window.URL.createObjectURL(content); link.href = url; link.download = `${selectedCategory}_백업_${new Date().toLocaleDateString()}.zip`; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (e) { alert("압축 오류"); } finally { setIsDownloadingAll(false); }
   };
   const downloadCleanupCategoryZip = async (category: YearlyCleanupCategory, targetFiles: YearlyCleanupFile[]) => {
@@ -731,28 +787,27 @@ export default function IntegratedPortal() {
     }
     await Promise.all([fetchFiles(), fetchCategories()]);
   };
-  const handleDownload = async (url: string, originalName: string) => { try { const response = await fetch(url); const blob = await response.blob(); const downloadUrl = window.URL.createObjectURL(blob); const link = document.createElement('a'); link.href = downloadUrl; link.download = originalName; document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(downloadUrl); } catch (e) { alert('오류'); } };
+  const handleDownload = async (url: string, originalName: string) => { try { const response = await fetch(url); if (!response.ok) throw new Error('파일 응답 오류'); const blob = await response.blob(); const downloadUrl = window.URL.createObjectURL(blob); const link = document.createElement('a'); link.href = downloadUrl; link.download = originalName; document.body.appendChild(link); link.click(); link.remove(); window.setTimeout(() => window.URL.revokeObjectURL(downloadUrl), 1000); } catch { alert('파일을 내려받지 못했습니다. 연결 상태를 확인한 뒤 다시 시도해 주세요.'); } };
   
-  const getFileIcon = (fileName: string) => {
-    const ext = fileName.split('.').pop()?.toLowerCase(); const iconSize = 20;
-    if (ext === 'hwp') return { icon: <FileText size={iconSize} className="text-blue-500" />, color: 'bg-blue-50', label: 'HWP' };
-    if (ext === 'pdf') return { icon: <FileText size={iconSize} className="text-red-500" />, color: 'bg-red-50', label: 'PDF' };
-    if (ext === 'ppt' || ext === 'pptx') return { icon: <FileSpreadsheet size={iconSize} className="text-orange-500" />, color: 'bg-orange-50', label: 'PPT' };
-    if (ext === 'xls' || ext === 'xlsx') return { icon: <FileSpreadsheet size={iconSize} className="text-green-600" />, color: 'bg-green-50', label: 'XLS' };
-    return { icon: <File size={iconSize} className="text-slate-400" />, color: 'bg-slate-50', label: 'FILE' };
-  };
-
-  const handleUpload = async (fileList: FileList | File[]) => {
+  const runUploads = async (items: UploadItem[]) => {
+    if (uploadBusyRef.current || items.length === 0) return;
+    uploadBusyRef.current = true;
     setUploading(true);
-    for (const file of Array.from(fileList)) {
-      const safeFileName = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${file.name.split('.').pop()}`;
-      const { data } = await supabase.storage.from('files').upload(safeFileName, file);
-      if (data) {
-        const { data: { publicUrl } } = supabase.storage.from('files').getPublicUrl(safeFileName);
-        await supabase.from('files').insert([{ name: file.name, url: publicUrl, size: file.size, category: selectedCategory === '전체' ? '일반' : selectedCategory }]);
-      }
-    }
-    await fetchFiles(); setUploading(false);
+    try {
+      await uploadRunner.run(items, (item) => setUploadItems((current) => current.map((entry) => entry.id === item.id ? item : entry)));
+      await fetchFiles();
+    } finally { uploadBusyRef.current = false; setUploading(false); }
+  };
+  const handleUpload = async (fileList: FileList | File[]) => {
+    if (uploadBusyRef.current) return alert('현재 파일 전송이 끝난 뒤 추가해 주세요.');
+    const items = createDocumentUploads(Array.from(fileList), selectedCategory === '전체' ? '일반' : selectedCategory);
+    setUploadItems((current) => [...current, ...items]);
+    await runUploads(items);
+  };
+  const updateDocument = async (file: DocumentFile, values: { name: string; category: string }) => {
+    const { data, error } = await supabase.from('files').update(values).eq('id', file.id).select('id');
+    if (error || !data?.length) throw new Error(error?.message ?? '문서가 삭제되었거나 수정할 수 없습니다.');
+    await fetchFiles();
   };
   const onUpdateCategoryName = async () => { 
     const targetCat = categories.find(c => c.name === selectedCategory); if (!targetCat || !editTitleValue.trim()) return;
@@ -770,9 +825,42 @@ export default function IntegratedPortal() {
     setScheduleFormDate(dateStr);
   };
 
+  const confirmScheduleDuplicates = async (entries: WorkflowSchedule[], excludedIds: Array<number | string> = []) => {
+    if (entries.length === 0) return;
+    const firstDate = entries.map((entry) => entry.date).sort()[0];
+    const lastDate = entries.map((entry) => entry.end_date && entry.end_date > entry.date ? entry.end_date : entry.date).sort().at(-1)!;
+    const existing: WorkflowSchedule[] = [];
+    // Read the overlapping dates in pages: Supabase's row limit must not hide
+    // a duplicate once the shared calendar has accumulated many schedules.
+    const pageSize = 500;
+    for (let offset = 0; ; offset += pageSize) {
+      const { data, error } = await supabase.from('schedules')
+        .select('id,title,date,end_date,recurrence_status').lte('date', lastDate)
+        .or(`end_date.gte.${firstDate},date.gte.${firstDate}`)
+        .order('id', { ascending: true }).range(offset, offset + pageSize - 1);
+      if (error) throw new Error('기존 일정과 중복 여부를 확인하지 못했습니다. 연결 상태를 확인하고 다시 저장해 주세요.');
+      existing.push(...(data ?? []));
+      if (!data || data.length < pageSize) break;
+    }
+    const matches = findDuplicateSchedules(entries, existing, excludedIds);
+    if (matches.length === 0) return;
+    const summary = [...new Set(matches.map((match) => `${match.existing.date} · ${match.existing.title}${match.inBatch ? ' (이번 입력 안에서 중복)' : ''}`))];
+    const wording = matches.some((match) => match.kind === 'similar') ? '동일하거나 비슷한 내용' : '동일한 내용';
+    if (!window.confirm(`같은 날짜에 ${wording}의 일정이 기입되어 있습니다. 그래도 등록하시겠습니까?\n\n${summary.slice(0, 5).join('\n')}${summary.length > 5 ? `\n외 ${summary.length - 5}건` : ''}\n\n확인: 그대로 저장 / 취소: 내용 다시 확인`)) {
+      throw new Error('저장하지 않았습니다. 내용을 확인한 뒤 다시 등록할 수 있습니다.');
+    }
+  };
+
   const onSaveSchedule = async (scheduleEntries: NewScheduleInput[], recurrence?: ScheduleRecurrenceSubmission) => {
     const schedule = scheduleEntries[0];
+    if (!schedule) return;
     const editingScheduleDate = editingSchedule ? String(editingSchedule.date) : '';
+    const editingGroup = editingSchedule && !isCopyingSchedule && isRecurringSchedule(editingSchedule) && recurrenceScope !== 'this';
+    const affected = editingGroup ? schedules.filter((item) => item.recurrence_group_id === editingSchedule.recurrence_group_id
+      && item.recurrence_status === 'active' && (recurrenceScope === 'all' || item.recurrence_index >= editingSchedule.recurrence_index)) : [];
+    const shiftedDays = editingGroup && recurrenceScope === 'all' ? getDateDifference(editingScheduleDate, schedule.date) : 0;
+    const candidates = editingGroup ? affected.map((item) => ({ ...schedule, date: addDaysToDateKey(item.date, shiftedDays), end_date: item.end_date ? addDaysToDateKey(item.end_date, shiftedDays) : null })) : scheduleEntries;
+    await confirmScheduleDuplicates(candidates, editingGroup ? affected.map((item) => item.id) : editingSchedule && !isCopyingSchedule ? [editingSchedule.id] : []);
     if (editingSchedule && !isCopyingSchedule) {
       if (isRecurringSchedule(editingSchedule) && recurrenceScope !== 'this') {
         const dayDelta = getDateDifference(editingScheduleDate, schedule.date);
@@ -787,6 +875,10 @@ export default function IntegratedPortal() {
           is_todo: schedule.is_todo,
           schedule_type: schedule.schedule_type,
           absence_type: schedule.absence_type,
+          ...(schedule.owner_name !== undefined ? { owner_name: schedule.owner_name } : {}),
+          ...(schedule.attendee_names !== undefined ? { attendee_names: schedule.attendee_names } : {}),
+          ...(schedule.location !== undefined ? { location: schedule.location } : {}),
+          ...(schedule.linked_file_ids !== undefined ? { linked_file_ids: schedule.linked_file_ids } : {}),
         };
         if (recurrenceScope === 'all' && dayDelta !== 0) {
           const { error: shiftError } = await supabase.rpc('shift_schedule_recurrence_group', {
@@ -882,6 +974,7 @@ export default function IntegratedPortal() {
     updates: WhiteboardScheduleUpdate[],
     corrections: WhiteboardCorrectionInput[],
   ) => {
+    await confirmScheduleDuplicates([...importedSchedules, ...updates.map((update) => update.values)], updates.map((update) => update.id));
     if (importedSchedules.length > 0) {
       const { error } = await supabase.from('schedules').insert(importedSchedules);
       if (error) throw new Error(`일정을 등록하지 못했습니다: ${error.message}`);
@@ -1052,10 +1145,10 @@ export default function IntegratedPortal() {
   }
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden bg-[#F0F2F5] font-sans text-[#2C3E50] select-none">
+    <div className="flex h-dvh flex-col overflow-hidden bg-[#F0F2F5] font-sans text-[#2C3E50]">
       <header className={`z-[60] flex items-center justify-between gap-2 border-b border-white/5 bg-[#1A1C1E] text-white shadow-md sm:px-4 lg:px-6 xl:px-8 xl:py-4 ${viewMode === 'external_calendar' ? 'px-2 py-2 sm:py-3' : 'px-3 py-3'}`}>
-        <div className="flex items-center gap-2 md:gap-3 overflow-hidden shrink-0">
-          <button onClick={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)} className="shrink-0 rounded-lg p-1 transition-colors hover:bg-white/10 xl:hidden"><Menu size={22}/></button>
+        <div className="flex min-w-0 items-center gap-2 md:gap-3 overflow-hidden">
+          <button aria-label="분류 메뉴" aria-expanded={isMobileSidebarOpen} onClick={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)} className="shrink-0 rounded-lg p-1.5 transition-colors hover:bg-white/10 xl:hidden"><Menu size={22}/></button>
           <span className="text-lg md:text-2xl hidden sm:inline shrink-0">📂</span>
           <h1 className="font-extrabold text-xs sm:text-sm md:text-lg tracking-tight uppercase truncate">공공의료지원과 문서함</h1>
         </div>
@@ -1102,7 +1195,7 @@ export default function IntegratedPortal() {
         </div>
         {/* ===================================================================== */}
 
-        <div className={`${viewMode === 'external_calendar' ? 'hidden xl:flex' : 'flex'} shrink-0 items-center gap-1.5 overflow-x-auto scrollbar-hide sm:gap-2 xl:gap-3 xl:overflow-visible`}>
+        <div className="hidden shrink-0 items-center gap-3 xl:flex">
           <a 
             href="https://docs.google.com/spreadsheets/d/1yz_fMbsVe0__VJWe6F0ObbrV2jvnRotqi03-mrnnZUc/edit?usp=sharing" 
             target="_blank" 
@@ -1162,18 +1255,10 @@ export default function IntegratedPortal() {
           {isDeviceAdmin && <button onClick={() => setIsYearlyCleanupOpen(true)} aria-label="연도 문서 정리" className="group relative shrink-0 rounded-xl p-2 text-amber-300 transition-colors hover:bg-white/10 hover:text-white"><FolderSync size={18} /><span className="pointer-events-none absolute left-1/2 top-full z-[120] mt-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-bold text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 xl:block">연도 문서 정리</span></button>}
           <button onClick={handlePortalExit} aria-label="화면 나가기 (기기 승인 유지)" title="화면 나가기 · 기기 승인은 유지됩니다" className="text-slate-500 hover:text-white p-1 md:p-2 transition-colors ml-0.5 md:ml-0 shrink-0"><X size={18} className="md:w-[20px] md:h-[20px]"/></button>
         </div>
-        {viewMode === 'external_calendar' && (
-          <div className="ml-auto flex shrink-0 items-center gap-1.5 xl:hidden">
-            <button
-              type="button"
-              onClick={() => setViewMode('dashboard')}
-              className="inline-flex items-center gap-1 rounded-lg bg-white/10 px-2.5 py-1.5 text-[10px] font-black text-white transition-colors hover:bg-white/20"
-            >
-              <LayoutDashboard size={13} /> 홈
-            </button>
-          </div>
-        )}
+        <PortalMobileActions view={viewMode} onView={setViewMode} onChat={() => setIsChatOpen(true)} onSearch={() => setIsCommandPaletteOpen(true)} onQuickAdd={() => setIsQuickScheduleOpen(true)} onKiosk={openKioskWindow} onHistory={() => void openActivityHistory()} onDevices={() => setIsDeviceManagerOpen(true)} onCleanup={() => setIsYearlyCleanupOpen(true)} onExit={handlePortalExit} isAdmin={isDeviceAdmin} />
       </header>
+
+      {uploadItems.length > 0 && <DocumentUploadStatus items={uploadItems} onRetry={(ids) => void runUploads(uploadItems.filter((item) => ids.includes(item.id) && item.status === 'failed'))} onDismiss={() => { if (uploadBusyRef.current) return; uploadRunner.forget(uploadItems.map((item) => item.id)); setUploadItems([]); }} />}
 
       <main className="flex-1 flex overflow-hidden relative">
         <aside className={`
@@ -1181,7 +1266,7 @@ export default function IntegratedPortal() {
           ${isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full xl:translate-x-0'}
         `}>
           <div className="flex justify-end px-4 pt-3 text-slate-400 xl:hidden">
-            <button onClick={() => setIsMobileSidebarOpen(false)} className="text-slate-600 xl:hidden"><X size={20}/></button>
+            <button aria-label="분류 메뉴 닫기" onClick={() => setIsMobileSidebarOpen(false)} className="p-2 text-slate-600 xl:hidden"><X size={20}/></button>
           </div>
           <div className="flex-1 overflow-y-auto px-6 py-2 custom-scrollbar">
             <div className="space-y-1.5 mb-4">
@@ -1210,7 +1295,7 @@ export default function IntegratedPortal() {
                       )}
                     </span>
                   </button>
-                  <button onClick={() => onDeleteCategoryWithFiles(cat.id, cat.name)} aria-label={`${cat.name} 분류 삭제`} className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md bg-[#EBEEF2]/90 px-1.5 py-1 text-xs text-red-300 opacity-0 transition-opacity hover:text-red-500 group-hover:opacity-100">✕</button>
+                  <button onClick={() => onDeleteCategoryWithFiles(cat.id, cat.name)} aria-label={`${cat.name} 분류 삭제`} className="absolute right-1 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg bg-[#EBEEF2]/90 text-sm text-slate-500 transition-colors hover:bg-red-50 hover:text-red-600 focus-visible:ring-2 focus-visible:ring-red-500">✕</button>
                 </div>
                 );
               })}
@@ -1262,23 +1347,36 @@ export default function IntegratedPortal() {
                 </p>
               </div>
               {viewMode === 'files' && (
-                <label className="w-full md:w-auto bg-blue-600 text-white px-8 py-3.5 rounded-3xl font-black cursor-pointer shadow-lg active:scale-95 flex items-center justify-center gap-2 shrink-0">
-                  <Plus size={18} /><span>파일 업로드</span>
-                  <input type="file" className="hidden" multiple onChange={(e) => e.target.files && handleUpload(e.target.files)} />
+                <label className={`w-full md:w-auto bg-blue-600 text-white px-8 py-3.5 rounded-3xl font-black shadow-lg flex items-center justify-center gap-2 shrink-0 ${uploading ? 'cursor-wait opacity-60' : 'cursor-pointer active:scale-95'}`}>
+                  <Plus size={18} /><span>{uploading ? '파일 전송 중...' : '파일 업로드'}</span>
+                  <input aria-label="파일 업로드" disabled={uploading} type="file" className="sr-only" multiple onChange={(e) => { if (e.target.files) void handleUpload(e.target.files); e.target.value = ''; }} />
                 </label>
               )}
             </div>}
 
+            {(viewMode === 'dashboard' || viewMode === 'calendar') && <div className="mb-2 flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+              <div className="flex items-center gap-1.5" aria-label="일정 표시 범위">
+                <button aria-pressed={!showMySchedules} onClick={() => setShowMySchedules(false)} className={`min-h-9 rounded-lg px-3 text-xs font-bold ${!showMySchedules ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-200'}`}>전체 일정</button>
+                <button aria-pressed={showMySchedules} disabled={!metadataAvailable || !myScheduleName.trim()} onClick={() => setShowMySchedules(true)} className={`min-h-9 rounded-lg px-3 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-50 ${showMySchedules ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-200'}`}>내 일정만</button>
+              </div>
+              <label className="flex items-center gap-2 text-xs font-bold text-slate-600">내 이름
+                <input aria-label="내 일정 기준 이름" title="담당자 또는 참석자에 이 이름이 있는 일정만 표시합니다. 접근 권한 설정이 아닙니다." list="portal-schedule-people" maxLength={100} disabled={!metadataAvailable} value={myScheduleName} onChange={(event) => { setMyScheduleName(event.target.value); if (!event.target.value.trim()) setShowMySchedules(false); try { localStorage.setItem('portal-schedule-person', event.target.value); } catch { /* Optional preference only. */ } }} placeholder="이름 입력" className="min-h-9 w-28 rounded-lg border border-slate-300 bg-white px-2 text-sm text-slate-900 disabled:bg-slate-100" />
+              </label>
+              <datalist id="portal-schedule-people">{schedulePeople.map((name) => <option key={name} value={name} />)}</datalist>
+              {showMySchedules && <p className="w-full text-xs text-blue-700">{myScheduleName} 님이 담당자 또는 참석자로 등록된 일정입니다. 팀 전체 현황은 ‘전체 일정’에서 확인하세요.</p>}
+            </div>}
+            {scheduleLoadError && <div role="alert" className="mb-2 flex shrink-0 items-center justify-between gap-2 rounded-xl bg-amber-50 p-3 text-xs text-amber-900"><span>{scheduleLoadError}</span><button onClick={() => void fetchSchedules()} className="shrink-0 rounded-lg bg-white px-3 py-2 font-bold">다시 시도</button></div>}
             <div className={`flex-1 flex flex-col min-h-0 ${viewMode === 'calendar' ? 'overflow-y-auto xl:overflow-hidden' : viewMode === 'external_calendar' || viewMode === 'dashboard' ? 'overflow-hidden' : 'overflow-auto custom-scrollbar'}`}>
               
               {viewMode === 'dashboard' ? (
                 <SharedDashboard
-                  schedules={schedules}
+                  schedules={visibleSchedules}
                   onChangeView={setViewMode}
                   onOpenChat={() => setIsChatOpen(true)}
                   onOpenSchedule={setSelectedSchedule}
                   onToggleScheduleComplete={onToggleScheduleComplete}
                   onOpenAbsenceBoard={() => setIsAbsenceBoardOpen(true)}
+                  onPrintWeek={() => setIsWeeklyPrintOpen(true)}
                 />
               ) : viewMode === 'external_calendar' ? (
                 <div className="relative h-full w-full overflow-hidden bg-slate-50 sm:rounded-[24px] sm:shadow-xl">
@@ -1317,6 +1415,7 @@ export default function IntegratedPortal() {
                       </div>
                     </div>
                     <div className="flex items-center justify-end gap-1.5 sm:ml-auto sm:gap-2">
+                      <button onClick={() => setIsWeeklyPrintOpen(true)} className="min-h-10 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 hover:bg-slate-50">주간 출력</button>
                       <button onClick={() => setIsWhiteboardImportOpen(true)} className="flex items-center gap-1.5 rounded-xl bg-blue-600 px-2.5 py-2.5 text-[9px] font-black text-white shadow-md transition-colors hover:bg-blue-700 sm:gap-2 sm:px-3 sm:text-[10px] md:px-4 md:text-xs"><ScanLine size={15} /> <span className="hidden sm:inline">화이트보드 가져오기</span><span className="sm:hidden">사진 분석</span></button>
                     </div>
                   </div>
@@ -1504,7 +1603,9 @@ export default function IntegratedPortal() {
                                 </div>
                               </div>
                               <p className={`mt-2 break-keep text-sm font-extrabold leading-5 text-slate-900 ${schedule.is_completed ? 'text-slate-400 line-through opacity-70' : ''}`}>{formatScheduleTitle(schedule)}</p>
-                              <p className="mt-1.5 text-[10px] font-bold text-slate-400">{formatScheduleDateRange(schedule)}</p>
+                              <p className="mt-1.5 text-xs font-medium text-slate-600">{formatScheduleDateRange(schedule)}</p>
+                              {(schedule.owner_name || schedule.location) && <p className="mt-1.5 text-xs font-medium text-slate-700">{[schedule.owner_name && `담당 ${schedule.owner_name}`, schedule.location].filter(Boolean).join(' · ')}</p>}
+                              {schedule.linked_file_ids?.length > 0 && <p className="mt-1 text-xs font-bold text-blue-700">관련 문서 {schedule.linked_file_ids.length}개</p>}
                             </button>
                           );
                         })}
@@ -1514,38 +1615,18 @@ export default function IntegratedPortal() {
                 </div>
 
               ) : (
-                <div className="min-w-[700px] md:min-w-0 h-full pr-2 pb-10">
-                  <div className="relative mb-10 group"><span className="absolute left-6 top-5 text-slate-300 font-black text-[10px] tracking-widest hidden md:block">SEARCH</span><input className="w-full bg-[#F8FAFC] border border-slate-100 p-4 md:p-5 md:pl-24 rounded-3xl text-sm font-bold text-slate-800 outline-none focus:bg-white focus:ring-4 focus:ring-blue-50 shadow-sm transition-all" placeholder="파일명 검색..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} /></div>
-                  <table className="w-full text-left">
-                    <thead className="sticky top-0 bg-white z-10 border-b border-slate-100">
-                      <tr className="text-[11px] text-slate-300 font-black uppercase tracking-widest"><th className="pb-5 px-4 w-2/3">Document Title</th><th className="pb-5">Label</th><th className="pb-5 text-right px-4">Action</th></tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-50">
-                      {files.filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()) && (selectedCategory === '전체' || isSameCategory(f.category, selectedCategory))).map(file => {
-                        const info = getFileIcon(file.name);
-                        return (
-                          <tr key={file.id} className="group hover:bg-slate-50/50 transition-all">
-                            <td className="py-6 px-4">
-                              <div onClick={() => handleDownload(file.url, file.name)} className="flex items-center gap-4 cursor-pointer">
-                                <div className={`w-12 h-12 ${info.color} rounded-2xl flex flex-col items-center justify-center border border-transparent group-hover:border-slate-200 shadow-sm transition-all`}>
-                                  {info.icon} <span className="text-[7px] font-black text-slate-400 mt-0.5">{info.label}</span>
-                                </div>
-                                <span className="font-bold text-slate-900 text-sm md:text-base group-hover:text-blue-600 transition-colors">{file.name}</span>
-                              </div>
-                            </td>
-                            <td className="py-6"><span className="text-[10px] font-black bg-blue-50 text-blue-500 px-3 py-1.5 rounded-lg border border-blue-100 uppercase">{file.category}</span></td>
-                            <td className="py-6 text-right px-4 space-x-4"><button onClick={() => handleDownload(file.url, file.name)} className="text-blue-400 hover:text-blue-600 transition-colors"><Download size={18}/></button><button onClick={() => onDeleteFile(file)} className="text-red-200 hover:text-red-500 transition-colors"><Trash2 size={18}/></button></td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                <div className="min-w-0 pb-10">
+                  <label className="mb-4 block text-sm font-bold text-slate-700">문서 검색<input aria-label="파일명 검색" className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm font-medium text-slate-900 outline-none focus:ring-2 focus:ring-blue-500" placeholder="파일명 검색..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} /></label>
+                  <DocumentLibrary files={files.filter((file) => file.name.toLowerCase().includes(searchQuery.toLowerCase()) && (selectedCategory === '전체' || isSameCategory(file.category ?? '', selectedCategory)))} categories={categories.map((category) => category.name)} onDownload={(file) => void handleDownload(file.url, file.name)} onDelete={onDeleteFile} onUpdate={updateDocument} onPreview={setPreviewFile} />
                 </div>
               )}
             </div>
           </div>
         </section>
       </main>
+
+      {isWeeklyPrintOpen && <WeeklySchedulePrint schedules={visibleSchedules} initialStartDate={todayStr} scopeLabel={showMySchedules ? `${myScheduleName} 님의 일정` : '팀 전체 일정'} onClose={() => setIsWeeklyPrintOpen(false)} />}
+      <DocumentPreviewModal file={previewFile} onClose={() => setPreviewFile(null)} onDownload={(file) => void handleDownload(file.url, file.name)} />
 
       {isWhiteboardImportOpen && (
         <WhiteboardImportModal
@@ -1619,21 +1700,33 @@ export default function IntegratedPortal() {
           initialSchedule={editingSchedule ?? undefined}
           existingSchedules={schedules}
           copyMode={isCopyingSchedule}
+          availableFiles={files}
+          people={schedulePeople}
+          metadataAvailable={metadataAvailable}
           onClose={() => { setScheduleFormDate(null); setEditingSchedule(null); setIsCopyingSchedule(false); setRecurrenceScope('this'); }}
           onSubmit={onSaveSchedule}
         />
       )}
 
       {selectedSchedule && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
-          <div className="flex w-full max-w-md flex-col items-center rounded-[32px] bg-white p-8 shadow-2xl">
+        <div inert={previewFile !== null} className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+          <div role="dialog" aria-modal="true" aria-label="일정 상세" className="flex max-h-[90dvh] w-full max-w-lg flex-col items-center overflow-y-auto rounded-[28px] bg-white p-5 shadow-2xl sm:p-8">
             <div className={`mb-4 rounded-2xl p-3 ${selectedSchedule.is_urgent ? 'bg-red-50 text-red-600' : scheduleCategoryStyles[getScheduleCategory(selectedSchedule)].icon}`}>
               {selectedSchedule.is_urgent ? <Siren size={24} /> : <CalendarDays size={24} />}
             </div>
             {selectedSchedule.is_urgent && <span className="mb-3 rounded-lg bg-red-500 px-3 py-1 text-[10px] font-black text-white">긴급 일정</span>}
             <span className={`mb-3 rounded-lg px-2.5 py-1.5 text-[10px] font-black ring-1 ring-inset ${scheduleCategoryStyles[getScheduleCategory(selectedSchedule)].badge}`}>{getCalendarScheduleTypeLabel(selectedSchedule)}</span>
             <h3 className={`mb-2 text-center text-2xl font-black leading-tight ${selectedSchedule.is_completed ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{formatScheduleTitle(selectedSchedule)}</h3>
-            <p className="mb-8 text-center font-bold text-slate-400">{formatScheduleDateRange(selectedSchedule)} | {formatScheduleTime(selectedSchedule)}</p>
+            <p className="mb-5 text-center text-sm font-bold text-slate-600">{formatScheduleDateRange(selectedSchedule)} | {formatScheduleTime(selectedSchedule)}</p>
+            {(selectedSchedule.owner_name || selectedSchedule.attendee_names?.length || selectedSchedule.location || selectedSchedule.linked_file_ids?.length) ? <div className="mb-5 w-full space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-800">
+              {selectedSchedule.owner_name && <p><span className="mr-2 font-bold text-slate-600">담당자</span>{selectedSchedule.owner_name}</p>}
+              {selectedSchedule.attendee_names?.length > 0 && <p className="break-words"><span className="mr-2 font-bold text-slate-600">참석자</span>{selectedSchedule.attendee_names.join(', ')}</p>}
+              {selectedSchedule.location && <p className="break-words"><span className="mr-2 font-bold text-slate-600">장소</span>{selectedSchedule.location}</p>}
+              {selectedSchedule.linked_file_ids?.length > 0 && <div><p className="mb-2 font-bold text-slate-600">관련 문서</p><ul className="space-y-1">{selectedSchedule.linked_file_ids.map((id: number) => {
+                const file = files.find((candidate) => Number(candidate.id) === Number(id));
+                return <li key={id}>{file ? <button onClick={() => setPreviewFile(file)} className="min-h-10 w-full break-words rounded-lg border border-blue-200 bg-white px-3 py-2 text-left text-sm font-bold text-blue-700 hover:bg-blue-50">{file.name}</button> : <span className="text-xs text-slate-500">삭제되었거나 접근할 수 없는 문서</span>}</li>;
+              })}</ul></div>}
+            </div> : null}
             {isRecurringSchedule(selectedSchedule) && (
               <div className="mb-5 w-full rounded-2xl bg-slate-50 p-3">
                 <p className="mb-2 text-[10px] font-black text-slate-500">반복 일정 적용 범위</p>
