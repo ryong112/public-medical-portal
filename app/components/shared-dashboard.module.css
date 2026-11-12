@@ -3,10 +3,8 @@
 .heading { min-width: 0; }
 .heading h2 { margin: 0; font-size: 22px; font-weight: 850; line-height: 1.3; letter-spacing: -.04em; white-space: nowrap; }
 .heading time { display: block; margin-top: 3px; font-size: 12px; color: #64748b; }
-.filters { display: flex; flex-wrap: nowrap; justify-content: flex-start; gap: 5px; min-width: 0; }
-.filterButton { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 34px; padding: 6px 9px; border: 1px solid; border-radius: 9px; font-size: 12px; font-weight: 750; white-space: nowrap; cursor: pointer; }
-.allActive { background: #0f172a; border-color: #0f172a; color: white; }
-.allInactive { background: #f8fafc; border-color: #e2e8f0; color: #475569; }
+.legend { display: flex; flex-wrap: nowrap; align-items: center; gap: 12px; min-width: 0; }
+.legendItem { display: inline-flex; align-items: center; gap: 5px; min-height: 24px; font-size: 12px; font-weight: 600; white-space: nowrap; color: #475569; }
 .headerActions { display: flex; align-items: center; gap: 4px; }
 .headerActions > button, .tools > summary { display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; border: 1px solid #e2e8f0; border-radius: 9px; background: white; color: #475569; cursor: pointer; }
 .headerActions .calendarAction { width: auto; gap: 5px; padding: 0 9px; border-color: #2563eb; background: #2563eb; color: white; font-size: 12px; font-weight: 750; white-space: nowrap; }
@@ -21,6 +19,7 @@
 .summaryCard { display: flex; flex-direction: column; justify-content: center; min-width: 0; height: 54px; overflow: hidden; border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; }
 .summaryMain { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; padding: 10px 12px; text-align: left; }
 .summaryMain:hover { background: #f8fafc; }
+.summaryMain[aria-expanded='true'], .weekDate[aria-expanded='true'] { background: #eff6ff; box-shadow: inset 0 -2px 0 #2563eb; }
 .summaryHeading { display: flex; align-items: center; gap: 6px; min-width: 0; color: #475569; }
 .summaryHeading h3 { font-size: 13px; line-height: 18px; font-weight: 750; white-space: nowrap; }
 .summaryHeading > svg, .summaryArrow { flex-shrink: 0; }
@@ -101,6 +100,8 @@ button.weekPreview:hover { color: #1d4ed8; text-decoration: underline; }
 .previewTitle > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .previewMetadata { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; line-height: 16px; color: #64748b; }
 .previewEmpty { padding: 8px 0 5px; font-size: 12px; line-height: 18px; color: #64748b; }
+.peekList { display: flex; flex-direction: column; flex: 1; min-height: 0; width: 100%; }
+.peekAll { display: flex; flex-shrink: 0; align-items: center; justify-content: flex-end; gap: 4px; min-height: 34px; margin-top: 5px; border-top: 1px solid #e2e8f0; color: #1d4ed8; font-size: 12px; font-weight: 700; cursor: pointer; }
 .dashboard button:not(:disabled), .detailDialog button:not(:disabled) { cursor: pointer; }
 .dashboard button:disabled, .detailDialog button:disabled { cursor: default; }
 .weekDate:hover, .previewButton:hover { background: #eff6ff; }
@@ -120,7 +121,7 @@ button.weekPreview:hover { color: #1d4ed8; text-decoration: underline; }
   .heading { display: flex; align-items: baseline; gap: 10px; }
   .heading h2 { font-size: 21px; }
   .heading time { margin: 0; }
-  .filters { grid-column: 1 / -1; grid-row: 2; }
+  .legend { grid-column: 1 / -1; grid-row: 2; }
   .headerActions { grid-column: 2; grid-row: 1; }
 }
 @container dashboard (max-width: 900px) {
@@ -140,9 +141,9 @@ button.weekPreview:hover { color: #1d4ed8; text-decoration: underline; }
   .headerActions .calendarAction { width: 29px; padding: 0; }
   .headerActions .documentAction { width: 29px; padding: 0; }
   .calendarAction > span, .documentAction > span, .headerActions .printAction { display: none; }
-  .filters { display: grid; grid-template-columns: 1fr 1fr 1.6fr 1fr 1fr 1fr; gap: 4px; }
-  .filterButton { gap: 3px; min-height: 30px; padding: 4px 2px; }
-  .filterButton > span { width: 5px; height: 5px; }
+  .legend { justify-content: space-between; gap: 5px; }
+  .legendItem { gap: 4px; min-height: 23px; }
+  .legendItem > span { width: 6px; height: 6px; }
   .summaries { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
   .summaryCard { height: 50px; border-radius: 8px; }
   .summaryMain { padding: 2px 8px 0; gap: 5px; }
@@ -176,8 +177,7 @@ button.weekPreview:hover { color: #1d4ed8; text-decoration: underline; }
 }
 @container dashboard (max-width: 345px) {
   .heading h2 { font-size: 17px; }
-  .filterButton { font-size: 12px; letter-spacing: -.055em; }
-  .filterButton > span { display: none; }
+  .legendItem { letter-spacing: -.035em; }
 }
 @media (max-height: 850px) { .previewRow:nth-child(n+2) { display: none; } }
 @media (min-height: 720px) { .contextPanel[data-dashboard-context='absence'] .previewRow:nth-child(2) { display: flex; } }

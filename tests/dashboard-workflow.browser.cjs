@@ -37,7 +37,7 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, 
   const errors = [], writes = [], screenshots = [], measurements = [];
   const userId = '11111111-1111-4111-8111-111111111111';
   const token = `${Buffer.from('{"alg":"HS256","typ":"JWT"}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: userId, exp: 2100000000, role: 'authenticated' })).toString('base64url')}.local-test-only`;
-  await context.route('**/*', async (route) => {
+  const mockRoute = async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     const reply = (body) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
@@ -58,7 +58,8 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, 
     if (url.pathname === '/api/korean-holidays') return reply({ holidays: [] });
     if (['127.0.0.1', 'localhost'].includes(url.hostname)) return route.continue();
     return route.abort();
-  });
+  };
+  await context.route('**/*', mockRoute);
   await context.routeWebSocket((url) => !['127.0.0.1', 'localhost'].includes(url.hostname), (socket) => socket.close());
   const page = await context.newPage();
   page.setDefaultTimeout(15000);
@@ -67,8 +68,11 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, 
   const dashboard = () => page.locator('[data-dashboard-root]');
   const dayPanel = (day) => page.locator(`[data-dashboard-day="${day}"]`);
   const rows = (scope) => scope.locator('[data-schedule-id]');
-  const filters = () => page.getByRole('group', { name: '일정 유형', exact: true });
+  const legend = () => page.locator('[data-dashboard-legend]');
   const summary = (key) => page.locator(`[data-dashboard-summary="${key}"]`);
+  const peek = () => page.locator('[data-anchored-preview][data-state="open"]');
+  const summaryTrigger = (key) => summary(key).locator('[data-anchored-preview-trigger]');
+  const dateTrigger = (date) => dashboard().locator(`[data-dashboard-week-trigger="${date}"]`);
   const nextButton = (scope) => scope.getByRole('button', { name: /다음 페이지/ });
   const screenshot = async (name) => {
     const file = path.join(os.tmpdir(), `my-portal-hub-dashboard-${name}.png`);
@@ -161,30 +165,25 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, 
   try {
     await page.goto(baseUrl);
     await dashboard().waitFor();
-    assert.equal(await filters().count(), 1, 'only one shared category control exists');
-    assert.equal(await filters().getByRole('button').count(), 6, 'all and five categories appear once');
+    assert.equal(await legend().count(), 1, 'category colors are explained in one static legend');
+    assert.equal(await legend().getByRole('button').count(), 0, 'legend never filters or behaves like buttons');
+    assert.equal(await legend().locator('[data-dashboard-legend-category]').count(), 5, 'five categories appear once without an unnecessary all button');
     assert.equal(await dashboard().locator('[data-dashboard-week-date]').count(), 7, 'all seven dates are visible without horizontal navigation');
     assert.equal(await dayPanel('today').getByRole('group', { name: /유형/ }).count(), 0);
     assert.equal(await dashboard().getByText('앞으로 7일', { exact: true }).count(), 0);
     assert.equal(await dashboard().getByText('유형 선택 · 목록 필터', { exact: true }).count(), 0);
     await summary('week').getByText('주간 일정', { exact: true }).waitFor();
-    await filters().getByRole('button', { name: '회의', exact: true }).click();
-    await dayPanel('today').getByText('정책결정회의', { exact: true }).waitFor();
-    assert.equal(await rows(dayPanel('today')).count(), 1);
-    assert.equal(await rows(dayPanel('tomorrow')).count(), 1);
-    assert.equal(await summary('todo').locator('[data-dashboard-count]').innerText(), '0');
-    assert.equal(await summary('notice').locator('[data-dashboard-count]').innerText(), '0');
-    assert.equal(await summary('week').locator('[data-dashboard-count]').innerText(), '2');
-    await filters().getByRole('button', { name: '휴가', exact: true }).click();
-    await dayPanel('today').getByText('이팀원', { exact: true }).waitFor();
-    assert.equal(await rows(dayPanel('today')).count(), 1);
-    assert.equal(await rows(dayPanel('tomorrow')).count(), 0);
-    await filters().getByRole('button', { name: '전체', exact: true }).click();
     assert.equal(await dayPanel('today').locator('[data-dashboard-count]').innerText(), '5', 'all includes leave');
+    assert.equal(await summary('todo').locator('[data-dashboard-count]').innerText(), '2');
+    assert.equal(await summary('notice').locator('[data-dashboard-count]').innerText(), '1');
+    assert.equal(await summary('week').locator('[data-dashboard-count]').innerText(), '7');
+    const initialCount = await dayPanel('today').locator('[data-dashboard-count]').innerText();
+    await legend().getByText('회의', { exact: true }).click();
+    assert.equal(await dayPanel('today').locator('[data-dashboard-count]').innerText(), initialCount, 'clicking a legend label never hides other categories');
     for (const viewport of viewports) {
       await settleLayout(viewport);
       await assertFits(`normal ${viewport.width}x${viewport.height}`);
-      assert.ok(await filters().getByRole('button', { name: '내부일정', exact: true }).evaluate((element) => parseFloat(getComputedStyle(element).fontSize) >= 12));
+      assert.ok(await legend().getByText('내부일정', { exact: true }).evaluate((element) => parseFloat(getComputedStyle(element).fontSize) >= 12));
       await screenshot(`${viewport.width}x${viewport.height}`);
     }
     await replaceFixtures(mixedFixtures);
@@ -231,6 +230,115 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, 
     }
     await replaceFixtures(normalFixtures);
     await settleLayout(viewports[0]);
+    const dismissPeek = async () => {
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(220);
+      assert.equal(await page.locator('[data-anchored-preview]').count(), 0);
+      await page.mouse.move(5, 5);
+    };
+    const assertPeekBounds = async (trigger) => {
+      await peek().waitFor();
+      await page.waitForTimeout(200);
+      assert.equal(await page.locator('[data-anchored-preview]').count(), 1, 'only one mini window exists');
+      const surface = await peek().boundingBox();
+      const anchor = await trigger.boundingBox();
+      const viewport = page.viewportSize();
+      assert.ok(surface.x >= 8 && surface.y >= 8 && surface.x + surface.width <= viewport.width - 7 && surface.y + surface.height <= viewport.height - 7, `preview remains within viewport: ${JSON.stringify(surface)}`);
+      const origin = await peek().evaluate((element) => getComputedStyle(element).transformOrigin.split(' ').map(parseFloat));
+      assert.ok(Math.abs(surface.x + origin[0] - (anchor.x + anchor.width / 2)) <= 24, 'growth originates horizontally from the actual hovered card rather than a fixed screen position');
+      assert.ok(Math.min(...[anchor.y, anchor.y + anchor.height / 2, anchor.y + anchor.height].map((value) => Math.abs(surface.y + origin[1] - value))) <= 24, 'growth originates at an edge of the actual hovered card');
+      assert.ok(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight && document.documentElement.scrollWidth <= innerWidth), 'preview never expands the page itself');
+    };
+    for (const date of ['2026-11-12', '2026-11-13', '2026-11-14', '2026-11-15']) {
+      await dateTrigger(date).hover();
+      await page.waitForTimeout(70);
+    }
+    await page.mouse.move(5, 5); await page.waitForTimeout(500);
+    assert.equal(await peek().count(), 0, 'rapidly crossing date cards never flashes a preview');
+    await settleLayout({ width: 1366, height: 768 });
+    const hoveredDate = dateTrigger('2026-11-13');
+    await hoveredDate.hover(); await page.waitForTimeout(470);
+    await assertPeekBounds(hoveredDate);
+    assert.equal(await peek().getAttribute('data-preview-pinned'), 'false', 'hover does not pin the preview');
+    assert.equal(await peek().locator('[data-schedule-id="7"]').count(), 1, 'hover reveals the selected date contents');
+    const sourceBounds = await hoveredDate.boundingBox();
+    const previewBounds = await peek().boundingBox();
+    await page.mouse.move(sourceBounds.x + sourceBounds.width / 2, (sourceBounds.y + sourceBounds.height + previewBounds.y) / 2);
+    await page.waitForTimeout(500);
+    assert.equal(await peek().count(), 1, 'slowly crossing the visual gap does not dismiss the preview');
+    await peek().hover(); await page.waitForTimeout(500);
+    assert.equal(await peek().count(), 1, 'moving from the trigger to the mini window preserves it');
+    await screenshot('hover-date-1366x768');
+    await page.mouse.move(5, 5); await page.waitForTimeout(500);
+    assert.equal(await peek().count(), 0, 'leaving both trigger and window dismisses it');
+    await hoveredDate.hover(); await page.waitForTimeout(470); await peek().waitFor();
+    await page.keyboard.press('Escape'); await page.waitForTimeout(700);
+    assert.equal(await peek().count(), 0, 'Escape does not reopen the preview while the pointer is still over its trigger');
+    await page.mouse.move(5, 5);
+    await dateTrigger('2026-11-18').hover(); await page.waitForTimeout(470);
+    await assertPeekBounds(dateTrigger('2026-11-18'));
+    await peek().evaluate((element) => { window.__previewSurface = element; });
+    await summaryTrigger('notice').hover(); await page.waitForTimeout(470);
+    await assertPeekBounds(summaryTrigger('notice'));
+    assert.equal(await peek().evaluate((element) => element === window.__previewSurface), true, 'switching categories reuses one window rather than repeatedly creating and destroying it');
+    assert.equal(await peek().locator('[data-schedule-id="1"]').count(), 1, 'the existing window switches to the new category');
+    await dismissPeek();
+    await hoveredDate.click(); await peek().waitFor();
+    assert.equal(await peek().getAttribute('data-preview-pinned'), 'true', 'clicking pins the current card');
+    await page.mouse.move(5, 5); await page.waitForTimeout(500);
+    assert.equal(await peek().count(), 1, 'a pinned card stays visible after pointer exit');
+    await dashboard().getByRole('heading', { name: '공공의료지원과 일정', exact: true }).click();
+    await page.waitForTimeout(220); assert.equal(await peek().count(), 0, 'outside click closes a pinned card');
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await hoveredDate.hover(); await page.waitForTimeout(470); await peek().waitFor();
+    assert.equal(await peek().evaluate((element) => getComputedStyle(element).animationName), 'none', 'reduced motion avoids the growing animation');
+    await dismissPeek(); await page.emulateMedia({ reducedMotion: 'no-preference' });
+    const calendarFixtures = [...normalFixtures,
+      event(40, 'leave', '휴가) 과거 제목 이름', { owner_name: '기간 담당', date: '2026-11-11', end_date: '2026-11-13', start_time: null, end_time: null, absence_type: 'annual' }),
+      event(41, 'leave', '휴가) 월말 담당', { owner_name: '월말 담당', date: '2026-11-30', end_date: '2026-12-02', start_time: null, end_time: null, absence_type: 'annual' }),
+      event(42, 'leave', '조퇴) 과거 제목 이름', { owner_name: '기간 담당', start_time: '13:00', end_time: null, absence_type: 'early_pm' }),
+    ];
+    await replaceFixtures(calendarFixtures); await settleLayout({ width: 1366, height: 768 });
+    await summaryTrigger('absence').hover(); await page.waitForTimeout(470); await page.locator('[data-absence-calendar]').waitFor();
+    await assertPeekBounds(summaryTrigger('absence'));
+    const calendar = page.locator('[data-absence-calendar]');
+    assert.equal(await calendar.locator('[data-absence-date="2026-11-12"]').getAttribute('aria-pressed'), 'true', 'today with an absence is the initial selected date');
+    assert.match(await calendar.locator('[data-absence-date="2026-11-12"]').getAttribute('aria-label'), /목요일.*2명/, 'weekday and unique person count are readable, without double-counting a person with two types');
+    await calendar.locator('[data-absence-date="2026-11-13"]').click();
+    assert.equal(await calendar.locator('[data-absence-selected-list] [data-absence-schedule-id="40"]').count(), 1);
+    assert.equal(await calendar.locator('[data-absence-selected-list] [data-absence-schedule-id="7"]').count(), 0, 'meeting on the same date is not in the absence calendar');
+    await calendar.getByText('기간 담당', { exact: true }).waitFor();
+    await calendar.getByRole('button', { name: '다음 달 휴가', exact: true }).click();
+    assert.match(await calendar.locator('[data-absence-date="2026-12-02"]').getAttribute('aria-label'), /수요일.*1명/, 'cross-month range continues on every covered date');
+    await calendar.locator('[data-absence-date="2026-12-02"]').click();
+    assert.equal(await calendar.locator('[data-absence-selected-list] [data-absence-schedule-id="41"]').count(), 1);
+    await calendar.getByRole('button', { name: '이전 달 휴가', exact: true }).click();
+    await calendar.locator('[data-absence-date="2026-11-12"]').click();
+    await screenshot('hover-absence-1366x768');
+    await dismissPeek();
+    const touchContext = await browser.newContext({ viewport: { width: 390, height: 844 }, timezoneId: 'Asia/Seoul', isMobile: true, hasTouch: true });
+    await touchContext.route('**/*', mockRoute);
+    await touchContext.routeWebSocket((url) => !['127.0.0.1', 'localhost'].includes(url.hostname), (socket) => socket.close());
+    const touchPage = await touchContext.newPage();
+    touchPage.on('pageerror', (error) => errors.push(error.message));
+    await touchPage.clock.setFixedTime(new Date('2026-11-12T01:00:00Z'));
+    await touchPage.goto(baseUrl); await touchPage.locator('[data-dashboard-root]').waitFor();
+    await touchPage.locator('[data-dashboard-summary="absence"] [data-anchored-preview-trigger]').tap();
+    await touchPage.locator('[data-absence-calendar]').waitFor();
+    assert.equal(await touchPage.locator('[data-anchored-preview]').getAttribute('data-preview-pinned'), 'true', 'touch tap opens a pinned mini calendar without hover');
+    for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 640 }]) {
+      await touchPage.setViewportSize(viewport);
+      await touchPage.waitForTimeout(220);
+      const surface = await touchPage.locator('[data-anchored-preview]').boundingBox();
+      assert.ok(surface.x >= 8 && surface.y >= 8 && surface.x + surface.width <= viewport.width - 7 && surface.y + surface.height <= viewport.height - 7, `${viewport.width}: touch mini calendar stays within the viewport`);
+      const file = path.join(os.tmpdir(), `my-portal-hub-dashboard-hover-absence-${viewport.width}x${viewport.height}.png`);
+      await touchPage.addStyleTag({ content: 'nextjs-portal { display: none !important; }' });
+      await touchPage.screenshot({ path: file }); screenshots.push(file);
+    }
+    await touchPage.getByRole('button', { name: '미리보기 닫기', exact: true }).tap();
+    await touchPage.waitForTimeout(220); assert.equal(await touchPage.locator('[data-anchored-preview]').count(), 0);
+    await touchContext.close();
+    await replaceFixtures(normalFixtures); await settleLayout(viewports[0]);
     const assertDirectDetails = async (preview, title) => {
       await preview.click();
       const direct = page.getByRole('dialog', { name: '일정 상세', exact: true });
@@ -243,14 +351,13 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, 
     await assertDirectDetails(dashboard().locator('[data-dashboard-context="todo"] [data-preview-schedule-id="6"]').first(), '기한 지난 업무');
     await assertDirectDetails(dashboard().locator('[data-dashboard-context="absence"] [data-preview-schedule-id="5"]').first(), '이팀원');
     await assertDirectDetails(dashboard().locator('[data-dashboard-week-date="2026-11-13"] [data-preview-schedule-id="7"]').first(), '내일 회의');
-    await dashboard().locator('[data-dashboard-context="absence"]').getByRole('button', { name: '오늘 휴가·조퇴·외출 전체 보기', exact: true }).click();
-    const absenceDetails = page.locator('dialog[open]');
-    await absenceDetails.waitFor();
-    assert.equal(await absenceDetails.locator('[data-schedule-id="5"]').count(), 1, 'today absence list includes today leave');
-    assert.equal(await absenceDetails.locator('[data-schedule-id="2"]').count(), 0, 'today absence list does not mix work into the absence list');
-    await page.keyboard.press('Escape'); await absenceDetails.waitFor({ state: 'hidden' });
-    await dashboard().locator('[data-dashboard-week-date="2026-11-13"] [data-dashboard-week-trigger]').click();
-    const dateDetails = page.locator('dialog[open]');
+    await summaryTrigger('absence').click();
+    await page.locator('[data-absence-calendar]').waitFor();
+    assert.equal(await page.locator('[data-absence-selected-list] [data-absence-schedule-id="5"]').count(), 1, 'leave calendar initially includes today leave');
+    assert.equal(await page.locator('[data-absence-selected-list] [data-absence-schedule-id="2"]').count(), 0, 'leave calendar never mixes work into the absence list');
+    await page.keyboard.press('Escape'); await peek().waitFor({ state: 'hidden' });
+    await dateTrigger('2026-11-13').click();
+    const dateDetails = peek();
     await dateDetails.waitFor();
     assert.equal(await dateDetails.locator('[data-schedule-id="7"]').count(), 1, 'date tile opens the exact date list');
     assert.equal(await dateDetails.locator('[data-schedule-id="2"]').count(), 0, 'date tile does not include another date');
@@ -266,9 +373,9 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, 
     await page.getByRole('button', { name: '홈', exact: true }).click();
     await dashboard().waitFor();
     await settleLayout(viewports.at(-1));
-    const todoButton = page.getByRole('button', { name: /^할 일 \d+건 상세 보기$/ });
+    const todoButton = summaryTrigger('todo');
     await todoButton.focus(); await todoButton.press('Enter');
-    const details = page.locator('dialog[open]');
+    const details = peek();
     await details.waitFor();
     await details.getByText('기한 지난 업무', { exact: true }).waitFor();
     await details.getByRole('button', { name: '기한 지난 업무 완료 처리', exact: true }).click();
@@ -276,12 +383,12 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, 
     await details.waitFor({ state: 'hidden' });
     await page.waitForFunction(() => document.activeElement?.closest('[data-dashboard-summary="todo"]'));
     await assertFits('summary modal closed');
-    await page.getByRole('button', { name: /^공지사항 \d+건 상세 보기$/ }).click();
+    await summaryTrigger('notice').click();
     await details.waitFor();
     await details.locator('[data-schedule-id="1"]').getByRole('button').last().click();
     const nestedScheduleDetails = page.getByRole('dialog', { name: '일정 상세', exact: true });
     await nestedScheduleDetails.waitFor();
-    assert.equal(await page.locator('dialog[open]').count(), 0, 'summary native dialog closes before root schedule details');
+    assert.equal(await peek().count(), 0, 'summary preview closes before root schedule details');
     await nestedScheduleDetails.getByText('김담당', { exact: false }).waitFor();
     await nestedScheduleDetails.getByRole('button', { name: '닫기', exact: true }).click();
     await settleLayout(viewports[0]);
@@ -341,10 +448,29 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, 
       assert.ok(current >= 1 && current <= total, `${day}: page index clamps after resizing`);
       assert.equal(await nextButton(panel).isDisabled(), true, `${day}: resized final page is still the final page`);
     }
-    await filters().getByRole('button', { name: '회의', exact: true }).click();
-    await dayPanel('today').locator('[data-schedule-id="101"]').waitFor();
-    assert.equal(await dayPanel('today').getByRole('button', { name: /이전 페이지/ }).isDisabled(), true, 'changing category returns to its first page');
-    await filters().getByRole('button', { name: '전체', exact: true }).click();
+    await summaryTrigger('week').click(); await peek().waitFor();
+    await peek().getByRole('button', { name: '전체 목록 보기', exact: true }).click();
+    const fullWeek = page.locator('dialog[open]');
+    await fullWeek.waitFor();
+    assert.equal((await visitAllRows(fullWeek)).size, 85, 'preview full-list action preserves access to all 85 events');
+    await page.keyboard.press('Escape'); await fullWeek.waitFor({ state: 'hidden' });
+    await page.waitForFunction(() => document.activeElement?.closest('[data-dashboard-summary="week"]'));
+    await page.waitForTimeout(250);
+    assert.equal(await page.locator('[data-anchored-preview]').count(), 0, 'closing the full list restores its source without reopening the preview');
+    await page.mouse.move(5, 5);
+    await summaryTrigger('week').hover(); await page.waitForTimeout(470); await peek().waitFor();
+    assert.equal(await peek().getAttribute('data-preview-pinned'), 'false', 'a fresh deliberate hover still works after full-list focus restoration');
+    await dismissPeek();
+    await summaryTrigger('absence').click(); await page.locator('[data-absence-calendar]').waitFor();
+    const longAbsenceList = page.locator('[data-absence-selected-list]');
+    assert.equal(await longAbsenceList.locator('[data-absence-schedule-id]').count(), 20, 'all 20 absences are retained within the calendar');
+    assert.ok(await longAbsenceList.evaluate((element) => element.scrollHeight > element.clientHeight), 'only the local absence list scrolls for large leave counts');
+    await longAbsenceList.locator('[data-absence-schedule-id="319"]').click();
+    const lastAbsenceDetails = page.getByRole('dialog', { name: '일정 상세', exact: true });
+    await lastAbsenceDetails.waitFor();
+    assert.ok((await lastAbsenceDetails.getByRole('heading').innerText()).endsWith('직원19'), 'the last absence remains directly accessible');
+    await lastAbsenceDetails.getByRole('button', { name: '닫기', exact: true }).click();
+    assert.equal(await legend().getByRole('button').count(), 0, 'large datasets still have no accidental category filter');
     await page.reload(); await dayPanel('today').waitFor();
     for (let turns = 0; turns < 100 && !await dayPanel('today').locator('[data-schedule-id="139"]').count(); turns += 1) await nextButton(dayPanel('today')).click();
     await dayPanel('today').locator('[data-schedule-id="139"]').getByRole('button').last().click();
@@ -360,7 +486,7 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, 
     const longPageCount = (longPdf.toString('latin1').match(/\/Type\s*\/Page\b/g) ?? []).length;
     assert.ok(longPageCount > 1, 'busy week print retains every row across pages');
     assert.deepEqual(errors, []); assert.deepEqual(writes, ['/rest/v1/schedules']);
-    console.log(JSON.stringify({ passed: true, pageCount, longPageCount, cases: ['one shared category control', 'global category filtering', 'all includes leave', 'seven visible date tiles', 'six viewport sizes and mixed information fit', 'one-click notice, todo, absence and weekly details', 'date tile opens only the exact date', 'today absence list excludes work', 'calendar action selects the requested date after another month', 'sparse independent card heights and no trapped whitespace', 'compact empty state and no redundant navigation', 'summary keyboard and focus restoration', 'overdue completion', 'all 85 busy-day rows reachable', 'resize clamps last page and category resets page', 'long title detail', 'ordinary and busy week print'], screenshots,
+    console.log(JSON.stringify({ passed: true, pageCount, longPageCount, cases: ['one static noninteractive category legend', 'all categories remain visible', 'all includes leave', 'seven visible date tiles', 'six viewport sizes and mixed information fit', 'rapid crossings never flash a preview', 'preview grows from its actual card and stays within viewport', 'pointer transfer into preview preserves it', 'Escape suppresses reopening under the pointer', 'changing category keeps exactly one window', 'click pin and outside dismissal', 'reduced motion avoids grow animation', 'absence weekday and unique person count', 'cross-month absence range on every date', 'touch calendar at 390 and 320 pixels', 'one-click notice, todo, absence and weekly details', 'date tile opens only the exact date', 'absence calendar excludes work', 'calendar action selects the requested date after another month', 'sparse independent card heights and no trapped whitespace', 'compact empty state and no redundant navigation', 'summary keyboard and focus restoration', 'overdue completion', 'all 85 busy-day rows reachable', 'resize clamps last page', 'long title detail', 'ordinary and busy week print'], screenshots,
       sparseCardSizes: measurements.filter(({ label }) => label.startsWith('sparse ')).map(({ label, nodes }) => ({ label, cards: nodes.filter(({ selector }) => selector.startsWith('[data-dashboard-day=')).map(({ selector, height }) => ({ selector, height })) })),
       layoutsChecked: measurements.map(({ label, viewport, document }) => ({ label, viewport, document })) }, null, 2));
   } catch (error) {

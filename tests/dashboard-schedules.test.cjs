@@ -92,12 +92,14 @@ test('print output does not cap many events or truncate long titles', () => {
   assert.doesNotMatch(source, /line-clamp|text-overflow:\s*ellipsis|scale\(/);
 });
 
-test('dashboard exposes a seven-day hub, shared filtering and direct information previews', () => {
+test('dashboard exposes a seven-day hub, noninteractive category legend and direct information previews', () => {
   const today = helpers.toLocalDateKey(new Date());
   const schedules = [item(1, today, { schedule_type: 'meeting' }), item(2, today, { schedule_type: 'leave', title: '휴가) 김직원' }), item(3, helpers.shiftDateKey(today, -1), { is_todo: true })];
   const noop = () => {};
   const html = renderToStaticMarkup(React.createElement(SharedDashboard, { schedules, onChangeView: noop, onOpenChat: noop, onOpenSchedule: noop, onToggleScheduleComplete: noop, onPrintWeek: noop }));
-  assert.equal((html.match(/aria-label="일정 유형"/g) ?? []).length, 1);
+  assert.equal((html.match(/data-dashboard-legend(?:[\s=>])/g) ?? []).length, 1);
+  assert.equal((html.match(/data-dashboard-legend-category=/g) ?? []).length, 5);
+  assert.doesNotMatch(html, /data-dashboard-filter|aria-label="일정 유형"/);
   assert.equal((html.match(/data-dashboard-summary=/g) ?? []).length, 4);
   assert.equal((html.match(/data-dashboard-day=/g) ?? []).length, 2);
   assert.equal((html.match(/data-dashboard-week-date=/g) ?? []).length, 7);
@@ -105,7 +107,7 @@ test('dashboard exposes a seven-day hub, shared filtering and direct information
   assert.match(html, /주간 일정/);
   assert.match(html, /이번 달 휴가/);
   assert.match(html, /할 일/);
-  assert.match(html, /오늘 휴가·조퇴·외출/);
+  assert.match(html, /휴가·조퇴·외출/);
   assert.match(html, /달력 보기/);
   assert.match(html, /data-dashboard-count[^>]*>2</, 'all counts include both work and leave');
   assert.match(html, /주간 인쇄/);

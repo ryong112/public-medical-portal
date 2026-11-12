@@ -1,0 +1,12 @@
+.panel { position: fixed; z-index: 140; box-sizing: border-box; left: 0; top: 0; visibility: hidden; display: flex; flex-direction: column; width: min(360px, calc(100vw - 24px)); max-width: calc(100vw - 24px); max-height: calc(100dvh - 24px); margin: 0; padding: 0; overflow: hidden; border: 1px solid #dbe3ef; border-radius: 15px; background: #fff; color: #0f172a; box-shadow: 0 16px 45px #0f172a26, 0 3px 10px #0f172a0d; animation: emerge 170ms cubic-bezier(.22, 1, .36, 1) both; }
+.panel[data-state='closing'] { pointer-events: none; animation: leave 170ms ease-out both; }
+.header { display: flex; flex-shrink: 0; align-items: center; gap: 5px; min-height: 45px; padding: 7px 10px 6px 13px; }
+.header h2 { flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; line-height: 22px; font-weight: 800; letter-spacing: -.025em; }
+.header button { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 29px; height: 29px; padding: 0; border: 0; border-radius: 8px; background: #f1f5f9; color: #64748b; cursor: pointer; }
+.header button:hover { color: #1d4ed8; background: #e8efff; }
+.header button.pinned { color: #1d4ed8; background: #e8efff; }
+.body { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; padding: 0 12px 12px; overflow: auto; overscroll-behavior: contain; }
+.panel button:focus-visible, .panel:focus-visible { outline: 2px solid #2563eb; outline-offset: -2px; }
+@keyframes emerge { from { opacity: 0; transform: translateY(var(--preview-lift, -5px)) scale(.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes leave { from { opacity: 1; transform: translateY(0) scale(1); } to { opacity: 0; transform: translateY(var(--preview-lift, -5px)) scale(.97); } }
+@media (prefers-reduced-motion: reduce) { .panel, .panel[data-state='closing'] { animation: none; } .panel[data-state='closing'] { opacity: 0; } }

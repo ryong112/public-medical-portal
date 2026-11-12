@@ -75,14 +75,26 @@ const assertColor = async (locator, property, category) => {
   await page.clock.setFixedTime(new Date('2026-11-11T01:00:00Z'));
   try {
     await page.goto(baseUrl);
-    const dashboardFilters = page.getByRole('group', { name: '일정 유형', exact: true });
+    const dashboardLegend = page.locator('[data-dashboard-legend]');
+    assert.equal(await dashboardLegend.getByRole('button').count(), 0, 'legend explains color without filtering');
     for (const [label, category] of [['내부일정', 'internal'], ['출장', 'business_trip'], ['회의', 'meeting'], ['휴가', 'leave'], ['일반', 'general']]) {
-      const filter = dashboardFilters.getByRole('button', { name: label, exact: true });
-      await filter.click();
-      await assertColor(page.locator(`[data-dashboard-day="today"] [data-schedule-id][data-schedule-category="${category}"]`).first(), 'border-left-color', category);
-      await assertColor(filter, 'background-color', category);
+      const item = dashboardLegend.locator(`[data-dashboard-legend-category="${category}"]`);
+      await item.getByText(label, { exact: true }).waitFor();
+      await assertColor(item.locator('[data-legend-dot]'), 'background-color', category);
     }
-    await dashboardFilters.getByRole('button', { name: '전체', exact: true }).click();
+    const seen = new Set();
+    const panel = page.locator('[data-dashboard-day="today"]');
+    for (let turns = 0; turns < 20; turns += 1) {
+      for (const row of await panel.locator('[data-schedule-id]').all()) {
+        const category = await row.getAttribute('data-schedule-category');
+        await assertColor(row, 'border-left-color', category);
+        seen.add(category);
+      }
+      const next = panel.getByRole('button', { name: '오늘 일정 다음 페이지', exact: true });
+      if (!await next.count() || await next.isDisabled()) break;
+      await next.click();
+    }
+    assert.equal(seen.size, 5, 'all five categories remain available together');
     await page.screenshot({ path: path.join(os.tmpdir(), 'my-portal-category-dashboard.png') });
     await page.getByRole('button', { name: '일정 공유', exact: true }).click();
     await page.getByLabel('일정 분류 색상').waitFor();
@@ -119,7 +131,7 @@ const assertColor = async (locator, property, category) => {
     await page.screenshot({ path: path.join(os.tmpdir(), 'my-portal-category-kiosk.png') });
     assert.deepEqual(errors, []);
     assert.deepEqual(writes, []);
-    console.log(JSON.stringify({ passed: true, cases: ['dashboard rows and filters', 'calendar category chips', 'selected date cards', 'notice and period retain category', 'mobile dots and width', 'new schedule type controls', 'kiosk categories'], screenshots: ['dashboard', 'calendar', 'mobile', 'kiosk'].map((name) => path.join(os.tmpdir(), `my-portal-category-${name}.png`)) }, null, 2));
+    console.log(JSON.stringify({ passed: true, cases: ['dashboard rows and static legend', 'calendar category chips', 'selected date cards', 'notice and period retain category', 'mobile dots and width', 'new schedule type controls', 'kiosk categories'], screenshots: ['dashboard', 'calendar', 'mobile', 'kiosk'].map((name) => path.join(os.tmpdir(), `my-portal-category-${name}.png`)) }, null, 2));
   } catch (error) {
     console.error((await page.locator('body').innerText()).slice(0, 3000));
     console.error('Browser errors:', errors);
