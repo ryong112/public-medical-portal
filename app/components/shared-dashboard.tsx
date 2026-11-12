@@ -3,17 +3,20 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { getScheduleCategory, scheduleCategoryStyles, type ScheduleCategory } from '@/lib/schedule-category';
 import { type DashboardSchedule as Schedule, formatScheduleDateRange, formatScheduleTime, getAbsenceTypeLabel, getDashboardTodos, getScheduleEndDate, getSevenDayKeys, getTodoStatus, scheduleOccursOn, scheduleOverlaps, shiftDateKey, toLocalDateKey } from '@/lib/dashboard-schedules';
-import { ArrowUpRight, BellRing, CalendarDays, Check, ChevronLeft, ChevronRight, FolderOpen, MessageCircle, MoreHorizontal, Printer, Siren, X } from 'lucide-react';
+import { ArrowUpRight, BellRing, CalendarDays, Check, ChevronLeft, ChevronRight, FolderOpen, MessageCircle, MoreHorizontal, Pause, Play, Printer, Siren, X } from 'lucide-react';
 import AnchoredPreview, { useAnchoredPreview } from './anchored-preview';
 import AbsenceMiniCalendar from './absence-mini-calendar';
+import WeeklyDayTile from './weekly-day-tile';
 import { getAbsencePeople } from '@/lib/absence-calendar';
 import { consumePreviewWheel, createPreviewWheelGesture, getPreviewPageWindow, normalizePreviewWheel } from '@/lib/preview-pagination';
+import { getDayProximityLabel, getScheduleProximityLabel } from '@/lib/schedule-proximity';
 import styles from './shared-dashboard.module.css';
 
 type DashboardView = 'files' | 'calendar' | 'external_calendar' | 'dashboard';
 type DetailKey = 'todo' | 'notice' | 'week' | 'absence' | 'today-absence' | `date:${string}`;
 interface SharedDashboardProps {
   schedules: Schedule[];
+  holidaysByDate?: Record<string, string[]>;
   onChangeView: (view: DashboardView) => void;
   onOpenChat: () => void;
   onOpenSchedule: (schedule: Schedule) => void;
@@ -44,11 +47,13 @@ interface ListProps {
   listKey: 'today' | 'tomorrow' | 'detail';
   today: string;
   showDate?: boolean;
+  showProximity?: boolean;
+  proximityDate?: string;
   onOpen: (schedule: Schedule) => void;
   onComplete: (schedule: Schedule) => void;
   navigation?: 'arrows' | 'dots';
 }
-function SchedulePages({ items, label, listKey, today, showDate = false, onOpen, onComplete, navigation = 'arrows' }: ListProps) {
+function SchedulePages({ items, label, listKey, today, showDate = false, showProximity = false, proximityDate, onOpen, onComplete, navigation = 'arrows' }: ListProps) {
   const list = useRef<HTMLDivElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const [pageSize, setPageSize] = useState(1);
@@ -125,10 +130,12 @@ function SchedulePages({ items, label, listKey, today, showDate = false, onOpen,
         const time = formatScheduleTime({ start_time: schedule.start_time?.slice(0, 5) ?? null, end_time: schedule.end_time?.slice(0, 5) ?? null });
         const details = [category === 'leave' ? getAbsenceTypeLabel(schedule) : '', showDate ? formatScheduleDateRange(schedule) : '', schedule.owner_name && `담당 ${schedule.owner_name}`, schedule.location].filter(Boolean).join(' · ');
         const status = getTodoStatus(schedule, today);
+        const proximity = showProximity ? proximityDate ? getDayProximityLabel(proximityDate, today) : getScheduleProximityLabel(schedule, today) : '';
         return <div key={schedule.id} data-schedule-id={schedule.id} data-schedule-category={category} className={`${styles.scheduleRow} border-l-4 ${tone.accent} ${schedule.is_completed ? styles.completed : ''}`}>
           {schedule.is_todo && <button type="button" aria-label={`${schedule.title} ${schedule.is_completed ? '완료 취소' : '완료 처리'}`} aria-pressed={Boolean(schedule.is_completed)} className={`${styles.completeButton} ${schedule.is_completed ? styles.checked : ''}`} onClick={() => onComplete(schedule)}><Check size={17} /></button>}
-          <button type="button" onClick={() => onOpen(schedule)} aria-label={[tone.label, schedule.title, time, details].filter(Boolean).join(' · ')} title={[schedule.title, time, details].filter(Boolean).join(' · ')} className={styles.scheduleButton}>
+          <button type="button" onClick={() => onOpen(schedule)} aria-label={[proximity, tone.label, schedule.title, time, details].filter(Boolean).join(' · ')} title={[proximity, schedule.title, time, details].filter(Boolean).join(' · ')} className={styles.scheduleButton}>
             <span className={styles.titleLine}>
+              {proximity && <span className={styles.proximityBadge} data-schedule-proximity={proximity}>{proximity}</span>}
               {schedule.is_urgent && <span className={styles.urgent} aria-label="긴급"><Siren size={13} /><span>긴급</span></span>}
               {schedule.is_notice && <span className={styles.notice} aria-label="공지"><BellRing size={13} /></span>}
               {schedule.is_todo && status === '기한 지남' && <span className={styles.overdue}>지연</span>}
@@ -161,8 +168,10 @@ interface SummaryDetailProps {
   onComplete: (schedule: Schedule) => void;
   onAbsenceBoard?: () => void;
   openerElement?: HTMLElement | null;
+  showProximity?: boolean;
+  proximityDate?: string;
 }
-function SummaryDetail({ title, items, today, onClose, onOpen, onComplete, onAbsenceBoard, openerElement }: SummaryDetailProps) {
+function SummaryDetail({ title, items, today, onClose, onOpen, onComplete, onAbsenceBoard, openerElement, showProximity, proximityDate }: SummaryDetailProps) {
   const dialog = useRef<HTMLDialogElement>(null);
   const opener = useRef<HTMLElement | null>(openerElement ?? null);
   const restoreFrame = useRef<number | null>(null);
@@ -185,7 +194,7 @@ function SummaryDetail({ title, items, today, onClose, onOpen, onComplete, onAbs
   }, []);
   return <dialog ref={dialog} className={styles.detailDialog} aria-label={`${title} 상세`} onCancel={(event) => { event.preventDefault(); onClose(); }}>
     <header className={styles.dialogHeader}><h2>{title}<span>{items.length}건</span></h2><div className={styles.dialogActions}>{onAbsenceBoard && <button type="button" className={styles.boardButton} onClick={onAbsenceBoard}>휴가 현황</button>}<button type="button" aria-label="상세 닫기" onClick={onClose} autoFocus><X size={20} /></button></div></header>
-    <SchedulePages items={items} label={title} listKey="detail" today={today} showDate onOpen={onOpen} onComplete={onComplete} />
+    <SchedulePages items={items} label={title} listKey="detail" today={today} showDate showProximity={showProximity} proximityDate={proximityDate} onOpen={onOpen} onComplete={onComplete} />
   </dialog>;
 }
 
@@ -217,12 +226,26 @@ function UpcomingAbsences({ items, today, onOpen }: { items: Schedule[]; today: 
   }) : <p className={styles.previewEmpty}>예정된 휴가가 없습니다.</p>}</div>;
 }
 
-export default function SharedDashboard({ schedules, onChangeView, onOpenChat, onOpenSchedule, onToggleScheduleComplete, onOpenAbsenceBoard, onPrintWeek, onOpenCalendarDate }: SharedDashboardProps) {
+export default function SharedDashboard({ schedules, holidaysByDate = {}, onChangeView, onOpenChat, onOpenSchedule, onToggleScheduleComplete, onOpenAbsenceBoard, onPrintWeek, onOpenCalendarDate }: SharedDashboardProps) {
   const [detailKey, setDetailKey] = useState<DetailKey | null>(null);
   const [detailOpener, setDetailOpener] = useState<HTMLElement | null>(null);
   const [previewRowHeight, setPreviewRowHeight] = useState(64);
+  const [weekAutoPlay, setWeekAutoPlay] = useState(true);
+  const [now, setNow] = useState(() => new Date());
   const peek = useAnchoredPreview<DetailKey>();
   const menu = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const refresh = () => setNow(new Date());
+    const visible = () => { if (!document.hidden) refresh(); };
+    const timer = window.setInterval(visible, 60_000);
+    document.addEventListener('visibilitychange', visible);
+    window.addEventListener('focus', refresh);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', visible);
+      window.removeEventListener('focus', refresh);
+    };
+  }, []);
   useEffect(() => {
     // The preview is portaled outside the dashboard's container queries. Its
     // row density follows viewport media queries, not the home card density.
@@ -237,7 +260,6 @@ export default function SharedDashboard({ schedules, onChangeView, onOpenChat, o
     document.addEventListener('keydown', escape);
     return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
   }, []);
-  const now = new Date();
   const today = toLocalDateKey(now);
   const tomorrow = shiftDateKey(today, 1);
   const weekEnd = shiftDateKey(today, 6);
@@ -262,7 +284,7 @@ export default function SharedDashboard({ schedules, onChangeView, onOpenChat, o
   ];
   const detailFor = (key: DetailKey | null) => {
     const date = key?.startsWith('date:') ? key.slice(5) : null;
-    return date ? { key, label: `${weekdayDate(date)} 일정`, items: schedules.filter((schedule) => scheduleOccursOn(schedule, date)).sort(sortSchedules) } : key === 'today-absence' ? { key, label: '오늘 휴가·조퇴·외출', items: todayAbsenceItems } : cards.find((card) => card.key === key);
+    return date ? { key, label: `${getDayProximityLabel(date, today)} · ${weekdayDate(date)}${holidaysByDate[date]?.length ? ` · ${holidaysByDate[date].join(' · ')}` : ''} 일정`, items: schedules.filter((schedule) => scheduleOccursOn(schedule, date)).sort(sortSchedules) } : key === 'today-absence' ? { key, label: '오늘 휴가·조퇴·외출', items: todayAbsenceItems } : cards.find((card) => card.key === key);
   };
   const selected = detailFor(detailKey);
   const preview = detailFor(peek.active?.key ?? null);
@@ -311,15 +333,13 @@ export default function SharedDashboard({ schedules, onChangeView, onOpenChat, o
       })}
     </section>
     <section className={styles.week} data-dashboard-week aria-label="주간 일정 날짜별 보기">
-      <header className={styles.weekHeading}><h3>주간 일정</h3><span>{shortDate(today)}–{shortDate(weekEnd)}</span><button type="button" onClick={() => openAll('week')}>전체 보기 <ArrowUpRight size={13} /></button></header>
+      <header className={styles.weekHeading}><h3>주간 일정</h3><span>{shortDate(today)}–{shortDate(weekEnd)}</span><div className={styles.weekControls}>
+        <button type="button" data-week-autoplay-control data-week-autoplay={String(weekAutoPlay)} className={styles.weekAutoControl} aria-pressed={!weekAutoPlay} aria-label={`주간 일정 자동 넘김 ${weekAutoPlay ? '일시정지' : '재생'}`} onClick={() => setWeekAutoPlay((playing) => !playing)}>{weekAutoPlay ? <Pause size={13} /> : <Play size={13} />}<span>{weekAutoPlay ? '일시정지' : '재생'}</span></button>
+        <button type="button" onClick={() => openAll('week')}>전체 보기 <ArrowUpRight size={13} /></button>
+      </div></header>
       <div className={styles.weekGrid}>{getSevenDayKeys(today).map((date) => {
         const items = schedules.filter((schedule) => scheduleOccursOn(schedule, date)).sort(sortSchedules);
-        const representative = items.find((schedule) => getScheduleCategory(schedule) !== 'leave') ?? items[0];
-        const dateLabel = new Intl.DateTimeFormat('ko-KR', { month: 'long', day: 'numeric', weekday: 'long' }).format(new Date(`${date}T12:00:00`));
-        return <div key={date} data-dashboard-week-date={date} className={`${styles.weekDay} ${date === today ? styles.currentDay : ''}`}>
-          <button type="button" data-dashboard-week-trigger={date} className={styles.weekDate} {...peek.getTriggerProps(`date:${date}`)} aria-label={`${dateLabel} 일정 ${items.length}건 미리보기`}><time dateTime={date}><span>{new Intl.DateTimeFormat('ko-KR', { weekday: 'short' }).format(new Date(`${date}T12:00:00`))}</span><strong>{Number(date.slice(8))}</strong></time><span className={styles.weekCount}>{items.length}<span>건</span></span></button>
-          {representative ? <button type="button" data-preview-schedule-id={representative.id} className={styles.weekPreview} title={representative.title} onClick={() => openSchedule(representative)}><i aria-hidden="true" className={scheduleCategoryStyles[getScheduleCategory(representative)].dot} /><span>{cleanTitle(representative.title)}</span></button> : <span className={styles.weekPreview}>일정 없음</span>}
-        </div>;
+        return <WeeklyDayTile key={date} date={date} today={today} items={items} proximityLabel={getDayProximityLabel(date, today)} holidayNames={holidaysByDate[date]} triggerProps={peek.getTriggerProps(`date:${date}`)} autoPlay={weekAutoPlay} paused={Boolean(peek.active) || Boolean(detailKey)} />;
       })}</div>
     </section>
     <div className={styles.workspace}>
@@ -338,10 +358,10 @@ export default function SharedDashboard({ schedules, onChangeView, onOpenChat, o
     </div>
     <AnchoredPreview controller={peek} title={preview?.label ?? ''} preferredHeight={peek.active?.key === 'absence' ? 480 : Math.min(620, Math.max(155, Math.max(1, preview?.items.length ?? 0) * (previewRowHeight + 6) + 98))}>
       {peek.active?.key === 'absence' ? <AbsenceMiniCalendar schedules={schedules} referenceDate={today} onOpenSchedule={openSchedule} onOpenAbsenceBoard={onOpenAbsenceBoard ? () => { peek.close({ immediate: true }); onOpenAbsenceBoard(); } : undefined} /> : preview && <div className={styles.peekList}>
-        <SchedulePages key={`peek:${preview.key}`} items={preview.items} label={preview.label} listKey="detail" today={today} showDate onOpen={openSchedule} onComplete={onToggleScheduleComplete} navigation="dots" />
+        <SchedulePages key={`peek:${preview.key}`} items={preview.items} label={preview.label} listKey="detail" today={today} showDate showProximity={peek.active?.key === 'week' || Boolean(peek.active?.key.startsWith('date:'))} proximityDate={peek.active?.key.startsWith('date:') ? peek.active.key.slice(5) : undefined} onOpen={openSchedule} onComplete={onToggleScheduleComplete} navigation="dots" />
         <button type="button" className={styles.peekAll} onClick={() => openAll(peek.active!.key)}>전체 목록 보기 <ArrowUpRight size={14} /></button>
       </div>}
     </AnchoredPreview>
-    {selected && <SummaryDetail key={selected.key} title={selected.label} items={selected.items} today={today} onClose={() => setDetailKey(null)} onOpen={openSchedule} onComplete={onToggleScheduleComplete} openerElement={detailOpener} onAbsenceBoard={selected.key === 'absence' && onOpenAbsenceBoard ? () => { setDetailKey(null); onOpenAbsenceBoard(); } : undefined} />}
+    {selected && <SummaryDetail key={selected.key} title={selected.label} items={selected.items} today={today} onClose={() => setDetailKey(null)} onOpen={openSchedule} onComplete={onToggleScheduleComplete} openerElement={detailOpener} showProximity={detailKey === 'week' || Boolean(detailKey?.startsWith('date:'))} proximityDate={detailKey?.startsWith('date:') ? detailKey.slice(5) : undefined} onAbsenceBoard={selected.key === 'absence' && onOpenAbsenceBoard ? () => { setDetailKey(null); onOpenAbsenceBoard(); } : undefined} />}
   </div>;
 }

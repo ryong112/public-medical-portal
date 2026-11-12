@@ -112,6 +112,11 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, 
     });
     assert.ok(geometry.document[0] <= geometry.viewport[0] + 1, `${label}: no horizontal page scrolling`);
     assert.ok(geometry.document[1] <= geometry.viewport[1] + 1, `${label}: no vertical page scrolling`);
+    const rootWidth = geometry.nodes.find(({ selector }) => selector === '[data-dashboard-root]').width;
+    const expectedCapacity = rootWidth <= 570 ? 1 : geometry.viewport[1] <= 760 ? 2 : 3;
+    for (const capacity of await dashboard().locator('[data-week-carousel-capacity]').evaluateAll((tiles) => tiles.map((tile) => Number(tile.dataset.weekCarouselCapacity)))) {
+      assert.equal(capacity, expectedCapacity, `${label}: weekly tile density adapts to available screen space`);
+    }
     for (const node of geometry.nodes) {
       assert.ok(!node.missing, `${label}: ${node.selector} exists`);
       assert.ok(node.height > 0 && node.width > 0, `${label}: ${node.selector} is not collapsed`);
@@ -176,6 +181,95 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, 
     }
     throw new Error('Preview dot paging did not reach its final page');
   };
+  const assertWeeklyCarousel = async () => {
+    const carouselContext = await browser.newContext({ viewport: { width: 1366, height: 768 }, timezoneId: 'Asia/Seoul' });
+    await carouselContext.route('**/*', mockRoute);
+    await carouselContext.routeWebSocket((url) => !['127.0.0.1', 'localhost'].includes(url.hostname), (socket) => socket.close());
+    const carouselPage = await carouselContext.newPage();
+    carouselPage.on('pageerror', (error) => errors.push(error.message));
+    // Keep virtual time isolated: advancing the rotation test must not disturb
+    // the dashboard's normal hover, calendar and wheel timing regressions.
+    await carouselPage.clock.install({ time: new Date('2026-11-12T01:00:00Z') });
+    await carouselPage.clock.pauseAt(new Date('2026-11-12T01:00:01Z'));
+    try {
+      await carouselPage.goto(baseUrl);
+      for (let attempt = 0; attempt < 8 && !await carouselPage.locator('[data-week-carousel-index]').count(); attempt += 1) {
+        await carouselPage.clock.runFor(500); await carouselPage.waitForTimeout(30);
+      }
+      const tile = carouselPage.locator('[data-dashboard-week-date="2026-11-12"]');
+      await tile.waitFor();
+      const index = async () => Number(await tile.getAttribute('data-week-carousel-index'));
+      const visibleIds = async () => tile.evaluate((element) => {
+        const bounds = element.querySelector('[data-week-carousel-viewport]').getBoundingClientRect();
+        return [...element.querySelectorAll('[data-week-schedule-id]')].filter((row) => {
+          const rect = row.getBoundingClientRect();
+          return rect.top >= bounds.top - 1 && rect.bottom <= bounds.bottom + 1 && rect.height > 0;
+        }).map((row) => Number(row.dataset.weekScheduleId));
+      });
+      assert.equal(Number(await tile.getAttribute('data-week-visible-count')), 3, 'desktop tiles immediately expose three readable schedule slots');
+      assert.equal(await tile.locator('button').count(), 0, 'the entire rotating day tile is a single button, including its event text');
+      const initial = await index();
+      const visited = new Set(await visibleIds());
+      for (let turns = 0; turns < 5; turns += 1) {
+        const previous = await index();
+        for (let attempt = 0; attempt < 15 && (await index() === previous || await tile.getAttribute('data-week-carousel-moving') === 'true'); attempt += 1) {
+          await carouselPage.clock.runFor(500); await carouselPage.waitForTimeout(10);
+        }
+        assert.equal(await index(), (previous + 1) % 5, 'overflow schedules advance one row in the original order');
+        for (const id of await visibleIds()) visited.add(id);
+      }
+      assert.equal(await index(), initial, 'one complete cycle wraps seamlessly back to its first row');
+      assert.deepEqual([...visited].sort((a, b) => a - b), [1, 2, 3, 4, 5], 'every schedule is exposed; the extra animation row never drops an item');
+      await tile.hover(); await carouselPage.clock.runFor(6500);
+      const hovered = await index();
+      await carouselPage.clock.runFor(6500);
+      assert.equal(await index(), hovered, 'hover and the open preview keep the reading target still');
+      await carouselPage.keyboard.press('Escape'); await carouselPage.clock.runFor(250);
+      await carouselPage.mouse.move(5, 5); await carouselPage.clock.runFor(250);
+      const pause = carouselPage.locator('[data-week-autoplay-control]');
+      await pause.click();
+      assert.equal(await pause.getAttribute('aria-pressed'), 'true', 'a visible pause control disables automatic movement');
+      const paused = await index(); await carouselPage.clock.runFor(12000);
+      assert.equal(await index(), paused, 'manual pause does not silently resume after an interval');
+      await pause.click();
+      assert.equal(await pause.getAttribute('aria-pressed'), 'false');
+      await tile.focus(); await carouselPage.clock.runFor(6500);
+      const focused = await index(); await carouselPage.clock.runFor(6500);
+      assert.equal(await index(), focused, 'keyboard focus pauses automatic rotation as well as the mini preview');
+      await carouselPage.keyboard.press('Escape'); await carouselPage.clock.runFor(250);
+      await pause.focus(); await carouselPage.mouse.move(5, 5); await carouselPage.clock.runFor(500);
+      await carouselPage.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+        Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      const hidden = await index(); await carouselPage.clock.runFor(12000);
+      assert.equal(await index(), hidden, 'background documents do not continue running a carousel');
+      await carouselPage.evaluate(() => {
+        delete document.visibilityState; delete document.hidden;
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await carouselPage.clock.runFor(100); await carouselPage.waitForTimeout(20);
+      await carouselPage.emulateMedia({ reducedMotion: 'reduce' });
+      await carouselPage.waitForTimeout(50);
+      // An already moving row may settle once when motion is disabled. Start
+      // checking stability only after that transition has reached a whole row.
+      await carouselPage.clock.runFor(600); await carouselPage.waitForTimeout(20);
+      assert.equal(await tile.getAttribute('data-week-carousel-paused'), 'true', 'reduced-motion change pauses its timer before the stability window');
+      assert.equal(await tile.getAttribute('data-week-carousel-moving'), 'false', 'reduced-motion change settles an in-flight row before the stability window');
+      const reduced = await index(); await carouselPage.clock.runFor(12000);
+      assert.equal(await index(), reduced, 'reduced motion disables automatic content rotation');
+      assert.equal(await pause.isVisible(), false, 'a motion-disabled carousel does not advertise an ineffective playback control');
+      const file = path.join(os.tmpdir(), 'my-portal-hub-dashboard-week-carousel-1366x768.png');
+      await carouselPage.addStyleTag({ content: 'nextjs-portal { display: none !important; }' });
+      await carouselPage.screenshot({ path: file }); screenshots.push(file);
+      await carouselPage.emulateMedia({ reducedMotion: 'no-preference' }); await carouselPage.waitForTimeout(50);
+      await carouselPage.clock.runFor(600);
+      await carouselPage.getByRole('button', { name: '일정 공유', exact: true }).click();
+      assert.equal(await carouselPage.locator('[data-week-carousel-index]').count(), 0, 'leaving the dashboard unmounts every rotating tile');
+      await carouselPage.clock.runFor(12000);
+    } finally { await carouselContext.close(); }
+  };
   try {
     await page.goto(baseUrl);
     await dashboard().waitFor();
@@ -183,6 +277,12 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, 
     assert.equal(await legend().getByRole('button').count(), 0, 'legend never filters or behaves like buttons');
     assert.equal(await legend().locator('[data-dashboard-legend-category]').count(), 5, 'five categories appear once without an unnecessary all button');
     assert.equal(await dashboard().locator('[data-dashboard-week-date]').count(), 7, 'all seven dates are visible without horizontal navigation');
+    for (const [offset, label] of ['오늘', '내일', 'D-2', 'D-3', 'D-4', 'D-5', 'D-6'].entries()) {
+      const date = `2026-11-${12 + offset}`;
+      assert.equal(await dateTrigger(date).getByText(label, { exact: true }).count(), 1, `${date}: proximity is readable directly on its full-day card`);
+      assert.equal(await dateTrigger(date).getAttribute('type'), 'button', `${date}: the entire day card is one semantic trigger`);
+      assert.equal(await dateTrigger(date).locator('button').count(), 0, `${date}: no nested event buttons bypass the day's preview`);
+    }
     assert.equal(await dayPanel('today').getByRole('group', { name: /유형/ }).count(), 0);
     assert.equal(await dashboard().getByText('앞으로 7일', { exact: true }).count(), 0);
     assert.equal(await dashboard().getByText('유형 선택 · 목록 필터', { exact: true }).count(), 0);
@@ -208,11 +308,15 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, 
       for (const key of ['todo', 'notice', 'absence']) {
         assert.ok((await summary(key).innerText()).trim().length > 0, `${viewport.width}: ${key} remains visible in the overview`);
       }
-      if (viewport.width >= 1366) {
+      if (viewport.width >= 1366 && viewport.height > 720) {
         for (const key of ['todo', 'notice', 'absence']) {
           const contextPanel = dashboard().locator(`[data-dashboard-context="${key}"]`);
           assert.equal(await contextPanel.isVisible(), true, `${key}: actual information is visible on desktop`);
           assert.ok(await contextPanel.locator('[data-preview-schedule-id]').count() > 0, `${key}: important content is not hidden behind its numeric summary`);
+        }
+      } else if (viewport.height <= 720) {
+        for (const key of ['todo', 'notice', 'absence']) {
+          assert.equal(await summary(key).locator('[data-preview-schedule-id]').isVisible(), true, `${key}: compact height keeps a concrete title in its summary`);
         }
       }
       await screenshot(`mixed-${viewport.width}x${viewport.height}`);
@@ -310,9 +414,13 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, 
     await summaryTrigger('week').hover(); await page.waitForTimeout(470); await peek().waitFor();
     await page.waitForTimeout(100);
     assert.equal(await peek().locator('[data-schedule-id]').count(), 7, 'an ordinary seven-event week expands to show all rows at once when the viewport permits it');
+    assert.equal(await peek().locator('[data-schedule-id="2"]').getByText('오늘', { exact: true }).count(), 1, 'the weekly list distinguishes today at the event level');
+    assert.equal(await peek().locator('[data-schedule-id="7"]').getByText('내일', { exact: true }).count(), 1, 'the weekly list distinguishes tomorrow at the event level');
+    assert.equal(await peek().locator('[data-schedule-id="8"]').getByText('D-6', { exact: true }).count(), 1, 'later weekly events show their exact remaining days');
     assert.equal(await peek().locator('[data-preview-pagination]').count(), 0, 'a list that fits the expanded window does not show unnecessary page dots');
     await assertPeekBounds(summaryTrigger('week')); await screenshot('week-expanded-1366x768');
     await dismissPeek();
+    await assertWeeklyCarousel();
     const calendarFixtures = [...normalFixtures,
       event(40, 'leave', '휴가) 과거 제목 이름', { owner_name: '기간 담당', date: '2026-11-11', end_date: '2026-11-13', start_time: null, end_time: null, absence_type: 'annual' }),
       event(41, 'leave', '휴가) 월말 담당', { owner_name: '월말 담당', date: '2026-11-30', end_date: '2026-12-02', start_time: null, end_time: null, absence_type: 'annual' }),
@@ -404,7 +512,24 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, 
     await assertDirectDetails(dashboard().locator('[data-dashboard-context="notice"] [data-preview-schedule-id="1"]').first(), '현장 방문');
     await assertDirectDetails(dashboard().locator('[data-dashboard-context="todo"] [data-preview-schedule-id="6"]').first(), '기한 지난 업무');
     await assertDirectDetails(dashboard().locator('[data-dashboard-context="absence"] [data-preview-schedule-id="5"]').first(), '이팀원');
-    await assertDirectDetails(dashboard().locator('[data-dashboard-week-date="2026-11-13"] [data-preview-schedule-id="7"]').first(), '내일 회의');
+    const todayTile = dateTrigger('2026-11-12');
+    for (const trigger of [todayTile.locator('time'), todayTile.locator('span').filter({ hasText: /^5건$/ }).last()]) {
+      await trigger.click(); await peek().waitFor();
+      assert.equal(await rows(peek()).count(), 5, 'date and count hit targets both expose every event for that day');
+      assert.equal(await page.getByRole('dialog', { name: '일정 상세', exact: true }).count(), 0, 'a day-card hit target never edits a representative event directly');
+      await page.keyboard.press('Escape'); await peek().waitFor({ state: 'hidden' });
+    }
+    const tomorrowTile = dateTrigger('2026-11-13');
+    const tomorrowBounds = await tomorrowTile.boundingBox();
+    await tomorrowTile.click({ position: { x: tomorrowBounds.width - 7, y: tomorrowBounds.height - 7 } });
+    await peek().waitFor();
+    assert.equal(await rows(peek()).count(), 1, 'empty padding within the date card opens the same full-day mini list');
+    await page.keyboard.press('Escape'); await peek().waitFor({ state: 'hidden' });
+    await tomorrowTile.locator('[data-week-schedule-id="7"]').first().click();
+    await peek().waitFor();
+    assert.equal(await page.getByRole('dialog', { name: '일정 상세', exact: true }).count(), 0, 'clicking the visible event text opens the day list rather than edit/details');
+    assert.equal(await peek().locator('[data-schedule-id="7"]').count(), 1, 'the card body uses the same complete day preview as its count');
+    await assertDirectDetails(peek().locator('[data-schedule-id="7"]').getByRole('button').last(), '내일 회의');
     await summaryTrigger('absence').click();
     await page.locator('[data-absence-calendar]').waitFor();
     assert.equal(await page.locator('[data-absence-selected-list] [data-absence-schedule-id="5"]').count(), 1, 'leave calendar initially includes today leave');
@@ -591,7 +716,25 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, 
     const longPageCount = (longPdf.toString('latin1').match(/\/Type\s*\/Page\b/g) ?? []).length;
     assert.ok(longPageCount > 1, 'busy week print retains every row across pages');
     assert.deepEqual(errors, []); assert.deepEqual(writes, ['/rest/v1/schedules']);
-    console.log(JSON.stringify({ passed: true, pageCount, longPageCount, cases: ['one static noninteractive category legend', 'all categories remain visible', 'all includes leave', 'seven visible date tiles', 'six viewport sizes and mixed information fit', 'rapid crossings never flash a preview', 'preview grows from its actual card and stays within viewport', 'pointer transfer into preview preserves it', 'Escape suppresses reopening under the pointer', 'changing category keeps exactly one window', 'click pin and outside dismissal', 'reduced motion avoids grow animation', 'absence weekday and unique person count', 'cross-month absence range on every date', 'mouse-selected calendar closes after exit', 'explicit pin and unpin preserve intended dismissal', 'keyboard calendar focus persists until tabbed out', 'touch calendar at 390 and 320 pixels', 'touch directly selects dot pages', 'one-click notice, todo, absence and weekly details', 'date tile opens only the exact date', 'absence calendar excludes work', 'calendar action selects the requested date after another month', 'sparse independent card heights and no trapped whitespace', 'compact empty state and no redundant navigation', 'summary keyboard and focus restoration', 'overdue completion', 'all 85 busy-day rows reachable', 'bounded dark-current dot rail', 'wheel gestures do not skip pages through inertia', 'wheel direction units and ignored zoom/horizontal input', 'wheel boundaries never wrap', 'popup breakpoint resize never clips rows', 'dot and keyboard navigation retains every preview item', 'calendar local scrolling is not intercepted', 'resize clamps last page', 'long title detail', 'ordinary and busy week print'], screenshots,
+    console.log(JSON.stringify({ passed: true, pageCount, longPageCount, cases: [
+      'one static noninteractive category legend', 'all categories remain visible', 'all includes leave',
+      'seven visible date tiles with today, tomorrow and D-N labels', 'responsive three, two and one-row weekly tiles',
+      'weekly carousel exposes every event in order and wraps without loss', 'hover, keyboard focus and open previews pause rotation',
+      'global pause, hidden documents and reduced motion stop automatic content changes', 'unmount cleans up rotating tiles',
+      'six viewport sizes and mixed information fit', 'rapid crossings never flash a preview',
+      'preview grows from its actual card and stays within viewport', 'pointer transfer into preview preserves it',
+      'Escape suppresses reopening under the pointer', 'changing category keeps exactly one window', 'click pin and outside dismissal',
+      'reduced motion avoids grow animation', 'absence weekday and unique person count', 'cross-month absence range on every date',
+      'mouse-selected calendar closes after exit', 'explicit pin and unpin preserve intended dismissal',
+      'keyboard calendar focus persists until tabbed out', 'touch calendar at 390 and 320 pixels', 'touch directly selects dot pages',
+      'one-click notice, todo and absence details', 'whole weekly tile, date, count, title and padding open the full-day mini before details',
+      'date tile opens only the exact date', 'absence calendar excludes work', 'calendar action selects the requested date after another month',
+      'sparse independent card heights and no trapped whitespace', 'compact empty state and no redundant navigation',
+      'summary keyboard and focus restoration', 'overdue completion', 'all 85 busy-day rows reachable', 'bounded dark-current dot rail',
+      'wheel gestures do not skip pages through inertia', 'wheel direction units and ignored zoom/horizontal input',
+      'wheel boundaries never wrap', 'popup breakpoint resize never clips rows', 'dot and keyboard navigation retains every preview item',
+      'calendar local scrolling is not intercepted', 'resize clamps last page', 'long title detail', 'ordinary and busy week print',
+    ], screenshots,
       sparseCardSizes: measurements.filter(({ label }) => label.startsWith('sparse ')).map(({ label, nodes }) => ({ label, cards: nodes.filter(({ selector }) => selector.startsWith('[data-dashboard-day=')).map(({ selector, height }) => ({ selector, height })) })),
       layoutsChecked: measurements.map(({ label, viewport, document }) => ({ label, viewport, document })) }, null, 2));
   } catch (error) {

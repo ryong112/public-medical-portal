@@ -103,6 +103,10 @@ test('dashboard exposes a seven-day hub, noninteractive category legend and dire
   assert.equal((html.match(/data-dashboard-summary=/g) ?? []).length, 4);
   assert.equal((html.match(/data-dashboard-day=/g) ?? []).length, 2);
   assert.equal((html.match(/data-dashboard-week-date=/g) ?? []).length, 7);
+  assert.match(html, /오늘/);
+  assert.match(html, /내일/);
+  assert.match(html, /D-6/);
+  assert.match(html, /data-week-schedule-id=/);
   assert.equal((html.match(/data-dashboard-context=/g) ?? []).length, 3);
   assert.match(html, /주간 일정/);
   assert.match(html, /이번 달 휴가/);

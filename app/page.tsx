@@ -23,6 +23,7 @@ import DocumentLibrary, { type DocumentFile } from '@/app/components/document-li
 import DocumentPreviewModal from '@/app/components/document-preview-modal';
 import DocumentUploadStatus from '@/app/components/document-upload-status';
 import { createDocumentUploads, createDocumentUploadRunner, type UploadItem } from '@/lib/document-upload';
+import { getRequiredHolidayYears, mergeHolidayYear, type KoreanHoliday } from '@/lib/korean-holidays';
 import JSZip from 'jszip';
 import { 
   FilePlus,
@@ -30,11 +31,6 @@ import {
   GripVertical, Calendar as CalendarIcon, LayoutDashboard, Plus,
   ChevronLeft, ChevronRight, X, Clock, CalendarDays, Archive, Menu, Siren, Pencil, ScanLine, ShieldCheck, Search, History, Copy, MonitorPlay, Zap, FolderSync, ExternalLink
 } from 'lucide-react';
-
-interface KoreanHoliday {
-  date: string;
-  name: string;
-}
 
 type PortalSchedule = NewScheduleInput & Partial<RecurrenceOccurrenceFields> & { id: number };
 
@@ -247,29 +243,27 @@ export default function IntegratedPortal() {
     return () => window.clearInterval(interval);
   }, [isAuthenticated]);
 
+  const holidayYearsKey = getRequiredHolidayYears(currentMonth.getFullYear(), todayStr).join(',');
   useEffect(() => {
     const controller = new AbortController();
-    const year = currentMonth.getFullYear();
-
-    fetch(`/api/korean-holidays?year=${year}`, { signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) throw new Error('대한민국 공휴일을 불러오지 못했습니다.');
-        return response.json() as Promise<{ holidays: KoreanHoliday[] }>;
-      })
-      .then(({ holidays }) => {
-        const byDate = holidays.reduce<Record<string, string[]>>((result, holiday) => {
-          result[holiday.date] = [...(result[holiday.date] ?? []), holiday.name];
-          return result;
-        }, {});
-        setKoreanHolidays(byDate);
-      })
-      .catch((error) => {
-        if (error instanceof DOMException && error.name === 'AbortError') return;
-        console.error(error);
-      });
-
+    for (const year of holidayYearsKey.split(',').filter(Boolean).map(Number)) {
+      fetch(`/api/korean-holidays?year=${year}`, { signal: controller.signal })
+        .then(async (response) => {
+          if (!response.ok) throw new Error('대한민국 공휴일을 불러오지 못했습니다.');
+          const payload = await response.json() as { holidays: KoreanHoliday[] };
+          if (!Array.isArray(payload.holidays)) throw new Error('대한민국 공휴일 응답을 확인하지 못했습니다.');
+          return payload.holidays;
+        })
+        .then((holidays) => {
+          if (!controller.signal.aborted) setKoreanHolidays((previous) => mergeHolidayYear(previous, year, holidays));
+        })
+        .catch((error) => {
+          if (controller.signal.aborted) return;
+          console.error(error);
+        });
+    }
     return () => controller.abort();
-  }, [currentMonth]);
+  }, [holidayYearsKey]);
 
   // 1. 정보공유방(채팅) 영구 읽음 처리
   useEffect(() => {
@@ -1370,6 +1364,7 @@ export default function IntegratedPortal() {
               {viewMode === 'dashboard' ? (
                 <SharedDashboard
                   schedules={visibleSchedules}
+                  holidaysByDate={koreanHolidays}
                   onChangeView={setViewMode}
                   onOpenCalendarDate={(date) => {
                     const target = new Date(`${date}T12:00:00`);

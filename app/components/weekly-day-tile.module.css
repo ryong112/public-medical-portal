@@ -1,0 +1,45 @@
+.tile { --week-tile-visible-rows: 3; --week-tile-row-height: 24px; display: flex; flex-direction: column; width: 100%; min-width: 0; overflow: hidden; padding: 7px 9px 8px; border: 1px solid #e2e8f0; border-radius: 10px; background: #f8fafc; color: #0f172a; text-align: left; cursor: pointer; }
+.tile:hover, .tile[aria-expanded='true'] { border-color: #93b4ff; background: #eff6ff; }
+.tile:focus-visible { outline: 2px solid #2563eb; outline-offset: -2px; }
+.today { border-color: #93b4ff; background: #eff6ff; }
+.heading { display: flex; align-items: center; justify-content: space-between; gap: 4px; min-width: 0; height: 22px; flex-shrink: 0; }
+.heading time { display: inline-flex; align-items: baseline; gap: 5px; min-width: 0; }
+.weekday { font-size: 12px; line-height: 18px; color: #64748b; }
+.heading time[data-week-day-kind='saturday'], .heading time[data-week-day-kind='saturday'] .weekday { color: #2563eb; }
+.heading time[data-week-day-kind='sunday'], .heading time[data-week-day-kind='holiday'], .heading time[data-week-day-kind='sunday'] .weekday, .heading time[data-week-day-kind='holiday'] .weekday { color: #dc2626; }
+.heading strong { font-size: 16px; line-height: 20px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.count { color: #475569; font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.count > span { margin-left: 2px; }
+.proximity { display: flex; align-items: center; gap: 5px; width: 100%; min-width: 0; height: 21px; flex-shrink: 0; color: #64748b; font-size: 12px; line-height: 17px; font-weight: 650; }
+.proximityLabel { flex-shrink: 0; white-space: nowrap; }
+.holidayName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #dc2626; }
+.currentProximity { color: #1d4ed8; }
+.viewport { display: block; position: relative; min-width: 0; height: calc(var(--week-tile-visible-rows) * var(--week-tile-row-height)); flex-shrink: 0; overflow: hidden; }
+.track { display: flex; flex-direction: column; width: 100%; min-width: 0; transform: translateY(0); transition: none; }
+.moving { transform: translateY(calc(-1 * var(--week-tile-row-height))); transition: transform 420ms cubic-bezier(.22, 1, .36, 1); }
+.row { display: flex; align-items: center; gap: 4px; width: 100%; min-width: 0; height: var(--week-tile-row-height); flex-shrink: 0; overflow: hidden; }
+.rowDot { display: block; width: 5px; height: 5px; flex-shrink: 0; border-radius: 50%; }
+.rowTime { font-size: 12px; line-height: 18px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; line-height: 18px; color: #334155; }
+.empty { display: flex; align-items: center; min-height: var(--week-tile-row-height); overflow: hidden; white-space: nowrap; color: #64748b; font-size: 12px; line-height: 18px; }
+.emptyText { overflow: hidden; text-overflow: ellipsis; }
+.emptyDash { display: none; }
+@media (max-height: 760px) { .tile { --week-tile-visible-rows: 2; } }
+@container dashboard (max-width: 570px) {
+  .tile { --week-tile-visible-rows: 1; padding: 4px 3px 5px; border-radius: 7px; }
+  .heading { height: 21px; gap: 2px; }
+  .heading time { gap: 2px; }
+  .heading strong { font-size: 14px; line-height: 18px; }
+  .weekday { display: none; }
+  .count { min-width: 12px; border-radius: 3px; background: #e2e8f0; line-height: 16px; text-align: center; }
+  .count > span { display: none; }
+  .proximity { height: 18px; font-size: 12px; letter-spacing: -.025em; }
+  .holidayName { display: none; }
+  .row { gap: 3px; }
+  .rowDot { width: 4px; height: 4px; }
+  .rowTime { display: none; }
+  .empty { justify-content: center; }
+  .emptyText { display: none; }
+  .emptyDash { display: inline; }
+}
+@media (prefers-reduced-motion: reduce) { .moving { transition: none; } }
