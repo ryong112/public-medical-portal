@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-require-imports -- Run TypeScript helpers and React rendering with the built-in Node test runner. */
 const assert = require('node:assert/strict');
-const { readFileSync } = require('node:fs');
+const { readFileSync, existsSync } = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
@@ -14,7 +14,16 @@ function load(relativePath) {
   const source = readFileSync(path.join(__dirname, '..', relativePath), 'utf8');
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   const compiledModule = { exports: {} };
-  vm.runInNewContext(compiled, { exports: compiledModule.exports, module: compiledModule, require: (name) => name.startsWith('@/') ? load(`${name.slice(2)}.ts`) : require(name) });
+  vm.runInNewContext(compiled, { exports: compiledModule.exports, module: compiledModule, require: (name) => {
+    if (name.endsWith('.css')) return { __esModule: true, default: new Proxy({}, { get: (_, key) => String(key) }) };
+    if (name.startsWith('@/') || name.startsWith('.')) {
+      const relative = name.startsWith('@/') ? name.slice(2) : path.join(path.dirname(relativePath), name);
+      const candidate = [relative, `${relative}.ts`, `${relative}.tsx`].find((file) => existsSync(path.join(__dirname, '..', file)));
+      if (!candidate) throw new Error(`Missing local module ${relative}`);
+      return load(candidate);
+    }
+    return require(name);
+  } });
   modules.set(relativePath, compiledModule.exports);
   return compiledModule.exports;
 }
@@ -83,17 +92,18 @@ test('print output does not cap many events or truncate long titles', () => {
   assert.doesNotMatch(source, /line-clamp|text-overflow:\s*ellipsis|scale\(/);
 });
 
-test('dashboard separates static category counts and filters, with explicit expandable detail controls', () => {
+test('compact dashboard has one shared category control and one fixed pair of day panels', () => {
   const today = helpers.toLocalDateKey(new Date());
   const schedules = [item(1, today, { schedule_type: 'meeting' }), item(2, today, { schedule_type: 'leave', title: '휴가) 김직원' }), item(3, helpers.shiftDateKey(today, -1), { is_todo: true })];
   const noop = () => {};
   const html = renderToStaticMarkup(React.createElement(SharedDashboard, { schedules, onChangeView: noop, onOpenChat: noop, onOpenSchedule: noop, onToggleScheduleComplete: noop, onPrintWeek: noop }));
-  assert.match(html, /업무 전체 1건/);
-  assert.match(html, /앞으로 7일/);
-  assert.match(html, /이달 남은 휴가/);
-  assert.match(html, /기한 지남 1개/);
-  assert.match(html, /<dl /);
-  assert.equal((html.match(/aria-expanded="false" aria-controls="dashboard-details-/g) ?? []).length, 5);
+  assert.equal((html.match(/aria-label="일정 유형"/g) ?? []).length, 1);
+  assert.equal((html.match(/data-dashboard-summary=/g) ?? []).length, 4);
+  assert.equal((html.match(/data-dashboard-day=/g) ?? []).length, 2);
+  assert.match(html, /주간 일정/);
+  assert.match(html, /이번 달 휴가/);
+  assert.match(html, /할 일/);
+  assert.match(html, /data-dashboard-count[^>]*>2</, 'all counts include both work and leave');
   assert.match(html, /주간 인쇄/);
-  assert.doesNotMatch(html, /text-\[(?:8|9|10)px\]|group-hover:opacity-100/);
+  assert.doesNotMatch(html, /앞으로 7일|유형 선택 · 목록 필터|미완료 유형별 건수|유형 간 인원 중복 가능|업무 전체는 휴가/);
 });

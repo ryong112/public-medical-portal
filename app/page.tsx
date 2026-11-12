@@ -1146,7 +1146,7 @@ export default function IntegratedPortal() {
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-[#F0F2F5] font-sans text-[#2C3E50]">
-      <header className={`z-[60] flex items-center justify-between gap-2 border-b border-white/5 bg-[#1A1C1E] text-white shadow-md sm:px-4 lg:px-6 xl:px-8 xl:py-4 ${viewMode === 'external_calendar' ? 'px-2 py-2 sm:py-3' : 'px-3 py-3'}`}>
+      <header className={`z-[60] flex items-center justify-between gap-2 border-b border-white/5 bg-[#1A1C1E] text-white shadow-md sm:px-4 lg:px-6 xl:px-8 xl:py-4 ${viewMode === 'external_calendar' ? 'px-2 py-2 sm:py-3' : viewMode === 'dashboard' ? 'px-3 py-2' : 'px-3 py-3'}`}>
         <div className="flex min-w-0 items-center gap-2 md:gap-3 overflow-hidden">
           <button aria-label="분류 메뉴" aria-expanded={isMobileSidebarOpen} onClick={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)} className="shrink-0 rounded-lg p-1.5 transition-colors hover:bg-white/10 xl:hidden"><Menu size={22}/></button>
           <span className="text-lg md:text-2xl hidden sm:inline shrink-0">📂</span>
@@ -1312,7 +1312,7 @@ export default function IntegratedPortal() {
           onDragOver={(e) => { e.preventDefault(); if(viewMode==='files') setIsDragOver(true); }} 
           onDragLeave={() => setIsDragOver(false)} 
           onDrop={(e) => { e.preventDefault(); setIsDragOver(false); if(viewMode==='files') handleUpload(e.dataTransfer.files); }} 
-          className={`flex-1 flex flex-col bg-white overflow-hidden relative shadow-inner transition-all duration-300 min-h-0 ${isDragOver ? 'bg-blue-50/50' : 'bg-white'}`}
+          className={`flex-1 flex flex-col bg-white overflow-hidden relative shadow-inner transition-all duration-300 min-h-0 min-w-0 ${isDragOver ? 'bg-blue-50/50' : 'bg-white'}`}
         >
           {isDragOver && (
             <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none animate-in fade-in duration-200">
@@ -1322,7 +1322,7 @@ export default function IntegratedPortal() {
             </div>
           )}
 
-          <div className={`flex w-full flex-1 flex-col overflow-hidden min-h-0 ${viewMode === 'calendar' ? 'mr-auto max-w-[1600px]' : viewMode === 'dashboard' ? 'mx-auto max-w-[1440px]' : viewMode === 'external_calendar' ? 'mx-auto max-w-[1600px]' : 'mx-auto max-w-6xl'} ${viewMode === 'external_calendar' ? 'p-0 sm:p-3 lg:p-4' : viewMode === 'calendar' ? 'p-2 sm:p-3 lg:p-4' : viewMode === 'dashboard' ? 'p-2.5 sm:p-4 lg:p-5 2xl:p-6' : 'p-4 sm:p-6 lg:p-10 2xl:p-12'}`}>
+          <div className={`flex w-full flex-1 flex-col overflow-hidden min-h-0 min-w-0 ${viewMode === 'calendar' ? 'mr-auto max-w-[1600px]' : viewMode === 'dashboard' ? 'mx-auto max-w-none' : viewMode === 'external_calendar' ? 'mx-auto max-w-[1600px]' : 'mx-auto max-w-6xl'} ${viewMode === 'external_calendar' ? 'p-0 sm:p-3 lg:p-4' : viewMode === 'calendar' ? 'p-2 sm:p-3 lg:p-4' : viewMode === 'dashboard' ? 'p-2 sm:p-3' : 'p-4 sm:p-6 lg:p-10 2xl:p-12'}`}>
             
             {viewMode === 'files' && <div className="mb-10 flex shrink-0 flex-col items-start justify-between gap-4 md:flex-row">
               <div className="flex-1 w-full overflow-hidden">
@@ -1354,16 +1354,15 @@ export default function IntegratedPortal() {
               )}
             </div>}
 
-            {(viewMode === 'dashboard' || viewMode === 'calendar') && <div className="mb-2 flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-              <div className="flex items-center gap-1.5" aria-label="일정 표시 범위">
-                <button aria-pressed={!showMySchedules} onClick={() => setShowMySchedules(false)} className={`min-h-9 rounded-lg px-3 text-xs font-bold ${!showMySchedules ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-200'}`}>전체 일정</button>
-                <button aria-pressed={showMySchedules} disabled={!metadataAvailable || !myScheduleName.trim()} onClick={() => setShowMySchedules(true)} className={`min-h-9 rounded-lg px-3 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-50 ${showMySchedules ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-200'}`}>내 일정만</button>
+            {(viewMode === 'dashboard' || viewMode === 'calendar') && <div className="mb-2 flex shrink-0 items-center justify-between gap-1 rounded-xl border border-slate-200 bg-slate-50 px-2 py-1" data-schedule-scope>
+              <div className="flex items-center gap-1" aria-label="일정 표시 범위">
+                <button aria-pressed={!showMySchedules} onClick={() => setShowMySchedules(false)} className={`min-h-8 whitespace-nowrap rounded-lg px-2 text-xs font-bold ${!showMySchedules ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-200'}`}>전체 일정</button>
+                <button aria-pressed={showMySchedules} disabled={!metadataAvailable || !myScheduleName.trim()} onClick={() => setShowMySchedules(true)} className={`min-h-8 whitespace-nowrap rounded-lg px-2 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-50 ${showMySchedules ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-200'}`}>내 일정만</button>
               </div>
-              <label className="flex items-center gap-2 text-xs font-bold text-slate-600">내 이름
-                <input aria-label="내 일정 기준 이름" title="담당자 또는 참석자에 이 이름이 있는 일정만 표시합니다. 접근 권한 설정이 아닙니다." list="portal-schedule-people" maxLength={100} disabled={!metadataAvailable} value={myScheduleName} onChange={(event) => { setMyScheduleName(event.target.value); if (!event.target.value.trim()) setShowMySchedules(false); try { localStorage.setItem('portal-schedule-person', event.target.value); } catch { /* Optional preference only. */ } }} placeholder="이름 입력" className="min-h-9 w-28 rounded-lg border border-slate-300 bg-white px-2 text-sm text-slate-900 disabled:bg-slate-100" />
+              <label className="flex min-w-0 items-center gap-1 whitespace-nowrap text-xs font-bold text-slate-600">내 이름
+                <input aria-label="내 일정 기준 이름" title="담당자 또는 참석자에 이 이름이 있는 일정만 표시합니다. 접근 권한 설정이 아닙니다." list="portal-schedule-people" maxLength={100} disabled={!metadataAvailable} value={myScheduleName} onChange={(event) => { setMyScheduleName(event.target.value); if (!event.target.value.trim()) setShowMySchedules(false); try { localStorage.setItem('portal-schedule-person', event.target.value); } catch { /* Optional preference only. */ } }} placeholder="이름" className="min-h-8 w-20 rounded-lg border border-slate-300 bg-white px-2 text-sm text-slate-900 disabled:bg-slate-100 sm:w-28" />
               </label>
               <datalist id="portal-schedule-people">{schedulePeople.map((name) => <option key={name} value={name} />)}</datalist>
-              {showMySchedules && <p className="w-full text-xs text-blue-700">{myScheduleName} 님이 담당자 또는 참석자로 등록된 일정입니다. 팀 전체 현황은 ‘전체 일정’에서 확인하세요.</p>}
             </div>}
             {scheduleLoadError && <div role="alert" className="mb-2 flex shrink-0 items-center justify-between gap-2 rounded-xl bg-amber-50 p-3 text-xs text-amber-900"><span>{scheduleLoadError}</span><button onClick={() => void fetchSchedules()} className="shrink-0 rounded-lg bg-white px-3 py-2 font-bold">다시 시도</button></div>}
             <div className={`flex-1 flex flex-col min-h-0 ${viewMode === 'calendar' ? 'overflow-y-auto xl:overflow-hidden' : viewMode === 'external_calendar' || viewMode === 'dashboard' ? 'overflow-hidden' : 'overflow-auto custom-scrollbar'}`}>
