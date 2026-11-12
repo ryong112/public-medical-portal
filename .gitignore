@@ -38,6 +38,9 @@ tools/kiosk-launcher/kiosk-launcher.log
 # vercel
 .vercel
 
+# local Supabase CLI project cache
+/supabase/.temp/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
