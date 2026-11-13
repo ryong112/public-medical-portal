@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { CalendarDays, FolderOpen, MoreHorizontal } from 'lucide-react';
 
 type View = 'files' | 'calendar' | 'external_calendar' | 'dashboard';
@@ -16,6 +16,7 @@ interface Props {
   onCleanup: () => void;
   onExit: () => void;
   isAdmin: boolean;
+  notificationControl?: ReactNode;
 }
 
 export default function PortalMobileActions(props: Props) {
@@ -32,6 +33,7 @@ export default function PortalMobileActions(props: Props) {
   const run = (action: () => void) => { if (menu.current) menu.current.open = false; action(); };
   const actionClass = 'min-h-11 w-full rounded-lg px-3 py-2 text-left text-sm font-bold text-slate-800 hover:bg-blue-50 focus-visible:outline-blue-500';
   return <div className="flex shrink-0 items-center gap-1 xl:hidden">
+    {props.notificationControl}
     <button aria-label={props.view === 'calendar' ? '홈' : '일정 공유'} onClick={() => props.onView(props.view === 'calendar' ? 'dashboard' : 'calendar')} className="flex min-h-11 items-center gap-1 rounded-xl bg-white px-2 text-xs font-bold text-slate-900"><CalendarDays size={16} /><span>{props.view === 'calendar' ? '홈' : '일정'}</span></button>
     <button aria-label="문서함" onClick={() => props.onView('files')} className="flex min-h-11 items-center gap-1 rounded-xl px-2 text-xs font-bold text-white hover:bg-white/10"><FolderOpen size={16} /><span>문서</span></button>
     <details ref={menu} className="relative">

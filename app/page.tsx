@@ -24,6 +24,9 @@ import DocumentLibrary, { type DocumentFile } from '@/app/components/document-li
 import DocumentPreviewModal from '@/app/components/document-preview-modal';
 import DocumentUploadStatus from '@/app/components/document-upload-status';
 import CategoryActions from '@/app/components/category-actions';
+import PortalNotifications, { type PortalNotification } from '@/app/components/portal-notifications';
+import TeamChatPanel from '@/app/components/team-chat-panel';
+import useTeamIdentity from '@/lib/use-team-identity';
 import { createDocumentUploads, createDocumentUploadRunner, type UploadItem } from '@/lib/document-upload';
 import { getRequiredHolidayYears, mergeHolidayYear, type KoreanHoliday } from '@/lib/korean-holidays';
 import JSZip from 'jszip';
@@ -88,6 +91,7 @@ const getCategoryMeetingTone = (categoryName: string) => {
 
 export default function IntegratedPortal() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const team = useTeamIdentity(isAuthenticated);
   const [isDeviceAdmin, setIsDeviceAdmin] = useState(false);
   const [isDeviceManagerOpen, setIsDeviceManagerOpen] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
@@ -96,9 +100,9 @@ export default function IntegratedPortal() {
   const [viewMode, setViewMode] = useState<'files' | 'calendar' | 'external_calendar' | 'dashboard'>('dashboard');
   
   const [messages, setMessages] = useState<any[]>([]);
-  const [chatInput, setChatInput] = useState('');
   const [myId, setMyId] = useState<string | null>(null);
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [focusedMessageId, setFocusedMessageId] = useState<number | null>(null);
   
   // 알림 상태
   const [hasUnread, setHasUnread] = useState(false);
@@ -107,12 +111,6 @@ export default function IntegratedPortal() {
   // [신규 추가] 공지사항 관련 상태 관리
   const [noticeIndex, setNoticeIndex] = useState(0);
   const [isNoticeHovered, setIsNoticeHovered] = useState(false);
-
-  const [position, setPosition] = useState({ x: 0, y: 0 }); 
-  const [isDraggingChat, setIsDraggingChat] = useState(false);
-  const dragStartPos = useRef({ x: 0, y: 0 });
-  const chatRef = useRef<HTMLDivElement>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
 
   const [files, setFiles] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
@@ -210,6 +208,7 @@ export default function IntegratedPortal() {
   }, []);
 
   const handleDeviceApproved = useCallback((access: { userId: string; isAdmin: boolean }) => {
+    setMyId(access.userId);
     setIsAuthenticated(true);
     setIsDeviceAdmin(access.isAdmin);
   }, []);
@@ -312,12 +311,6 @@ export default function IntegratedPortal() {
 
   useEffect(() => {
     if (isAuthenticated) {
-      let anonId = localStorage.getItem('chat_anon_id');
-      if (!anonId) {
-        anonId = Math.random().toString(36).substring(2, 12);
-        localStorage.setItem('chat_anon_id', anonId);
-      }
-      setMyId(anonId);
       fetchMessages(); fetchFiles(); fetchCategories(); fetchSchedules();
       void supabase.from('schedules').select('owner_name,attendee_names,location,linked_file_ids').limit(1)
         .then(({ error }) => { metadataAvailableRef.current = !error; setMetadataAvailable(!error); });
@@ -379,8 +372,11 @@ export default function IntegratedPortal() {
     return '기간 일정';
   };
 
-  const visibleSchedules = showMySchedules ? schedules.filter((schedule) => scheduleMatchesPerson(schedule, myScheduleName)) : schedules;
-  const schedulePeople = getSchedulePeople(schedules);
+  const effectiveScheduleName = team.member?.display_name ?? myScheduleName;
+  const visibleSchedules = showMySchedules ? schedules.filter((schedule) => team.available && team.member
+    ? (Array.isArray(schedule.attendee_member_ids) && schedule.attendee_member_ids.includes(team.member.id)) || schedule.owner_name === team.member.display_name
+    : scheduleMatchesPerson(schedule, myScheduleName)) : schedules;
+  const schedulePeople = [...new Set([...getSchedulePeople(schedules), ...team.members.map((member) => member.display_name)])];
   const getCalendarSchedulesForDate = (dateStr: string) => visibleSchedules
     .filter((schedule) => schedule.date <= dateStr && getScheduleEndDate(schedule) >= dateStr)
     .slice()
@@ -495,14 +491,6 @@ export default function IntegratedPortal() {
     const weekday = ['일', '월', '화', '수', '목', '금', '토'][new Date(year, month - 1, day).getDay()];
     return `${year !== currentYear ? `${year}년 ` : ''}${month}월 ${day}일(${weekday}) 예정`;
   };
-
-  const onMouseDownChat = (e: React.MouseEvent) => { setIsDraggingChat(true); dragStartPos.current = { x: e.clientX - position.x, y: e.clientY - position.y }; };
-  useEffect(() => {
-    const onMouseMove = (e: MouseEvent) => { if (!isDraggingChat) return; setPosition({ x: e.clientX - dragStartPos.current.x, y: e.clientY - dragStartPos.current.y }); };
-    const onMouseUp = () => setIsDraggingChat(false);
-    if (isDraggingChat) { window.addEventListener('mousemove', onMouseMove); window.addEventListener('mouseup', onMouseUp); }
-    return () => { window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('mouseup', onMouseUp); };
-  }, [isDraggingChat, position]);
 
   const queueUndoableDeletion = ({
     label,
@@ -680,8 +668,8 @@ export default function IntegratedPortal() {
   const restoreActivityLog = async (log: ActivityLogRow) => {
     if (!log.record_id || !log.before_data || (log.table_name !== 'schedules' && log.table_name !== 'messages')) return;
     const allowedFields = log.table_name === 'schedules'
-      ? ['title', 'date', 'end_date', 'start_time', 'end_time', 'is_notice', 'is_urgent', 'is_completed', 'is_todo', 'schedule_type', 'absence_type', 'recurrence_group_id', 'recurrence_original_date', 'recurrence_index', 'recurrence_status', 'recurrence_is_exception', 'recurrence_cancelled_at', ...(metadataAvailable ? ['owner_name', 'attendee_names', 'location', 'linked_file_ids'] : [])]
-      : ['content', 'sender_id', 'created_at'];
+      ? ['title', 'date', 'end_date', 'start_time', 'end_time', 'is_notice', 'is_urgent', 'is_completed', 'is_todo', 'schedule_type', 'absence_type', 'recurrence_group_id', 'recurrence_original_date', 'recurrence_index', 'recurrence_status', 'recurrence_is_exception', 'recurrence_cancelled_at', ...(metadataAvailable ? ['owner_name', 'attendee_names', 'location', 'linked_file_ids'] : []), ...('attendee_member_ids' in log.before_data ? ['attendee_member_ids'] : [])]
+      : ['content', 'sender_id', 'created_at', ...('mentioned_member_ids' in log.before_data ? ['mentioned_member_ids'] : [])];
     const restoredValues = Object.fromEntries(
       allowedFields
         .filter((field) => field in log.before_data!)
@@ -701,9 +689,37 @@ export default function IntegratedPortal() {
     if (data) setActivityLogs(data as ActivityLogRow[]);
   };
   
-  useEffect(() => { if (isChatOpen) { const timer = setTimeout(() => { if (scrollRef.current) scrollRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, 100); return () => clearTimeout(timer); } }, [messages, isChatOpen]);
-  
-  const onSend = async (e: React.FormEvent) => { e.preventDefault(); if (!chatInput.trim()) return; await supabase.from('messages').insert([{ content: chatInput, sender_id: myId }]); setChatInput(''); };
+  const onSendTeamMessage = async (content: string, mentionedIds: string[]) => {
+    const text = content.trim();
+    if (!text) return;
+    if (!myId) throw new Error('기기 연결을 확인한 뒤 다시 전송해 주세요.');
+    const { error } = await supabase.from('messages').insert({ content: text, sender_id: myId,
+      ...(team.available ? { mentioned_member_ids: [...new Set(mentionedIds)] } : {}) });
+    if (error) throw new Error('메시지를 보내지 못했습니다. 내용을 유지했으니 다시 시도해 주세요.');
+    await fetchMessages();
+    void team.refreshNotifications();
+  };
+
+  const openTeamNotification = async (notification: PortalNotification) => {
+    try {
+      if (notification.kind === 'schedule_attendee') {
+        const result = await supabase.from('schedules').select('*').eq('id', notification.source_id).maybeSingle();
+        if (result.error) throw new Error('일정을 불러오지 못했습니다. 잠시 후 다시 확인해 주세요.');
+        const schedule = result.data;
+        if (!schedule || schedule.recurrence_status === 'cancelled') throw new Error('삭제되었거나 취소된 일정입니다.');
+        setSelectedSchedule(schedule);
+      } else {
+        const result = await supabase.from('messages').select('*').eq('id', notification.source_id).maybeSingle();
+        if (result.error) throw new Error('대화를 불러오지 못했습니다. 잠시 후 다시 확인해 주세요.');
+        if (!result.data) throw new Error('삭제된 메시지입니다.');
+        const message = result.data;
+        setMessages((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? message : item) : [...current, message]);
+        setFocusedMessageId(Number(message.id));
+        setIsChatOpen(true);
+      }
+      await team.markRead([notification.id]);
+    } catch (failure) { alert(failure instanceof Error ? failure.message : '알림 내용을 열지 못했습니다.'); }
+  };
   const handleDownloadCategoryZip = async () => {
     const targetFiles = files.filter(f => selectedCategory === '전체' || isSameCategory(f.category, selectedCategory));
     if (targetFiles.length === 0) return alert("파일이 없습니다.");
@@ -883,6 +899,7 @@ export default function IntegratedPortal() {
           absence_type: schedule.absence_type,
           ...(schedule.owner_name !== undefined ? { owner_name: schedule.owner_name } : {}),
           ...(schedule.attendee_names !== undefined ? { attendee_names: schedule.attendee_names } : {}),
+          ...(team.available && schedule.attendee_member_ids !== undefined ? { attendee_member_ids: schedule.attendee_member_ids } : {}),
           ...(schedule.location !== undefined ? { location: schedule.location } : {}),
           ...(schedule.linked_file_ids !== undefined ? { linked_file_ids: schedule.linked_file_ids } : {}),
         };
@@ -1118,6 +1135,16 @@ export default function IntegratedPortal() {
 
   const selectedCalendarSchedules = getCalendarSchedulesForDate(selectedCalendarDate);
   const selectedCalendarHolidayNames = koreanHolidays[selectedCalendarDate] ?? [];
+  const notificationControl = team.available ? <PortalNotifications
+    items={team.notifications}
+    loading={team.notificationLoading}
+    error={team.notificationError}
+    onOpenChange={(open) => { if (open) void team.refreshNotifications(); }}
+    onMarkRead={(id) => team.markRead([id])}
+    onMarkAllRead={() => team.markRead(null)}
+    onSelect={(notification) => void openTeamNotification(notification)}
+    onRetry={() => void team.refreshNotifications()}
+  /> : undefined;
 
   if (!isMounted) return null;
 
@@ -1195,8 +1222,9 @@ export default function IntegratedPortal() {
           isChatOpen={isChatOpen}
           hasUnread={hasUnread}
           hasNewSchedule={hasNewSchedule}
+          notificationControl={notificationControl}
         />
-        <PortalMobileActions view={viewMode} onView={setViewMode} onChat={() => setIsChatOpen(true)} onSearch={() => setIsCommandPaletteOpen(true)} onQuickAdd={() => setIsQuickScheduleOpen(true)} onKiosk={openKioskWindow} onHistory={() => void openActivityHistory()} onDevices={() => setIsDeviceManagerOpen(true)} onCleanup={() => setIsYearlyCleanupOpen(true)} onExit={handlePortalExit} isAdmin={isDeviceAdmin} />
+        <PortalMobileActions view={viewMode} onView={setViewMode} onChat={() => setIsChatOpen(true)} onSearch={() => setIsCommandPaletteOpen(true)} onQuickAdd={() => setIsQuickScheduleOpen(true)} onKiosk={openKioskWindow} onHistory={() => void openActivityHistory()} onDevices={() => setIsDeviceManagerOpen(true)} onCleanup={() => setIsYearlyCleanupOpen(true)} onExit={handlePortalExit} isAdmin={isDeviceAdmin} notificationControl={notificationControl} />
       </header>
 
       {uploadItems.length > 0 && <DocumentUploadStatus items={uploadItems} onRetry={(ids) => void runUploads(uploadItems.filter((item) => ids.includes(item.id) && item.status === 'failed'))} onDismiss={() => { if (uploadBusyRef.current) return; uploadRunner.forget(uploadItems.map((item) => item.id)); setUploadItems([]); }} />}
@@ -1298,11 +1326,11 @@ export default function IntegratedPortal() {
             {(viewMode === 'dashboard' || viewMode === 'calendar') && <div className="mb-2 flex shrink-0 items-center justify-between gap-1 rounded-xl border border-slate-200 bg-slate-50 px-2 py-1" data-schedule-scope>
               <div className="flex items-center gap-1" aria-label="일정 표시 범위">
                 <button aria-pressed={!showMySchedules} onClick={() => setShowMySchedules(false)} className={`min-h-8 whitespace-nowrap rounded-lg px-2 text-xs font-bold ${!showMySchedules ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-200'}`}>전체 일정</button>
-                <button aria-pressed={showMySchedules} disabled={!metadataAvailable || !myScheduleName.trim()} onClick={() => setShowMySchedules(true)} className={`min-h-8 whitespace-nowrap rounded-lg px-2 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-50 ${showMySchedules ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-200'}`}>내 일정만</button>
+                <button aria-pressed={showMySchedules} disabled={!metadataAvailable || !effectiveScheduleName.trim()} onClick={() => setShowMySchedules(true)} className={`min-h-8 whitespace-nowrap rounded-lg px-2 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-50 ${showMySchedules ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-200'}`}>내 일정만</button>
               </div>
-              <label className="flex min-w-0 items-center gap-1 whitespace-nowrap text-xs font-bold text-slate-600">내 이름
+              {team.available && team.member ? <span aria-label="내 팀원 프로필" title={`@${team.member.handle}`} className="min-w-0 truncate rounded-lg px-2 py-1 text-xs font-semibold text-slate-600">{team.member.display_name}<span className="ml-1 hidden text-slate-400 sm:inline">@{team.member.handle}</span></span> : <label className="flex min-w-0 items-center gap-1 whitespace-nowrap text-xs font-bold text-slate-600">내 이름
                 <input aria-label="내 일정 기준 이름" title="담당자 또는 참석자에 이 이름이 있는 일정만 표시합니다. 접근 권한 설정이 아닙니다." list="portal-schedule-people" maxLength={100} disabled={!metadataAvailable} value={myScheduleName} onChange={(event) => { setMyScheduleName(event.target.value); if (!event.target.value.trim()) setShowMySchedules(false); try { localStorage.setItem('portal-schedule-person', event.target.value); } catch { /* Optional preference only. */ } }} placeholder="이름" className="min-h-8 w-20 rounded-lg border border-slate-300 bg-white px-2 text-sm text-slate-900 disabled:bg-slate-100 sm:w-28" />
-              </label>
+              </label>}
               <datalist id="portal-schedule-people">{schedulePeople.map((name) => <option key={name} value={name} />)}</datalist>
             </div>}
             {scheduleLoadError && <div role="alert" className="mb-2 flex shrink-0 items-center justify-between gap-2 rounded-xl bg-amber-50 p-3 text-xs text-amber-900"><span>{scheduleLoadError}</span><button onClick={() => void fetchSchedules()} className="shrink-0 rounded-lg bg-white px-3 py-2 font-bold">다시 시도</button></div>}
@@ -1573,7 +1601,7 @@ export default function IntegratedPortal() {
         </section>
       </main>
 
-      {isWeeklyPrintOpen && <WeeklySchedulePrint schedules={visibleSchedules} initialStartDate={todayStr} scopeLabel={showMySchedules ? `${myScheduleName} 님의 일정` : '팀 전체 일정'} onClose={() => setIsWeeklyPrintOpen(false)} />}
+      {isWeeklyPrintOpen && <WeeklySchedulePrint schedules={visibleSchedules} initialStartDate={todayStr} scopeLabel={showMySchedules ? `${effectiveScheduleName} 님의 일정` : '팀 전체 일정'} onClose={() => setIsWeeklyPrintOpen(false)} />}
       <DocumentPreviewModal file={previewFile} onClose={() => setPreviewFile(null)} onDownload={(file) => void handleDownload(file.url, file.name)} />
 
       {isWhiteboardImportOpen && (
@@ -1651,6 +1679,10 @@ export default function IntegratedPortal() {
           availableFiles={files}
           people={schedulePeople}
           metadataAvailable={metadataAvailable}
+          teamMembers={team.members}
+          teamMembersAvailable={team.available}
+          teamMembersLoading={team.loading}
+          teamMembersError={team.error}
           onClose={() => { setScheduleFormDate(null); setEditingSchedule(null); setIsCopyingSchedule(false); setRecurrenceScope('this'); }}
           onSubmit={onSaveSchedule}
         />
@@ -1725,13 +1757,17 @@ export default function IntegratedPortal() {
         </div>
       )}
 
-      {isChatOpen && (
-        <div ref={chatRef} style={typeof window !== 'undefined' && window.innerWidth > 768 ? { transform: `translate(${position.x}px, ${position.y}px)` } : {}} className="fixed bottom-0 md:bottom-10 right-0 md:right-10 w-full md:w-[420px] h-[80vh] md:h-[650px] bg-[#A9C7E3] rounded-t-[32px] md:rounded-[40px] shadow-2xl border-x-4 border-t-4 md:border-4 border-white flex flex-col z-[100]">
-          <div onMouseDown={onMouseDownChat} className="p-5 md:p-6 bg-white/95 backdrop-blur-md flex justify-between items-center cursor-move border-b border-black/5 rounded-t-[28px] md:rounded-t-[36px] text-slate-900"><span className="font-black text-sm">🗨️ 정보공유방</span><button onClick={() => setIsChatOpen(false)} className="w-9 h-9 bg-slate-100 hover:bg-red-500 hover:text-white rounded-full flex items-center justify-center font-bold transition-all">✕</button></div>
-          <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">{messages.map((m) => (<div key={m.id} className={`flex ${m.sender_id === myId ? 'flex-row-reverse' : 'flex-row'} items-end gap-2 group`}><button onClick={() => onDeleteMessage(m.id)} className="opacity-0 group-hover:opacity-100 w-7 h-7 bg-white/80 rounded-full text-red-600 font-black text-[11px] flex items-center justify-center transition-all">X</button><div className={`p-4 shadow-xl ${m.sender_id === myId ? 'bg-[#FEE500] rounded-[24px] rounded-tr-none' : 'bg-white rounded-[24px] rounded-tl-none'} max-w-[80%]`}> <p className="text-[15px] text-black font-extrabold whitespace-pre-wrap leading-snug">{m.content}</p></div><span className="text-[10px] font-black text-slate-700 mb-1 leading-none">{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>))} <div ref={scrollRef} /></div>
-          <form onSubmit={onSend} className="p-4 md:p-6 bg-white md:rounded-b-[36px] border-t-2 border-slate-50"><div className="flex gap-3"><input className="flex-1 bg-slate-100 p-4 rounded-2xl text-sm font-bold text-slate-900 outline-none focus:ring-4 focus:ring-yellow-400 transition-all" value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="메시지 입력..." /><button className="bg-[#FEE500] hover:bg-[#F9E000] px-6 py-4 rounded-2xl font-black text-sm shadow-lg active:scale-95 transition-all text-slate-900">전송</button></div></form>
-        </div>
-      )}
+      {isChatOpen && <TeamChatPanel
+        messages={messages}
+        members={team.members}
+        currentUserId={myId}
+        currentMemberId={team.member?.id}
+        canMention={team.available}
+        focusedMessageId={focusedMessageId}
+        onSend={onSendTeamMessage}
+        onDelete={onDeleteMessage}
+        onClose={() => { setIsChatOpen(false); setFocusedMessageId(null); }}
+      />}
 
       <UndoToast notices={undoNotices} onUndo={undoDeletion} onDismiss={dismissUndoNotice} />
 

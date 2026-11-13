@@ -3,7 +3,9 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { AlertTriangle, Bell, CalendarPlus, CalendarRange, Check, ChevronDown, Clock3, FileText, ListChecks, MapPin, Paperclip, RotateCcw, Search, Siren, Users, X } from 'lucide-react';
 import DirectTimeInput from '@/app/components/direct-time-input';
+import TeamMemberPicker, { type TeamMember } from '@/app/components/team-member-picker';
 import { scheduleCategoryStyles } from '@/lib/schedule-category';
+import { getLegacyAttendeeText, getScheduleAttendeeNames, normalizeAttendeeMemberIds } from '@/lib/schedule-team-attendees';
 
 export type ScheduleType = 'meeting' | 'business_trip' | 'internal' | 'leave' | 'unclassified';
 export type AbsenceType = 'annual' | 'early' | 'outing';
@@ -22,6 +24,7 @@ export interface NewScheduleInput {
   absence_type: AbsenceType;
   owner_name?: string | null;
   attendee_names?: string[];
+  attendee_member_ids?: string[];
   location?: string | null;
   linked_file_ids?: number[];
 }
@@ -42,11 +45,16 @@ interface ScheduleFormModalProps {
   availableFiles?: Array<{ id: number; name: string; category?: string | null }>;
   people?: string[];
   metadataAvailable?: boolean;
+  teamMembers?: TeamMember[];
+  teamMembersAvailable?: boolean;
+  teamMembersLoading?: boolean;
+  teamMembersError?: string | null;
   onClose: () => void;
   onSubmit: (schedules: NewScheduleInput[], recurrence?: ScheduleRecurrenceSubmission) => Promise<void>;
 }
 
 interface ScheduleDraft extends NewScheduleInput {
+  legacy_attendee_names?: string[];
   dateMode: DateMode;
   timeMode: TimeMode;
   recurrenceMode: RecurrenceMode;
@@ -148,7 +156,7 @@ const removeStoredDraft = (key: string) => {
 
 const fieldClassName = 'w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-base font-medium text-slate-900 outline-none transition-colors placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-500 sm:text-sm';
 
-export default function ScheduleFormModal({ date, initialSchedule, existingSchedules = [], copyMode = false, availableFiles = [], people = [], metadataAvailable = true, onClose, onSubmit }: ScheduleFormModalProps) {
+export default function ScheduleFormModal({ date, initialSchedule, existingSchedules = [], copyMode = false, availableFiles = [], people = [], metadataAvailable = true, teamMembers = [], teamMembersAvailable = false, teamMembersLoading = false, teamMembersError = null, onClose, onSubmit }: ScheduleFormModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const formId = useId();
@@ -171,16 +179,21 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
   const [absenceType, setAbsenceType] = useState<AbsenceType>(normalizeAbsenceType(initialSchedule?.absence_type));
   const [ownerName, setOwnerName] = useState(initialSchedule?.owner_name ?? '');
   const [attendees, setAttendees] = useState(initialSchedule?.attendee_names?.join(', ') ?? '');
+  const [attendeeMemberIds, setAttendeeMemberIds] = useState(() => normalizeAttendeeMemberIds(initialSchedule?.attendee_member_ids));
+  const [attendeeBaselineIds, setAttendeeBaselineIds] = useState(() => normalizeAttendeeMemberIds(initialSchedule?.attendee_member_ids));
   const [location, setLocation] = useState(initialSchedule?.location ?? '');
   const [linkedFileIds, setLinkedFileIds] = useState(() => normalizeFileIds(initialSchedule?.linked_file_ids));
   const [fileSearch, setFileSearch] = useState('');
-  const [detailsOpen, setDetailsOpen] = useState(Boolean(initialSchedule?.owner_name || initialSchedule?.attendee_names?.length || initialSchedule?.location || initialSchedule?.linked_file_ids?.length));
+  const [detailsOpen, setDetailsOpen] = useState(Boolean(initialSchedule?.owner_name || initialSchedule?.attendee_names?.length || initialSchedule?.attendee_member_ids?.length || initialSchedule?.location || initialSchedule?.linked_file_ids?.length));
   const [recurrenceMode, setRecurrenceMode] = useState<RecurrenceMode>('none');
   const [monthlyWeek, setMonthlyWeek] = useState<MonthlyWeek>('first');
   const [error, setError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [savedDraft, setSavedDraft] = useState<ScheduleDraft | null>(null);
   const draftStorageKey = `schedule-draft:${date}`;
+  // Keep original linked-name snapshots out of the editable legacy input, even
+  // after a selected ID is removed or the team list arrives asynchronously.
+  const legacyAttendeeText = teamMembersAvailable ? getLegacyAttendeeText(attendees, attendeeBaselineIds, teamMembers) : attendees;
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -227,7 +240,9 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
       schedule_type: scheduleType,
       absence_type: absenceType,
       owner_name: ownerName.trim() || null,
-      attendee_names: normalizeAttendees(attendees),
+      attendee_names: getScheduleAttendeeNames(legacyAttendeeText, attendeeMemberIds, teamMembers),
+      attendee_member_ids: attendeeMemberIds,
+      ...(teamMembersAvailable ? { legacy_attendee_names: normalizeAttendees(legacyAttendeeText) } : {}),
       location: location.trim() || null,
       linked_file_ids: linkedFileIds,
       dateMode,
@@ -240,7 +255,7 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
     } catch {
       // Draft storage must never prevent the user from saving the schedule.
     }
-  }, [absenceType, attendees, dateMode, dateValue, draftStorageKey, endDateValue, endTime, initialSchedule, isNotice, isTodo, isUrgent, linkedFileIds, location, monthlyWeek, ownerName, recurrenceMode, scheduleType, startTime, timeMode, title]);
+  }, [absenceType, attendeeMemberIds, dateMode, dateValue, draftStorageKey, endDateValue, endTime, initialSchedule, isNotice, isTodo, isUrgent, legacyAttendeeText, linkedFileIds, location, monthlyWeek, ownerName, recurrenceMode, scheduleType, startTime, teamMembers, teamMembersAvailable, timeMode, title]);
 
   const conflicts = (() => {
     const currentEndDate = dateMode === 'range' ? endDateValue : dateValue;
@@ -272,10 +287,12 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
     setScheduleType(savedDraft.schedule_type);
     setAbsenceType(normalizeAbsenceType(savedDraft.absence_type));
     setOwnerName(savedDraft.owner_name ?? '');
-    setAttendees(savedDraft.attendee_names?.join(', ') ?? '');
+    setAttendees((savedDraft.legacy_attendee_names ?? savedDraft.attendee_names)?.join(', ') ?? '');
+    setAttendeeMemberIds(normalizeAttendeeMemberIds(savedDraft.attendee_member_ids));
+    setAttendeeBaselineIds(savedDraft.legacy_attendee_names ? [] : normalizeAttendeeMemberIds(savedDraft.attendee_member_ids));
     setLocation(savedDraft.location ?? '');
     setLinkedFileIds(normalizeFileIds(savedDraft.linked_file_ids));
-    setDetailsOpen(Boolean(savedDraft.owner_name || savedDraft.attendee_names?.length || savedDraft.location || savedDraft.linked_file_ids?.length));
+    setDetailsOpen(Boolean(savedDraft.owner_name || savedDraft.attendee_names?.length || savedDraft.attendee_member_ids?.length || savedDraft.location || savedDraft.linked_file_ids?.length));
     setRecurrenceMode(savedDraft.recurrenceMode ?? 'none');
     setMonthlyWeek(savedDraft.monthlyWeek ?? 'first');
     setSavedDraft(null);
@@ -312,9 +329,10 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
         is_todo: isTodo,
         schedule_type: scheduleType,
         absence_type: absenceType,
+        ...(teamMembersAvailable ? { attendee_member_ids: attendeeMemberIds } : {}),
         ...(metadataAvailable ? {
           owner_name: ownerName.trim() || null,
-          attendee_names: normalizeAttendees(attendees),
+          attendee_names: teamMembersAvailable ? getScheduleAttendeeNames(legacyAttendeeText, attendeeMemberIds, teamMembers) : normalizeAttendees(attendees),
           location: location.trim() || null,
           linked_file_ids: linkedFileIds,
         } : {}),
@@ -340,7 +358,7 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
     }
   };
 
-  const attendeeNames = normalizeAttendees(attendees);
+  const attendeeNames = normalizeAttendees(legacyAttendeeText);
   const selectedFiles = linkedFileIds.map((id) => availableFiles.find((file) => file.id === id) ?? { id, name: '문서 #' + id + ' (현재 목록에서 확인할 수 없음)' });
   const filteredFiles = availableFiles.filter((file) => [file.name, file.category].filter(Boolean).join(' ').toLocaleLowerCase().includes(fileSearch.trim().toLocaleLowerCase()));
   const personSuggestions = [...new Set(people.map((person) => person.trim()).filter(Boolean))];
@@ -513,8 +531,9 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
                 </div>
                 <datalist id={formId + '-people'}>{personSuggestions.map((name) => <option key={name} value={name} />)}</datalist>
                 <div>
-                  <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-700">참석자</span><input value={attendees} maxLength={2000} onChange={(event) => setAttendees(event.target.value)} onBlur={() => setAttendees(normalizeAttendees(attendees).join(', '))} aria-describedby={formId + '-attendees-help'} placeholder="예: 김민수, 이지영" className={fieldClassName} /></label>
-                  <p id={formId + '-attendees-help'} className="mt-1.5 text-xs leading-relaxed text-slate-500">여러 명은 쉼표로 구분하세요. 중복된 이름은 한 번만 저장합니다.</p>
+                  {(teamMembersAvailable || teamMembersLoading || teamMembersError) && <TeamMemberPicker members={teamMembers} selectedIds={attendeeMemberIds} onChange={setAttendeeMemberIds} label="참석 팀원" loading={teamMembersLoading} error={teamMembersError} unavailable={!teamMembersAvailable && !teamMembersLoading && !teamMembersError} disabled={isSaving || !metadataAvailable} className="mb-3" />}
+                  <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-700">참석자</span><input value={legacyAttendeeText} maxLength={2000} onChange={(event) => setAttendees(event.target.value)} onBlur={() => setAttendees(normalizeAttendees(legacyAttendeeText).join(', '))} aria-describedby={formId + '-attendees-help'} placeholder="예: 김민수, 이지영" className={fieldClassName} /></label>
+                  <p id={formId + '-attendees-help'} className="mt-1.5 text-xs leading-relaxed text-slate-500">{teamMembersAvailable ? '직접 입력 이름은 기존 기록으로만 저장되며 개인 알림을 보내지 않습니다. 여러 명은 쉼표로 구분하세요.' : '여러 명은 쉼표로 구분하세요. 중복된 이름은 한 번만 저장합니다.'}</p>
                   {personSuggestions.some((name) => !attendeeNames.includes(name)) && <div className="mt-2 flex flex-wrap gap-1.5" aria-label="참석자 빠른 추가">{personSuggestions.filter((name) => !attendeeNames.includes(name)).slice(0, 8).map((name) => <button key={name} type="button" onClick={() => setAttendees([...attendeeNames, name].join(', '))} className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-600 hover:border-blue-300 hover:text-blue-700">+ {name}</button>)}</div>}
                 </div>
                 <div>

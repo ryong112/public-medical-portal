@@ -91,6 +91,16 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 - `F8`은 전광판 또는 PiP 창에 포커스가 있을 때만 동작하며 Windows 전역 단축키가 아닙니다. 브라우저는 OS 창을 자동 최소화하거나 PiP 위치를 강제로 정할 수 없습니다. 접힌 전용 창은 작은 상태로 남고, PiP는 사용자가 편한 위치로 옮깁니다. 전광판 창을 닫으면 PiP도 함께 닫힙니다.
 - 구형 실행기의 명시적 `/kiosk?launcher=1` 링크는 호환만 유지합니다. 홈페이지의 새 전광판 실행에서는 사용하지 않습니다. 이미 실행 중인 구형 실행기를 이 사이트가 종료하지는 않습니다.
 
+### 팀원 ID와 개인 알림 (2026-11-13)
+
+- 새 DB 변경은 `supabase/migrations/20261113_team_identity_notifications.sql` 하나입니다. 기존 SQL 전체를 다시 실행하거나 일정을 삭제하지 않습니다. 신규 테이블·열·함수·승인 연동 트리거를 하나의 트랜잭션으로 적용합니다.
+- 승인된 일반 기기에 팀원 UUID·표시 이름·고유 `@아이디`를 연결합니다. 표시 이름의 끝에 붙은 명시적인 사내PC·병원PC 표시는 정리하며, 같은 이름이라고 자동으로 동일인으로 합치지 않습니다. 관리자와 명시적인 전광판 연결 프로필은 별도 팀원으로 만들지 않습니다.
+- 이후 일반 기기를 승인하면 자동 등록됩니다. 차단·관리자 전환은 명부·개인 알림 접근에 즉시 반영되며 기존 ID·기록은 삭제하지 않습니다. 관리자는 기기·팀원 관리에서 표시 이름을 수정하거나 같은 사람의 다른 기기를 명시적으로 연결할 수 있습니다. 연결만으로 과거 대화·일정·알림의 소유 기록을 다른 사람에게 이전하지 않습니다.
+- 참석자는 이름이 아닌 선택한 팀원 ID로 연결하고, 지정·주요 일정 변경 시 해당 팀원의 사이트 알림함에 전달합니다. 기존 자유 입력 참석자 이름은 유지하되 이름 일치만으로 알림 대상으로 자동 변환하지 않습니다. 본인 ID가 연결된 기기에서는 `내 일정만`도 ID 기준으로 확인합니다.
+- 공유방은 기존 메시지를 보존합니다. `@` 입력 후 목록에서 선택한 고유 아이디에만 알림을 보내며, 같은 이름·이메일·단순 문자열만으로 받는 사람을 추정하지 않습니다. 작성자·날짜와 전송 상태를 표시하고 실패한 입력은 유지합니다. 신규 작성자 정보는 서버의 승인 기기에서 결정하며 클라이언트가 위조할 수 없습니다.
+- 개인 알림은 본인에게만 조회·읽음 처리 권한이 있습니다. 사이트 내 알림이며 EXE·CMD·브라우저 알림 권한을 요구하지 않습니다. 미접속 중 알림은 서버에 보관하고 사이트에 다시 접속하면 확인합니다. 전용 개인 로그인이 아니라 승인된 브라우저의 연결 기준이므로 공용 PC의 알림 노출에 주의합니다.
+- 새 SQL이 아직 적용되지 않은 환경에서는 기존 일정 입력·채팅을 유지합니다. 기존 기기 승인 RLS, 문서·일정 공유 범위는 확대하지 않습니다. 게시글·댓글형 공유방으로의 전환은 이번 변경에 포함하지 않습니다.
+
 ### 로컬 검증
 
 ```powershell
@@ -98,9 +108,12 @@ npm run test:schedules
 npm run test:whiteboard
 npm run test:documents
 npm run test:kiosk
+npm run test:team
 npx tsc --noEmit
 npm run build
 ```
+
+`test:team`의 실제 SQL 권한 테스트는 별도 임시 PGlite 런타임을 `PGLITE_MODULE`로 지정하면 실행됩니다. 지정하지 않으면 해당 SQL 실행 테스트만 건너뛰고 나머지 팀원 단위 테스트를 실행합니다. 설치·실행 예시는 `tests/team-identity-sql.test.cjs` 상단에 있습니다. 테스트 SQL은 운영 DB에 실행하지 않습니다.
 
 브라우저 회귀 테스트는 로컬 개발 서버와 `PLAYWRIGHT_MODULE`이 필요합니다. 모든 데이터 요청은 모의 응답으로 처리하며 실제 일정/문서에는 쓰지 않습니다.
 
@@ -110,6 +123,8 @@ node tests/dashboard-workflow.browser.cjs
 node tests/document-tools.browser.cjs
 node tests/sidebar-category.browser.cjs
 node tests/portal-header.browser.cjs
+node tests/team-identity.browser.cjs
+node tests/team-chat.browser.cjs
 node tests/schedule-category.browser.cjs
 node tests/kiosk-board.browser.cjs
 node tests/kiosk-window.browser.cjs

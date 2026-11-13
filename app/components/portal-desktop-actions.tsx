@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import {
   ArrowUpRight,
   CalendarDays,
@@ -34,6 +34,7 @@ export interface PortalDesktopActionsProps {
   isChatOpen: boolean;
   hasUnread: boolean;
   hasNewSchedule: boolean;
+  notificationControl?: ReactNode;
 }
 
 const focusClass = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-300';
@@ -148,6 +149,7 @@ export default function PortalDesktopActions(props: PortalDesktopActionsProps) {
       </nav>
 
       <div className="flex items-center gap-0.5 rounded-xl border border-white/[0.08] bg-black/10 p-0.5" role="group" aria-label="포털 도구">
+        {props.notificationControl}
         <button type="button" onClick={props.onSearch} aria-label="통합 검색" title="통합 검색 · Ctrl+K" className={utilityClass}>
           <Search size={16} aria-hidden="true" />
         </button>

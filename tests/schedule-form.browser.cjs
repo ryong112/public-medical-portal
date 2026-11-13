@@ -45,6 +45,9 @@ assert.ok(['127.0.0.1', 'localhost'].includes(new URL(baseUrl).hostname));
       return reply({ access_token: token, refresh_token: 'local-refresh', token_type: 'bearer', expires_in: 3600, expires_at: 2100000000, user: { id: userId, aud: 'authenticated', role: 'authenticated', is_anonymous: true, created_at: '2026-11-01T00:00:00Z' } });
     }
     if (url.pathname.endsWith('/get_device_access_status')) return reply({ status: 'approved', user_id: userId, is_admin: false });
+    // This regression intentionally covers the legacy/name-based metadata path.
+    // New read-only capability RPCs must not be counted as schedule mutations.
+    if (['list_team_members', 'get_my_team_member', 'list_my_team_notifications'].some((rpc) => url.pathname.endsWith('/' + rpc))) return route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ code: 'PGRST202', message: 'Team identity capability unavailable in legacy fixture' }) });
     if (url.pathname.startsWith('/rest/v1/')) {
       const table = url.pathname.split('/').at(-1);
       if (largeDuplicateMode && table === 'schedules' && request.method() === 'GET' && url.searchParams.get('select') === duplicateSelect) {
