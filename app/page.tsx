@@ -18,18 +18,20 @@ import { attachRecurrenceMetadata, createRecurrenceGroupId, isRecurringSchedule,
 import { getScheduleCategory, scheduleCategoryOrder, scheduleCategoryStyles } from '@/lib/schedule-category';
 import { findDuplicateSchedules, getSchedulePeople, scheduleMatchesPerson, type WorkflowSchedule } from '@/lib/schedule-workflow';
 import PortalMobileActions from '@/app/components/portal-mobile-actions';
+import PortalDesktopActions from '@/app/components/portal-desktop-actions';
 import WeeklySchedulePrint from '@/app/components/weekly-schedule-print';
 import DocumentLibrary, { type DocumentFile } from '@/app/components/document-library';
 import DocumentPreviewModal from '@/app/components/document-preview-modal';
 import DocumentUploadStatus from '@/app/components/document-upload-status';
+import CategoryActions from '@/app/components/category-actions';
 import { createDocumentUploads, createDocumentUploadRunner, type UploadItem } from '@/lib/document-upload';
 import { getRequiredHolidayYears, mergeHolidayYear, type KoreanHoliday } from '@/lib/korean-holidays';
 import JSZip from 'jszip';
 import { 
   FilePlus,
-  FileSpreadsheet, FileBox, Download, Trash2,
-  GripVertical, Calendar as CalendarIcon, LayoutDashboard, Plus,
-  ChevronLeft, ChevronRight, X, Clock, CalendarDays, Archive, Menu, Siren, Pencil, ScanLine, ShieldCheck, Search, History, Copy, MonitorPlay, Zap, FolderSync, ExternalLink
+  Trash2,
+  GripVertical, LayoutDashboard, Plus,
+  ChevronLeft, ChevronRight, X, Clock, CalendarDays, Archive, Menu, Siren, Pencil, ScanLine, Copy, ExternalLink
 } from 'lucide-react';
 
 type PortalSchedule = NewScheduleInput & Partial<RecurrenceOccurrenceFields> & { id: number };
@@ -800,14 +802,27 @@ export default function IntegratedPortal() {
     if (error || !data?.length) throw new Error(error?.message ?? '문서가 삭제되었거나 수정할 수 없습니다.');
     await fetchFiles();
   };
-  const onUpdateCategoryName = async () => { 
-    const targetCat = categories.find(c => c.name === selectedCategory); if (!targetCat || !editTitleValue.trim()) return;
-    const nextName = editTitleValue.trim();
+  const renameCategory = async (id: number, value: string) => {
+    const targetCat = categories.find((category) => category.id === id);
+    if (!targetCat) throw new Error('분류가 삭제되었거나 더 이상 존재하지 않습니다.');
+    const nextName = value.trim();
+    if (!nextName || nextName.length > 200 || /[\x00-\x1f]/u.test(nextName)) throw new Error('분류 이름은 1~200자로 입력해 주세요.');
+    if (nextName === '전체') throw new Error('‘전체’는 전체 문서 보기에서 사용하는 이름입니다. 다른 이름을 입력해 주세요.');
+    if (targetCat.name === nextName) return;
+    if (categories.some((category) => category.id !== id && category.name.trim().toLocaleLowerCase('ko-KR') === nextName.toLocaleLowerCase('ko-KR'))) throw new Error('같은 이름의 분류가 이미 있습니다.');
     const { error } = await supabase.rpc('rename_category_with_files', { p_old_name: targetCat.name, p_new_name: nextName });
-    if (error) return alert(`분류 이름을 변경하지 못했습니다: ${error.message}`);
-    setSelectedCategory(nextName);
-    setIsEditingTitle(false);
+    if (error) throw new Error(`분류 이름을 변경하지 못했습니다: ${error.message}`);
+    setSelectedCategory((current) => current === targetCat.name ? nextName : current);
+    setCategories((current) => current.map((category) => category.id === id ? { ...category, name: nextName } : category));
+    setFiles((current) => current.map((file) => file.category === targetCat.name ? { ...file, category: nextName } : file));
     await Promise.all([fetchCategories(), fetchFiles()]);
+  };
+
+  const onUpdateCategoryName = async () => {
+    const targetCat = categories.find((category) => category.name === selectedCategory);
+    if (!targetCat) return;
+    try { await renameCategory(targetCat.id, editTitleValue); setIsEditingTitle(false); }
+    catch (error) { alert(error instanceof Error ? error.message : '분류 이름을 변경하지 못했습니다.'); }
   };
 
   const onAddSchedule = (dateStr: string) => {
@@ -1127,14 +1142,14 @@ export default function IntegratedPortal() {
         {/* [신규 기능 연동] 빨간색 테두리 빈 영역 채우기 - 공지사항 롤링 전광판 플레이스 */}
         {/* ===================================================================== */}
         <div 
-          className="relative mx-4 hidden h-10 max-w-md flex-1 cursor-pointer items-center overflow-visible rounded-xl border border-white/10 bg-white/5 px-4 text-xs font-bold transition-colors hover:bg-white/10 2xl:flex"
+          className={`relative mx-4 hidden h-10 max-w-md flex-1 cursor-pointer items-center overflow-visible rounded-xl border border-white/10 bg-white/5 px-4 text-xs font-bold transition-colors hover:bg-white/10 ${activeNotices.length > 0 ? '2xl:flex' : ''}`}
           onMouseEnter={() => setIsNoticeHovered(true)}
           onMouseLeave={() => setIsNoticeHovered(false)}
         >
           {activeNotices.length > 0 ? (
             <>
               <div className="flex items-center justify-between w-full h-full gap-2 animate-in fade-in duration-300">
-                <span className="bg-red-500/20 text-red-400 px-2 py-0.5 rounded text-[10px] font-black shrink-0 animate-pulse">공지사항</span>
+                <span className="bg-red-500/15 text-red-300 px-2 py-0.5 rounded text-[10px] font-bold shrink-0">공지사항</span>
                 <span className="truncate flex-1 text-slate-200">{formatScheduleTitle(activeNotices[noticeIndex])}</span>
                 <span className="text-yellow-400 font-black shrink-0 ml-2">{getScheduleDDay(activeNotices[noticeIndex])}</span>
               </div>
@@ -1165,66 +1180,22 @@ export default function IntegratedPortal() {
         </div>
         {/* ===================================================================== */}
 
-        <div className="hidden shrink-0 items-center gap-3 xl:flex">
-          <a 
-            href="https://docs.google.com/spreadsheets/d/1yz_fMbsVe0__VJWe6F0ObbrV2jvnRotqi03-mrnnZUc/edit?usp=sharing" 
-            target="_blank" 
-            rel="noopener noreferrer"
-            className="flex shrink-0 items-center gap-1.5 rounded-xl bg-emerald-500 px-2.5 py-2 text-xs font-black text-white shadow-md transition-all hover:bg-emerald-600 active:scale-95 sm:px-3 xl:gap-2 xl:rounded-2xl xl:px-5 xl:py-2.5 xl:text-sm"
-          >
-            <FileBox size={16} className="xl:h-[18px] xl:w-[18px]"/> <span className="hidden xl:inline">홍보물품 반출대장</span>
-          </a>
-
-          <a 
-            href="https://docs.google.com/spreadsheets/d/1lDD-otVP5s7h-94deku3hLRF4buztn0lO0MBqzNN17M/edit?usp=sharing" 
-            target="_blank" 
-            rel="noopener noreferrer"
-            className="flex shrink-0 items-center gap-1.5 rounded-xl bg-emerald-500 px-2.5 py-2 text-xs font-black text-white shadow-md transition-all hover:bg-emerald-600 active:scale-95 sm:px-3 xl:gap-2 xl:rounded-2xl xl:px-5 xl:py-2.5 xl:text-sm"
-          >
-            <FileSpreadsheet size={16} className="xl:h-[18px] xl:w-[18px]"/> <span className="hidden xl:inline">실적공유</span>
-          </a>
-
-          <button 
-            onClick={() => setViewMode(viewMode === 'external_calendar' ? 'dashboard' : 'external_calendar')} 
-            className="flex shrink-0 items-center gap-1.5 rounded-xl bg-indigo-500 px-2.5 py-2 text-xs font-black text-white shadow-md transition-all hover:bg-indigo-600 active:scale-95 sm:px-3 xl:gap-2 xl:rounded-2xl xl:px-5 xl:py-2.5 xl:text-sm"
-          >
-            {viewMode === 'external_calendar' ? <LayoutDashboard size={16} className="xl:h-[18px] xl:w-[18px]"/> : <CalendarDays size={16} className="xl:h-[18px] xl:w-[18px]"/>} <span className="hidden xl:inline">{viewMode === 'external_calendar' ? '홈' : '손)일정확인'}</span>
-          </button>
-          <button 
-            onClick={() => setViewMode(viewMode === 'calendar' ? 'dashboard' : 'calendar')} 
-            className="relative flex shrink-0 items-center gap-1.5 rounded-xl bg-white px-2.5 py-2 text-xs font-black text-slate-900 shadow-md transition-all active:scale-95 sm:px-3 xl:gap-2 xl:rounded-2xl xl:px-5 xl:py-2.5 xl:text-sm"
-          >
-            {viewMode === 'calendar' ? <LayoutDashboard size={16} className="xl:h-[18px] xl:w-[18px]"/> : <CalendarIcon size={16} className="xl:h-[18px] xl:w-[18px]"/>} <span className="hidden xl:inline">{viewMode === 'calendar' ? '홈' : '일정 공유'}</span>
-            {hasNewSchedule && viewMode !== 'calendar' && <span className="absolute -top-1 -right-1 w-3 h-3 md:w-4 md:h-4 bg-red-500 rounded-full border-2 border-[#1A1C1E] animate-bounce"></span>}
-          </button>
-
-          <button 
-            onClick={() => setIsChatOpen(!isChatOpen)} 
-            className="relative flex shrink-0 items-center gap-1.5 rounded-xl bg-[#3498DB] px-2.5 py-2 text-xs font-black text-white shadow-md transition-all hover:bg-[#2980B9] active:scale-95 sm:px-3 xl:gap-2 xl:rounded-2xl xl:px-5 xl:py-2.5 xl:text-sm"
-          >
-            <span>💬 <span className="hidden xl:inline">정보공유방</span></span>
-            {hasUnread && !isChatOpen && <span className="absolute -top-1 -right-1 w-3 h-3 md:w-4 md:h-4 bg-red-500 rounded-full border-2 border-[#1A1C1E] animate-bounce"></span>}
-          </button>
-
-          <button onClick={() => setIsCommandPaletteOpen(true)} aria-label="통합 검색" title="통합 검색 · Ctrl+K" className="flex shrink-0 items-center gap-1.5 rounded-xl p-2 text-slate-300 transition-colors hover:bg-white/10 hover:text-white xl:px-3">
-            <Search size={18} /><span className="hidden 2xl:inline text-xs font-black">검색</span>
-          </button>
-          <button onClick={() => setIsQuickScheduleOpen(true)} aria-label="빠른 일정 입력" className="group relative shrink-0 rounded-xl p-2 text-amber-300 transition-colors hover:bg-white/10 hover:text-white">
-            <Zap size={18} />
-            <span className="pointer-events-none absolute left-1/2 top-full z-[120] mt-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-bold text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 xl:block">빠른 일정 입력</span>
-          </button>
-          {isDeviceAdmin && <button onClick={() => void openActivityHistory()} aria-label="변경 이력" className="group relative shrink-0 rounded-xl p-2 text-slate-300 transition-colors hover:bg-white/10 hover:text-white">
-            <History size={18} />
-            <span className="pointer-events-none absolute left-1/2 top-full z-[120] mt-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-bold text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 xl:block">변경 이력</span>
-          </button>}
-          <button onClick={openKioskWindow} aria-label="전광판 모드" className="group relative shrink-0 rounded-xl p-2 text-slate-300 transition-colors hover:bg-white/10 hover:text-white">
-            <MonitorPlay size={18} />
-            <span className="pointer-events-none absolute left-1/2 top-full z-[120] mt-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-bold text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 xl:block">전광판 모드</span>
-          </button>
-          {isDeviceAdmin && <button onClick={() => setIsDeviceManagerOpen(true)} aria-label="승인 기기 관리" className="group relative shrink-0 rounded-xl p-2 text-blue-300 transition-colors hover:bg-white/10 hover:text-white"><ShieldCheck size={18} /><span className="pointer-events-none absolute left-1/2 top-full z-[120] mt-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-bold text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 xl:block">승인 기기 관리</span></button>}
-          {isDeviceAdmin && <button onClick={() => setIsYearlyCleanupOpen(true)} aria-label="연도 문서 정리" className="group relative shrink-0 rounded-xl p-2 text-amber-300 transition-colors hover:bg-white/10 hover:text-white"><FolderSync size={18} /><span className="pointer-events-none absolute left-1/2 top-full z-[120] mt-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-bold text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 xl:block">연도 문서 정리</span></button>}
-          <button onClick={handlePortalExit} aria-label="화면 나가기 (기기 승인 유지)" title="화면 나가기 · 기기 승인은 유지됩니다" className="text-slate-500 hover:text-white p-1 md:p-2 transition-colors ml-0.5 md:ml-0 shrink-0"><X size={18} className="md:w-[20px] md:h-[20px]"/></button>
-        </div>
+        <PortalDesktopActions
+          currentView={viewMode}
+          onView={setViewMode}
+          onChat={() => setIsChatOpen(!isChatOpen)}
+          onSearch={() => setIsCommandPaletteOpen(true)}
+          onQuickAdd={() => setIsQuickScheduleOpen(true)}
+          onKiosk={openKioskWindow}
+          onHistory={() => void openActivityHistory()}
+          onDevices={() => setIsDeviceManagerOpen(true)}
+          onCleanup={() => setIsYearlyCleanupOpen(true)}
+          onExit={handlePortalExit}
+          isAdmin={isDeviceAdmin}
+          isChatOpen={isChatOpen}
+          hasUnread={hasUnread}
+          hasNewSchedule={hasNewSchedule}
+        />
         <PortalMobileActions view={viewMode} onView={setViewMode} onChat={() => setIsChatOpen(true)} onSearch={() => setIsCommandPaletteOpen(true)} onQuickAdd={() => setIsQuickScheduleOpen(true)} onKiosk={openKioskWindow} onHistory={() => void openActivityHistory()} onDevices={() => setIsDeviceManagerOpen(true)} onCleanup={() => setIsYearlyCleanupOpen(true)} onExit={handlePortalExit} isAdmin={isDeviceAdmin} />
       </header>
 
@@ -1240,7 +1211,7 @@ export default function IntegratedPortal() {
           </div>
           <div className="flex-1 overflow-y-auto px-6 py-2 custom-scrollbar">
             <div className="space-y-1.5 mb-4">
-              <button onClick={() => { setViewMode('dashboard'); setIsMobileSidebarOpen(false); }} className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-bold transition-all ${viewMode === 'dashboard' ? 'bg-slate-900 shadow-lg text-white' : 'text-slate-500 hover:bg-slate-200/60'}`}><LayoutDashboard size={17} /> 공공의료지원과 일정</button>
+              <button onClick={() => { setViewMode('dashboard'); setIsMobileSidebarOpen(false); }} aria-current={viewMode === 'dashboard' ? 'page' : undefined} className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-bold transition-all ${viewMode === 'dashboard' ? 'bg-slate-900 shadow-lg text-white' : 'text-slate-500 hover:bg-slate-200/60'}`}><LayoutDashboard size={17} /> 홈</button>
               <div className="h-px bg-slate-300/70 my-3" />
               <button onClick={() => { setViewMode('files'); setSelectedCategory('전체'); setIsMobileSidebarOpen(false); }} className={`w-full text-left px-4 py-3.5 rounded-xl text-sm font-bold transition-all ${selectedCategory === '전체' && viewMode === 'files' ? 'bg-white shadow-md text-blue-600 ring-1 ring-slate-200' : 'text-slate-500 hover:bg-slate-200/60'}`}>🏠 전체 문서 보기</button>
               {categories.map((cat, idx) => {
@@ -1255,7 +1226,7 @@ export default function IntegratedPortal() {
                   setDraggedItemIndex(null);
                 }} className={`group relative flex items-center gap-1 cursor-grab active:cursor-grabbing transition-transform ${draggedItemIndex === idx ? 'opacity-30' : 'opacity-100'}`}>
                   <div className="absolute left-1 opacity-0 group-hover:opacity-40"><GripVertical size={14}/></div>
-                  <button onClick={() => { setViewMode('files'); setSelectedCategory(cat.name); setIsMobileSidebarOpen(false); }} className={`min-w-0 flex-1 rounded-xl py-3.5 pl-6 pr-8 text-left text-sm font-bold ring-1 ring-transparent transition-all ${isSelected ? (meetingTone?.active ?? 'bg-white text-blue-600 ring-slate-200 shadow-md') : `${meetingTone?.hover ?? 'text-slate-500 hover:bg-slate-200/60'}`}`}>
+                  <button onClick={() => { setViewMode('files'); setSelectedCategory(cat.name); setIsMobileSidebarOpen(false); }} title={cat.name} className={`min-w-0 flex-1 rounded-xl py-3.5 pl-6 pr-1 text-left text-sm font-bold ring-1 ring-transparent transition-all ${isSelected ? (meetingTone?.active ?? 'bg-white text-blue-600 ring-slate-200 shadow-md') : `${meetingTone?.hover ?? 'text-slate-500 hover:bg-slate-200/60'}`}`}>
                     <span className="flex min-w-0 items-center justify-between gap-2">
                       <span className={`min-w-0 truncate text-[13px] font-extrabold 2xl:text-sm ${meetingTone?.text ?? (isSelected ? 'text-blue-600' : 'text-slate-500')}`}>📁 {cat.name}</span>
                       {nextScheduleDate && meetingTone && (
@@ -1265,7 +1236,7 @@ export default function IntegratedPortal() {
                       )}
                     </span>
                   </button>
-                  <button onClick={() => onDeleteCategoryWithFiles(cat.id, cat.name)} aria-label={`${cat.name} 분류 삭제`} className="absolute right-1 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg bg-[#EBEEF2]/90 text-sm text-slate-500 transition-colors hover:bg-red-50 hover:text-red-600 focus-visible:ring-2 focus-visible:ring-red-500">✕</button>
+                  <CategoryActions name={cat.name} onRename={(name) => renameCategory(cat.id, name)} onDelete={() => onDeleteCategoryWithFiles(cat.id, cat.name)} />
                 </div>
                 );
               })}

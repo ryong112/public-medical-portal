@@ -37,7 +37,7 @@ export default function PortalMobileActions(props: Props) {
     <details ref={menu} className="relative">
       <summary aria-label="더보기 메뉴" className="flex min-h-11 cursor-pointer list-none items-center rounded-xl px-2 text-white hover:bg-white/10 [&::-webkit-details-marker]:hidden"><MoreHorizontal size={22} /><span className="sr-only">더보기</span></summary>
       <div className="absolute right-0 top-full z-[100] mt-2 max-h-[75dvh] w-60 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 text-slate-800 shadow-2xl">
-        <button className={actionClass} onClick={() => run(() => props.onView('dashboard'))}>홈 · 공공의료지원과 일정</button>
+        <button className={actionClass} onClick={() => run(() => props.onView('dashboard'))}>홈</button>
         <button className={actionClass} onClick={() => run(props.onSearch)}>통합 검색</button>
         <button className={actionClass} onClick={() => run(props.onQuickAdd)}>빠른 일정 입력</button>
         <button className={actionClass} onClick={() => run(props.onChat)}>정보공유방</button>

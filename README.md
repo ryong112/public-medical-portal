@@ -59,6 +59,9 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 
 ### 홈 화면 배치
 
+- 왼쪽 대시보드 진입 메뉴와 모바일 더보기는 `홈`으로 표시합니다. 오른쪽 일정 대시보드의 구성과 제목은 유지합니다.
+- 문서 분류의 `⋯`에서 `이름 변경`·`삭제`를 선택합니다. 이름 변경은 기존 `rename_category_with_files` 함수로 연결 파일까지 함께 갱신하며, 삭제 확인·8초 되돌리기는 유지합니다. 메뉴는 스크롤 영역 밖에 표시하고 키보드 방향키·Esc도 지원합니다.
+- 상단 반출대장·실적공유는 은은한 초록색과 새 탭 표시로 구분합니다. 내부 기능은 현재 선택한 항목만 강조하고 관리자 도구는 관리 메뉴에 모읍니다. 공지가 없을 때는 빈 공지 영역을 표시하지 않습니다.
 - 제목 옆 색상 범례는 일반 회색·내부일정 파랑·출장 초록·회의 보라·휴가 주황을 안내합니다. 유형별로 숨기지 않고 전체 일정을 표시하며, 위쪽 `전체 일정 / 내 일정만`은 유지합니다.
 - 오늘·내일 카드는 각각 일정 수에 맞춰 짧아지고, 화면의 남는 높이까지 늘어나지 않습니다. 화면 높이와 표시 행 수에 상한을 두며, 한 페이지를 넘길 때만 이전·다음 버튼을 표시합니다.
 - 주간 날짜와 현황 카드에서 마우스를 약 0.4초 멈추면 해당 항목에 연결된 미니 창이 열립니다. 스쳐 지나갈 때는 열리지 않고, 창으로 이동해도 유지됩니다. 클릭/터치는 고정, `Esc`·닫기·바깥 클릭은 닫기이며, 키보드와 동작 줄이기 설정도 지원합니다.
@@ -105,6 +108,8 @@ npm run build
 node tests/schedule-form.browser.cjs
 node tests/dashboard-workflow.browser.cjs
 node tests/document-tools.browser.cjs
+node tests/sidebar-category.browser.cjs
+node tests/portal-header.browser.cjs
 node tests/schedule-category.browser.cjs
 node tests/kiosk-board.browser.cjs
 node tests/kiosk-window.browser.cjs
