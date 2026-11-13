@@ -6,10 +6,12 @@ import { Minimize2, MonitorUp, X } from 'lucide-react';
 import KioskBoard from './kiosk-board';
 import KioskController from './kiosk-controller';
 import { type KioskSchedule } from '@/lib/kiosk-schedules';
+import type { AbsenceMember } from '@/lib/absence-calendar';
 export type { KioskSchedule } from '@/lib/kiosk-schedules';
 
 interface DashboardKioskProps {
   schedules: KioskSchedule[];
+  members?: AbsenceMember[];
   onClose: () => void;
   dedicatedWindow?: boolean;
   nativeLauncher?: boolean;
@@ -35,7 +37,7 @@ const getFullscreen = () => Boolean(document.fullscreenElement);
 const getServerFullscreen = () => false;
 const FULLSCREEN_RETRY = '전체화면을 열지 못했습니다. 다시 열기를 누르거나 창 모드로 볼 수 있습니다.';
 
-export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = false, nativeLauncher = false, initialNotice = '' }: DashboardKioskProps) {
+export default function DashboardKiosk({ schedules, members = [], onClose, dedicatedWindow = false, nativeLauncher = false, initialNotice = '' }: DashboardKioskProps) {
   const [now, setNow] = useState(() => new Date());
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [controllerWindow, setControllerWindow] = useState<Window | null>(null);
@@ -291,7 +293,7 @@ export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = f
   }
 
   return <>
-    <KioskBoard schedules={schedules} now={now} controls={<>
+    <KioskBoard schedules={schedules} members={members} now={now} controls={<>
       {!isFullscreen && !nativeLauncher && <button disabled={busy} onClick={() => void expandKiosk()} aria-label="전체 화면" title="전체화면 시작" className="flex items-center gap-2 rounded-xl border border-blue-300/30 bg-blue-500/20 p-2.5 text-blue-100 hover:bg-blue-500/35 sm:px-3"><MonitorUp size={18} /><span className="hidden text-sm font-semibold sm:inline">전체화면 시작</span></button>}
       <button disabled={busy} onClick={() => void collapseKiosk()} aria-label="전광판 접기" title="전광판 또는 제어창을 선택한 상태에서 F8" className="flex items-center gap-2 rounded-lg border border-white/15 bg-white/5 px-3 py-2.5 text-slate-100 transition-colors hover:bg-white/15 disabled:opacity-50"><Minimize2 size={18} /><span className="hidden text-sm font-semibold sm:inline">접기</span><kbd className="hidden rounded border border-white/15 px-1 text-[11px] text-slate-400 lg:inline">F8</kbd></button>
       <button onClick={closeKiosk} aria-label="전광판 닫기" className="rounded-xl bg-white/10 p-2.5 text-slate-200 hover:bg-red-500"><X size={18} /></button>

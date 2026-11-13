@@ -83,3 +83,17 @@ test('absence subtype changes are visible without affecting other categories', (
   assert.deepEqual(Array.from(result.changedFields), ['휴가 구분']);
   assert.equal(compareWhiteboardSchedule(schedule({ absence_type: 'outing' }), [schedule({ id: 2 })]).status, 'duplicate');
 });
+
+test('explicit attendee IDs make participant-only changes actionable without guessing names', () => {
+  const existing = schedule({ id: 1, attendee_member_ids: ['member-a'] });
+  assert.equal(compareWhiteboardSchedule(schedule(), [existing]).status, 'duplicate', 'legacy schemas do not erase stored IDs');
+  assert.equal(compareWhiteboardSchedule(schedule({ attendee_member_ids: ['member-a'] }), [existing]).status, 'duplicate');
+  const changed = compareWhiteboardSchedule(schedule({ attendee_member_ids: ['member-b'] }), [existing]);
+  assert.equal(changed.status, 'changed');
+  assert.deepEqual(Array.from(changed.changedFields), ['참석 팀원']);
+});
+
+test('same-title photo rows distinguish explicit stable attendee sets but not their ordering', () => {
+  assert.equal(getWhiteboardImportError([schedule({ attendee_member_ids: ['a'] }), schedule({ attendee_member_ids: ['b'] })]), null);
+  assert.match(getWhiteboardImportError([schedule({ attendee_member_ids: ['a', 'b'] }), schedule({ attendee_member_ids: ['b', 'a', 'a'] })]), /중복/u);
+});

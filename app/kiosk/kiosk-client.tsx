@@ -5,11 +5,13 @@ import { LoaderCircle } from 'lucide-react';
 import DashboardKiosk, { type KioskSchedule } from '@/app/components/dashboard-kiosk';
 import DeviceAccessGate from '@/app/components/device-access-gate';
 import { supabase } from '@/lib/supabase';
+import type { AbsenceMember } from '@/lib/absence-calendar';
 
 export default function KioskClient({ nativeLauncher }: { nativeLauncher: boolean }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [schedules, setSchedules] = useState<KioskSchedule[]>([]);
+  const [members, setMembers] = useState<AbsenceMember[]>([]);
   const handleApproved = useCallback(() => setIsAuthenticated(true), []);
 
   const fetchSchedules = useCallback(async () => {
@@ -23,9 +25,14 @@ export default function KioskClient({ nativeLauncher }: { nativeLauncher: boolea
     setIsLoading(false);
   }, []);
 
+  const fetchMembers = useCallback(async () => {
+    const { data, error } = await supabase.rpc('list_team_members');
+    if (!error && Array.isArray(data)) setMembers(data.filter((member): member is AbsenceMember => Boolean(member && typeof member === 'object' && typeof member.id === 'string' && typeof member.display_name === 'string' && typeof member.handle === 'string')));
+  }, []);
+
   useEffect(() => {
     if (!isAuthenticated) return;
-    const initialFetchTimer = window.setTimeout(() => void fetchSchedules(), 0);
+    const initialFetchTimer = window.setTimeout(() => { void fetchSchedules(); void fetchMembers(); }, 0);
     const channel = supabase
       .channel('kiosk_schedules')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'schedules' }, () => void fetchSchedules())
@@ -33,13 +40,14 @@ export default function KioskClient({ nativeLauncher }: { nativeLauncher: boolea
     const verifyTimer = window.setInterval(async () => {
       const { data, error } = await supabase.rpc('get_device_access_status');
       if (!error && data?.status !== 'approved') setIsAuthenticated(false);
+      else if (!error) void fetchMembers();
     }, 30_000);
     return () => {
       window.clearTimeout(initialFetchTimer);
       window.clearInterval(verifyTimer);
       void supabase.removeChannel(channel);
     };
-  }, [fetchSchedules, isAuthenticated]);
+  }, [fetchMembers, fetchSchedules, isAuthenticated]);
 
   if (!isAuthenticated) {
     return <DeviceAccessGate onApproved={handleApproved} nativeKioskPairing={nativeLauncher} />;
@@ -56,6 +64,7 @@ export default function KioskClient({ nativeLauncher }: { nativeLauncher: boolea
   return (
     <DashboardKiosk
       schedules={schedules}
+      members={members}
       dedicatedWindow
       nativeLauncher={nativeLauncher}
       onClose={() => {

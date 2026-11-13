@@ -11,7 +11,14 @@ const compiled = ts.transpileModule(readFileSync(filename, 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 const helpers = {};
-vm.runInNewContext(compiled, { exports: helpers, Date, Map, Set, JSON });
+const titleHelpers = {};
+vm.runInNewContext(ts.transpileModule(readFileSync(path.join(path.dirname(filename), 'title.ts'), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, { exports: titleHelpers, Set });
+vm.runInNewContext(compiled, { exports: helpers, Date, Map, Set, JSON, require: (id) => {
+  assert.equal(id, './title.ts');
+  return titleHelpers;
+} });
 const { normalizePhotoAnalysis, relevantSpellingHints, flagColorDisagreements, validDate, buildPhotoPrompt } = helpers;
 const row = (overrides = {}) => ({
   title: '정책결정회의', date: '2026-11-04', end_date: null,
@@ -120,4 +127,16 @@ test('the image month takes precedence and prompt prohibits inventing future rec
   assert.match(prompt, /사진에 적힌 월이 기준 월보다 우선/u);
   assert.match(prompt, /반복 확장하지 마십시오/u);
   assert.match(prompt, /4개 일정은 반드시 4개 항목/u);
+});
+
+test('photo names are separated from titles while source, region and session numbers remain intact', () => {
+  const original = '방문재활(홍천) ③-희,예';
+  const result = normalizePhotoAnalysis(photo([row({ title: original, source_text: original, person_labels: ['희', '예'] })])).schedules[0];
+  assert.equal(result.title, '방문재활(홍천) ③');
+  assert.equal(result.source_text, original);
+  assert.deepEqual(Array.from(result.person_labels), ['희', '예']);
+  assert.equal(normalizePhotoAnalysis(photo([row({ title: '학교적응-강릉', person_labels: ['강릉'] })])).schedules[0].title, '학교적응-강릉');
+  const prompt = buildPhotoPrompt('2026-11-13', '2026-11');
+  assert.match(prompt, /회기 숫자·③ 기호·지역·기관명은 반드시 그대로/u);
+  assert.match(prompt, /팀원 ID·참석자를 추정하거나 자동 배정하지 않습니다/u);
 });

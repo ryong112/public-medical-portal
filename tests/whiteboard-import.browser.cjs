@@ -45,6 +45,7 @@ const photo = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="960" h
     }
     if (url.pathname.startsWith('/rest/v1/rpc/')) {
       if (url.pathname.endsWith('/get_device_access_status')) return reply({ status: 'approved', user_id: userId, is_admin: false });
+      if (['list_team_members', 'get_my_team_member', 'list_my_team_notifications'].some((rpc) => url.pathname.endsWith('/' + rpc))) return route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ code: 'PGRST202', message: 'Team identity unavailable in legacy fixture' }) });
       writes.push({ pathname: url.pathname, body: request.postDataJSON() });
       return reply(0);
     }

@@ -9,6 +9,9 @@ import { supabase } from '@/lib/supabase';
 import { compareWhiteboardSchedule, getPhotoExistingSchedules, getWhiteboardImportError, isWhiteboardDate, isWhiteboardTime } from '@/lib/whiteboard-import';
 import { scheduleCategoryStyles } from '@/lib/schedule-category';
 import type { AbsenceType, NewScheduleInput } from '@/app/components/schedule-form-modal';
+import type { TeamMember } from '@/app/components/team-member-picker';
+import { getLegacyAttendeeText, getScheduleAttendeeNames, normalizeAttendeeMemberIds } from '@/lib/schedule-team-attendees';
+import { cleanWhiteboardTitle } from '@/lib/whiteboard-title';
 
 type ScheduleType = 'meeting' | 'business_trip' | 'internal' | 'leave' | 'unclassified';
 
@@ -33,6 +36,10 @@ interface AnalyzedSchedule {
   ink_color: string;
   color_confidence: number;
   outside_photo_month: boolean;
+  person_labels: string[];
+  attendee_member_ids: string[];
+  attendee_baseline_ids: string[];
+  existing_attendee_names: string[];
 }
 
 export interface ExistingWhiteboardSchedule extends NewScheduleInput {
@@ -41,7 +48,7 @@ export interface ExistingWhiteboardSchedule extends NewScheduleInput {
 
 export interface WhiteboardScheduleUpdate {
   id: number;
-  values: Pick<NewScheduleInput, 'title' | 'date' | 'end_date' | 'start_time' | 'end_time' | 'schedule_type' | 'absence_type' | 'is_urgent'>;
+  values: Pick<NewScheduleInput, 'title' | 'date' | 'end_date' | 'start_time' | 'end_time' | 'schedule_type' | 'absence_type' | 'is_urgent' | 'attendee_member_ids' | 'attendee_names'>;
 }
 
 export interface WhiteboardCorrectionInput {
@@ -56,6 +63,10 @@ interface WhiteboardImportModalProps {
   onClose: () => void;
   initialMonth?: string;
   existingSchedules: ExistingWhiteboardSchedule[];
+  teamMembers?: TeamMember[];
+  teamMembersAvailable?: boolean;
+  teamMembersLoading?: boolean;
+  teamMembersError?: string | null;
   onImport: (schedules: NewScheduleInput[], updates: WhiteboardScheduleUpdate[], corrections: WhiteboardCorrectionInput[]) => Promise<void>;
 }
 
@@ -135,7 +146,7 @@ const fileToBase64 = (file: File) => new Promise<string>((resolve, reject) => {
   reader.readAsDataURL(file);
 });
 
-export default function WhiteboardImportModal({ onClose, initialMonth, existingSchedules, onImport }: WhiteboardImportModalProps) {
+export default function WhiteboardImportModal({ onClose, initialMonth, existingSchedules, onImport, teamMembers = [], teamMembersAvailable = false, teamMembersLoading = false, teamMembersError }: WhiteboardImportModalProps) {
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const addedTitleRef = useRef<HTMLInputElement>(null);
@@ -164,7 +175,25 @@ export default function WhiteboardImportModal({ onClose, initialMonth, existingS
   }, [addedDraftId]);
 
   const photoExistingSchedules = getPhotoExistingSchedules(existingSchedules, drafts.map((draft) => draft.date));
-  const compareSchedule = (draft: AnalyzedSchedule, schedules = photoExistingSchedules) => compareWhiteboardSchedule(draft, schedules);
+  const knownNames = teamMembers.map((member) => member.display_name);
+  const normalizeComparableTitle = (value: string) => value.normalize('NFKC').replace(/^(?:회의|출장|내부일정|휴가|연차|조퇴|외출)\s*[)）]\s*/u, '').replace(/\s+/gu, ' ').trim().toLocaleLowerCase('ko-KR');
+  const compareSchedule = (draft: AnalyzedSchedule, schedules = photoExistingSchedules, preserveAttendees = false) => {
+    const comparable = { ...draft, attendee_member_ids: teamMembersAvailable && !preserveAttendees ? draft.attendee_member_ids : undefined };
+    const originalTitleNames = cleanWhiteboardTitle(draft.original_title, { personLabels: draft.person_labels, knownNames }).removedNames;
+    const photographedPeople = draft.person_labels.length > 0 || originalTitleNames.length > 0 || cleanWhiteboardTitle(draft.source_text, { knownNames }).removedNames.length > 0;
+    const direct = schedules.filter((schedule) => schedule.date === draft.date && (
+      normalizeComparableTitle(schedule.title) === normalizeComparableTitle(draft.source_text)
+      || ((!photographedPeople || originalTitleNames.length > 0) && normalizeComparableTitle(schedule.title) === normalizeComparableTitle(draft.original_title))
+    ));
+    const projected = (direct.length ? direct : schedules).map((schedule) => ({ ...schedule, title: cleanWhiteboardTitle(schedule.title, { knownNames, personLabels: draft.person_labels }).title }));
+    const matches = projected.filter((schedule) => schedule.date === draft.date && normalizeComparableTitle(schedule.title) === normalizeComparableTitle(draft.title));
+    // Removing names must not accidentally pick one of several legacy rows.
+    if (direct.length !== 1 && (matches.length > 1 || (photographedPeople && matches.some((schedule) => schedule.attendee_member_ids?.length)))) return { status: 'new' as const, matched: null, changedFields: [], ambiguous: true };
+    const comparison = compareWhiteboardSchedule(comparable, projected);
+    const original = schedules.find((schedule) => schedule.id === comparison.matched?.id) ?? null;
+    const titleChanged = original && normalizeComparableTitle(original.title) !== normalizeComparableTitle(draft.title);
+    return { ...comparison, matched: original, status: comparison.matched && titleChanged ? 'changed' as const : comparison.status, changedFields: titleChanged ? ['일정 제목', ...comparison.changedFields] : comparison.changedFields, ambiguous: false };
+  };
   const busy = isPreparing || isAnalyzing || isSaving;
   const actionableCount = drafts.filter((draft) => draft.selected && compareSchedule(draft).status !== 'duplicate').length;
   const needsReview = (draft: AnalyzedSchedule) => photoScheduleNeedsReview(draft, compareSchedule(draft).status);
@@ -231,10 +260,11 @@ export default function WhiteboardImportModal({ onClose, initialMonth, existingS
       setDrafts(schedules.map((schedule: Partial<AnalyzedSchedule>, index: number) => {
         const date = typeof schedule.date === 'string' && isWhiteboardDate(schedule.date) ? schedule.date : '';
         const outsideMonth = Boolean(date && !scopeMonths.includes(date.slice(0, 7)));
+        const titleResult = cleanWhiteboardTitle(schedule.title ?? '', { personLabels: schedule.person_labels, knownNames });
         const draft: AnalyzedSchedule = {
           id: `${Date.now()}-${index}`,
           selected: Boolean(schedule.title && date && !outsideMonth),
-          title: schedule.title ?? '',
+          title: titleResult.title,
           date,
           end_date: typeof schedule.end_date === 'string' && isWhiteboardDate(schedule.end_date) ? schedule.end_date : null,
           start_time: typeof schedule.start_time === 'string' && isWhiteboardTime(schedule.start_time.slice(0, 5)) ? schedule.start_time.slice(0, 5) : '',
@@ -245,15 +275,28 @@ export default function WhiteboardImportModal({ onClose, initialMonth, existingS
           absence_type: schedule.absence_type === 'early' || schedule.absence_type === 'outing' ? schedule.absence_type : 'annual',
           confidence: typeof schedule.confidence === 'number' ? schedule.confidence : 0,
           source_text: schedule.source_text ?? '',
-          warnings: Array.isArray(schedule.warnings) ? schedule.warnings : [],
+          warnings: [...(Array.isArray(schedule.warnings) ? schedule.warnings : []), ...titleResult.warnings],
           original_title: schedule.title ?? '',
           original_schedule_type: scheduleTypes.some((type) => type.value === schedule.schedule_type) ? schedule.schedule_type as ScheduleType : 'unclassified',
           is_manual: false,
           ink_color: typeof schedule.ink_color === 'string' ? schedule.ink_color : 'unknown',
           color_confidence: typeof schedule.color_confidence === 'number' ? schedule.color_confidence : 0,
           outside_photo_month: outsideMonth,
+          person_labels: Array.isArray(schedule.person_labels) ? schedule.person_labels.filter((name): name is string => typeof name === 'string') : [],
+          attendee_member_ids: [],
+          attendee_baseline_ids: [],
+          existing_attendee_names: [],
         };
-        return { ...draft, selected: draft.selected && compareSchedule(draft, getPhotoExistingSchedules(existingSchedules, [draft.date])).status !== 'duplicate' };
+        const comparison = compareSchedule(draft, getPhotoExistingSchedules(existingSchedules, [draft.date]), true);
+        const attendeeIds = normalizeAttendeeMemberIds(comparison.matched?.attendee_member_ids);
+        return {
+          ...draft,
+          attendee_member_ids: attendeeIds,
+          attendee_baseline_ids: attendeeIds,
+          existing_attendee_names: comparison.matched?.attendee_names ?? [],
+          warnings: comparison.ambiguous ? [...draft.warnings, '이름을 제외한 제목이 기존 일정과 겹칩니다. 다른 사람의 일정을 덮어쓰지 않도록 새 일정으로 반영할지 확인한 뒤 선택해 주세요.'] : draft.warnings,
+          selected: draft.selected && !comparison.ambiguous && comparison.status !== 'duplicate',
+        };
       }));
       setHasAnalyzed(true);
     } catch (analysisError) {
@@ -269,6 +312,7 @@ export default function WhiteboardImportModal({ onClose, initialMonth, existingS
       const updated = { ...draft, [key]: value };
       if (key === 'date') updated.outside_photo_month = !updated.is_manual && Boolean(updated.date && !photoMonths.includes(updated.date.slice(0, 7)));
       if (compareSchedule(updated).status === 'duplicate') updated.selected = false;
+      else if (key === 'attendee_member_ids') updated.selected = true;
       return updated;
     }));
   };
@@ -298,6 +342,10 @@ export default function WhiteboardImportModal({ onClose, initialMonth, existingS
       ink_color: 'unknown',
       color_confidence: 0,
       outside_photo_month: false,
+      person_labels: [],
+      attendee_member_ids: [],
+      attendee_baseline_ids: [],
+      existing_attendee_names: [],
     }]);
     setAddedDraftId(id);
     setHasAnalyzed(true);
@@ -348,6 +396,10 @@ export default function WhiteboardImportModal({ onClose, initialMonth, existingS
         is_completed: false,
         is_todo: draft.is_todo,
         absence_type: draft.absence_type,
+        ...(teamMembersAvailable ? {
+          attendee_member_ids: draft.attendee_member_ids,
+          attendee_names: getScheduleAttendeeNames(getLegacyAttendeeText(draft.existing_attendee_names.join(', '), draft.attendee_baseline_ids, teamMembers), draft.attendee_member_ids, teamMembers),
+        } : {}),
       });
       const inserts = selected
         .filter((draft) => compareSchedule(draft).status === 'new')
@@ -367,6 +419,7 @@ export default function WhiteboardImportModal({ onClose, initialMonth, existingS
             schedule_type: values.schedule_type,
             absence_type: values.absence_type,
             is_urgent: values.is_urgent,
+            ...(values.attendee_member_ids !== undefined ? { attendee_member_ids: values.attendee_member_ids, attendee_names: values.attendee_names } : {}),
           },
         }];
       });
@@ -394,7 +447,7 @@ export default function WhiteboardImportModal({ onClose, initialMonth, existingS
 
   return (
     <div className="fixed inset-0 z-[250] flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm md:p-6">
-      <div role="dialog" aria-modal="true" aria-labelledby="whiteboard-import-heading" className={`flex max-h-[94dvh] w-full flex-col overflow-hidden rounded-[26px] bg-white shadow-2xl [&_input]:min-w-0 [&_select]:min-w-0 [&_input]:w-full [&_select]:w-full [&_input]:text-base [&_select]:text-base sm:rounded-[30px] sm:[&_input]:text-xs sm:[&_select]:text-xs ${hasAnalyzed ? 'max-w-6xl' : 'max-w-4xl'}`}>
+      <div role="dialog" aria-modal="true" aria-labelledby="whiteboard-import-heading" className={`flex max-h-[94dvh] w-full flex-col overflow-hidden rounded-[26px] bg-white shadow-2xl [&_input]:min-w-0 [&_select]:min-w-0 [&_input:not([type=checkbox])]:w-full [&_select]:w-full [&_input]:text-base [&_select]:text-base sm:rounded-[30px] sm:[&_input]:text-xs sm:[&_select]:text-xs ${hasAnalyzed ? 'max-w-6xl' : 'max-w-4xl'}`}>
         <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-5 py-4 md:px-7">
           <div>
             <h2 id="whiteboard-import-heading" className="text-lg font-black text-slate-900 md:text-xl">화이트보드 일정 가져오기</h2>
@@ -492,7 +545,7 @@ export default function WhiteboardImportModal({ onClose, initialMonth, existingS
                 {drafts.length === 0 && <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-600"><p className="font-black">확인할 일정이 없습니다.</p><p className="mt-2 text-xs">하단의 ‘일정 추가’로 사진에서 빠진 일정을 직접 입력할 수 있습니다.</p></div>}
                 <fieldset disabled={isSaving} className="min-w-0 space-y-3 disabled:opacity-60">
                 {visibleDrafts.map((draft) => (
-                  <div key={draft.id} className={`rounded-2xl border p-4 transition-colors ${draft.selected ? 'border-blue-200 bg-blue-50/30' : 'border-slate-100 bg-slate-50 opacity-65'}`}>
+                  <div key={draft.id} data-whiteboard-draft={draft.id} className={`rounded-2xl border p-4 transition-colors ${draft.selected ? 'border-blue-200 bg-blue-50/30' : 'border-slate-100 bg-slate-50 opacity-65'}`}>
                     <div className="flex items-start gap-3">
                       <button
                         disabled={compareSchedule(draft).status === 'duplicate'}
@@ -521,6 +574,19 @@ export default function WhiteboardImportModal({ onClose, initialMonth, existingS
                       </div>
                       <button aria-label="이 일정 제외" onClick={() => setDrafts((current) => current.filter((item) => item.id !== draft.id))} className="mt-1 shrink-0 rounded-lg p-1 text-slate-400 hover:bg-red-50 hover:text-red-500"><X size={16} /></button>
                     </div>
+                    <fieldset className="mt-3 min-w-0 border-t border-slate-200/70 pt-3 sm:ml-9" disabled={isSaving || !teamMembersAvailable || teamMembersLoading} aria-label="참석 팀원 선택">
+                      <legend className="sr-only">참석 팀원 선택</legend>
+                      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                        <span className="mr-1 text-[11px] font-bold text-slate-600">참석 팀원</span>
+                        {teamMembers.map((member) => <label key={member.id} title={`@${member.handle}`} className={`inline-flex min-h-9 max-w-full cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${draft.attendee_member_ids.includes(member.id) ? 'border-blue-400 bg-blue-100 text-blue-900' : 'border-slate-200 bg-white text-slate-700'} ${!teamMembersAvailable || teamMembersLoading ? 'cursor-not-allowed opacity-60' : 'hover:border-blue-300'}`}>
+                          <input type="checkbox" checked={draft.attendee_member_ids.includes(member.id)} disabled={member.active === false && !draft.attendee_member_ids.includes(member.id)} onChange={(event) => updateDraft(draft.id, 'attendee_member_ids', event.target.checked ? [...draft.attendee_member_ids, member.id] : draft.attendee_member_ids.filter((id) => id !== member.id))} className="h-3.5 w-3.5 shrink-0 accent-blue-600" />
+                          <span className="min-w-0 break-words font-semibold">{member.display_name}{teamMembers.some((other) => other.id !== member.id && other.display_name === member.display_name) && <span className="ml-1 text-[10px] font-normal text-slate-500"> @{member.handle}</span>}</span>
+                        </label>)}
+                        {draft.attendee_member_ids.filter((id) => !teamMembers.some((member) => member.id === id)).map((id) => <label key={id} className="inline-flex min-h-9 max-w-full cursor-pointer items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-900"><input type="checkbox" checked onChange={() => updateDraft(draft.id, 'attendee_member_ids', draft.attendee_member_ids.filter((value) => value !== id))} className="h-3.5 w-3.5 accent-amber-700" /><span>기존 참석자 <span className="text-[10px] font-normal">목록에 없음</span></span></label>)}
+                        {!teamMembers.length && !teamMembersLoading && !teamMembersError && <span className="text-xs text-slate-500">{teamMembersAvailable ? '등록된 팀원이 없습니다.' : '팀원 선택 기능 준비 중'}</span>}
+                      </div>
+                      {(teamMembersLoading || teamMembersError) && <p role={teamMembersError ? 'alert' : 'status'} className={`mt-2 text-xs ${teamMembersError ? 'text-amber-800' : 'text-slate-500'}`}>{teamMembersError || '팀원 목록을 불러오는 중입니다.'}</p>}
+                    </fieldset>
                     <div className="mt-3 flex flex-wrap items-center gap-2 pl-9 text-[10px] font-bold">
                       {(() => {
                         const comparison = compareSchedule(draft);

@@ -4,12 +4,14 @@ import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { BellRing, CalendarDays, CheckCircle2, MonitorUp, Pause, Play, Siren } from 'lucide-react';
 import { getScheduleCategory, scheduleCategoryStyles, type ScheduleCategory } from '@/lib/schedule-category';
 import { toLocalDateKey } from '@/lib/dashboard-schedules';
+import type { AbsenceMember } from '@/lib/absence-calendar';
 import { cleanKioskTitle, formatKioskDateRange, formatKioskTime, getKioskAbsenceLabel, getKioskAbsencePeopleLabel, getKioskEventStatus, getKioskGroups, type KioskSchedule } from '@/lib/kiosk-schedules';
 import KioskRotatingList from './kiosk-rotating-list';
 import styles from './kiosk-board.module.css';
 
 interface KioskBoardProps {
   schedules: KioskSchedule[];
+  members?: AbsenceMember[];
   now: Date;
   controls: ReactNode;
 }
@@ -54,10 +56,10 @@ function EventRow({ item, now, showDate = false, compact = false, agenda = false
   </div>;
 }
 
-function AbsenceRow({ item, upcoming = false }: { item: KioskSchedule; upcoming?: boolean }) {
+function AbsenceRow({ item, members, upcoming = false }: { item: KioskSchedule; members: AbsenceMember[]; upcoming?: boolean }) {
   return <div className={`${styles.absenceRow} border-l-4 ${scheduleCategoryStyles.leave.darkAccent}`} data-kiosk-event-id={item.id} data-schedule-category="leave"
-    title={[getKioskAbsencePeopleLabel(item), formatKioskDateRange(item), getKioskAbsenceLabel(item), formatKioskTime(item)].join(' · ')}>
-    <div className={styles.absenceTop}><strong>{getKioskAbsencePeopleLabel(item)}</strong><span className={styles.absenceType}>{getKioskAbsenceLabel(item)}</span></div>
+    title={[getKioskAbsencePeopleLabel(item, members), formatKioskDateRange(item), getKioskAbsenceLabel(item), formatKioskTime(item)].join(' · ')}>
+    <div className={styles.absenceTop}><strong>{getKioskAbsencePeopleLabel(item, members)}</strong><span className={styles.absenceType}>{getKioskAbsenceLabel(item)}</span></div>
     <div className={styles.absenceMeta}>
       {(upcoming || Boolean(item.end_date && item.end_date !== item.date)) && <span>{formatKioskDateRange(item)}</span>}
       {(item.start_time || item.end_time) ? <span>{formatKioskTime(item)}</span> : !upcoming && (!item.end_date || item.end_date === item.date) ? <span>시간 미정</span> : null}
@@ -78,7 +80,7 @@ function Panel({ id, title, count, icon, className = '', children, style, emptyL
   </section>;
 }
 
-export default function KioskBoard({ schedules, now, controls }: KioskBoardProps) {
+export default function KioskBoard({ schedules, members = [], now, controls }: KioskBoardProps) {
   const today = toLocalDateKey(now);
   const groups = useMemo(() => getKioskGroups(schedules, today), [schedules, today]);
   const [autoPlay, setAutoPlay] = useState(true);
@@ -92,7 +94,7 @@ export default function KioskBoard({ schedules, now, controls }: KioskBoardProps
     + (groups.nextWeek.length ? 49 + groups.nextWeek.length * 72 - 6 : 41);
   const isAnyListLong = [groups.today, groups.thisWeek, groups.nextWeek, groups.notices, groups.todos, groups.absencesToday, groups.absencesUpcoming].some((items) => items.length > 1);
   const noticeRenderer = (item: KioskSchedule) => <EventRow item={item} now={now} showDate compact />;
-  const absenceRenderer = (item: KioskSchedule) => <AbsenceRow item={item} upcoming />;
+  const absenceRenderer = (item: KioskSchedule) => <AbsenceRow item={item} members={members} upcoming />;
   return <div className={styles.board} data-kiosk-board data-kiosk-has-support={String(hasSupport)} data-kiosk-sparse={String(isSparse)} style={{ '--sparse-main-height': `${Math.max(todaySurfaceHeight, agendaSurfaceHeight)}px`, '--today-surface-height': `${todaySurfaceHeight}px`, '--agenda-surface-height': `${agendaSurfaceHeight}px` } as CSSProperties}>
     <header className={styles.header}>
       <div className={styles.identity}>
@@ -121,7 +123,7 @@ export default function KioskBoard({ schedules, now, controls }: KioskBoardProps
           <KioskRotatingList items={groups.today} itemKey={itemKey} label="오늘 일정" minRowHeight={88} maxRows={5} autoPlay={autoPlay} renderItem={(item) => <EventRow item={item} now={now} />} />
         </Panel>
         <Panel id="absences-today" title="오늘 자리 비움" count={groups.absencesToday.length} className={styles.todayAbsence} icon={<CalendarDays size={18} />} emptyLabel="없음">
-          <KioskRotatingList items={groups.absencesToday} itemKey={itemKey} label="오늘 자리 비움" minRowHeight={64} maxRows={2} autoPlay={autoPlay} renderItem={(item) => <AbsenceRow item={item} />} />
+          <KioskRotatingList items={groups.absencesToday} itemKey={itemKey} label="오늘 자리 비움" minRowHeight={64} maxRows={2} autoPlay={autoPlay} renderItem={(item) => <AbsenceRow item={item} members={members} />} />
         </Panel>
       </div>
       <div className={styles.agenda} data-kiosk-agenda>

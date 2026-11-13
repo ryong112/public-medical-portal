@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { CalendarDays, ChevronRight, Clock3, DoorOpen, Palmtree, X } from 'lucide-react';
+import { getAbsencePersonEntries, getAbsencePeople, type AbsenceMember } from '@/lib/absence-calendar';
 
 export interface MonthlyAbsenceSchedule {
   id: number | string;
@@ -12,6 +13,10 @@ export interface MonthlyAbsenceSchedule {
   absence_type?: string | null;
   start_time?: string | null;
   end_time?: string | null;
+  owner_name?: string | null;
+  owner_member_id?: string | null;
+  attendee_names?: string[] | null;
+  attendee_member_ids?: string[] | null;
   [key: string]: unknown;
 }
 
@@ -19,6 +24,7 @@ interface MonthlyAbsenceBoardProps {
   open: boolean;
   onClose: () => void;
   schedules: MonthlyAbsenceSchedule[];
+  members?: AbsenceMember[];
   currentDate?: Date | string;
   onOpenSchedule?: (schedule: MonthlyAbsenceSchedule) => void;
 }
@@ -31,6 +37,7 @@ interface AbsenceCell {
 }
 
 interface PersonRow {
+  key: string;
   person: string;
   cells: Map<string, Map<AbsenceKind, MonthlyAbsenceSchedule[]>>;
 }
@@ -100,12 +107,7 @@ const stripAbsencePrefix = (title: string) => {
 };
 
 export const extractAbsencePeople = (title: string) => {
-  const cleanTitle = stripAbsencePrefix(title);
-  const people = cleanTitle
-    .split(/[,，/·ㆍ&]+/u)
-    .map((name) => name.replace(/\s*\((?:휴가|연차|반차|조퇴|외출)\)\s*$/u, '').trim())
-    .filter((name) => name.length > 0 && !/^(?:휴가|연차|반차|조퇴|외출)$/u.test(name));
-  return [...new Set(people.length > 0 ? people : ['이름 미상'])];
+  return getAbsencePeople({ title });
 };
 
 const getScheduleEndDate = (schedule: MonthlyAbsenceSchedule) => schedule.end_date && schedule.end_date >= schedule.date
@@ -169,6 +171,7 @@ export default function MonthlyAbsenceBoard({
   open,
   onClose,
   schedules,
+  members = [],
   currentDate,
   onOpenSchedule,
 }: MonthlyAbsenceBoardProps) {
@@ -196,11 +199,11 @@ export default function MonthlyAbsenceBoard({
         const overlapStart = schedule.date < monthStartKey ? monthStartKey : schedule.date;
         const scheduleEnd = getScheduleEndDate(schedule);
         const overlapEnd = scheduleEnd > monthEndKey ? monthEndKey : scheduleEnd;
-        extractAbsencePeople(schedule.title).forEach((person) => {
-          const row = rows.get(person) ?? { person, cells: new Map() };
-          rows.set(person, row);
+        getAbsencePersonEntries(schedule, members).forEach((person) => {
+          const row = rows.get(person.key) ?? { key: person.key, person: person.label, cells: new Map() };
+          rows.set(person.key, row);
           enumerateDateKeys(overlapStart, overlapEnd).forEach((dateKey) => {
-            const duplicateKey = `${person}|${dateKey}|${getScheduleSignature(schedule)}`;
+            const duplicateKey = `${person.key}|${dateKey}|${getScheduleSignature(schedule)}`;
             if (duplicateKeys.has(duplicateKey)) return;
             duplicateKeys.add(duplicateKey);
             const kindMap = row.cells.get(dateKey) ?? new Map<AbsenceKind, MonthlyAbsenceSchedule[]>();
@@ -213,8 +216,8 @@ export default function MonthlyAbsenceBoard({
 
     return [...rows.values()]
       .filter((row) => visibleDateKeys.some((dateKey) => row.cells.has(dateKey)))
-      .sort((first, second) => first.person.localeCompare(second.person, 'ko-KR'));
-  }, [monthEndKey, monthStartKey, schedules, visibleDateKeys]);
+      .sort((first, second) => first.person.localeCompare(second.person, 'ko-KR') || first.key.localeCompare(second.key));
+  }, [monthEndKey, monthStartKey, schedules, members, visibleDateKeys]);
 
   useEffect(() => {
     if (!open) return;
@@ -293,7 +296,7 @@ export default function MonthlyAbsenceBoard({
                   </thead>
                   <tbody>
                     {peopleRows.map((row) => (
-                      <tr key={row.person} className="group">
+                      <tr key={row.key} data-absence-person-key={row.key} className="group">
                         <th className="sticky left-0 z-10 border-b border-r border-slate-200 bg-white px-4 py-3 text-left text-sm font-black text-slate-800 group-hover:bg-slate-50">{row.person}</th>
                         {visibleDateKeys.map((dateKey) => {
                           const cells = row.cells.get(dateKey);
@@ -321,7 +324,7 @@ export default function MonthlyAbsenceBoard({
 
               <div className="space-y-3 p-4 md:hidden">
                 {peopleRows.map((row) => (
-                  <article key={row.person} className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+                  <article key={row.key} data-absence-person-key={row.key} className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
                     <div className="mb-3 flex items-center justify-between">
                       <h3 className="text-base font-black text-slate-900">{row.person}</h3>
                       <span className="text-[9px] font-bold text-slate-400">{buildMobileRanges(row, visibleDateKeys).length}개 구간</span>

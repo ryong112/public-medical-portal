@@ -1390,6 +1390,7 @@ export default function IntegratedPortal() {
               {viewMode === 'dashboard' ? (
                 <SharedDashboard
                   schedules={visibleSchedules}
+                  members={team.members}
                   holidaysByDate={koreanHolidays}
                   onChangeView={setViewMode}
                   onOpenCalendarDate={(date) => {
@@ -1687,6 +1688,10 @@ export default function IntegratedPortal() {
           onClose={() => setIsWhiteboardImportOpen(false)}
           initialMonth={`${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}`}
           existingSchedules={schedules}
+          teamMembers={team.members}
+          teamMembersAvailable={team.available && metadataAvailable}
+          teamMembersLoading={team.loading}
+          teamMembersError={team.error}
           onImport={onImportWhiteboardSchedules}
         />
       )}
@@ -1716,12 +1721,13 @@ export default function IntegratedPortal() {
         />
       )}
 
-      {isKioskOpen && <DashboardKiosk schedules={schedules} dedicatedWindow={isDedicatedKiosk} initialNotice={kioskLaunchNotice} onClose={() => {
+      {isKioskOpen && <DashboardKiosk schedules={schedules} members={team.members} dedicatedWindow={isDedicatedKiosk} initialNotice={kioskLaunchNotice} onClose={() => {
         if (isDedicatedKiosk) window.close();
         else setIsKioskOpen(false);
       }} />}
 
       <MonthlyAbsenceBoard
+        members={team.members}
         open={isAbsenceBoardOpen}
         onClose={() => setIsAbsenceBoardOpen(false)}
         schedules={schedules}

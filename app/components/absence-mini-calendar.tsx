@@ -3,11 +3,12 @@
 import { useState } from 'react';
 import { ArrowUpRight, ChevronLeft, ChevronRight } from 'lucide-react';
 import { type DashboardSchedule, formatScheduleTime, getAbsenceTypeLabel, getScheduleEndDate, parseLocalDateKey } from '@/lib/dashboard-schedules';
-import { buildAbsenceMonth, formatAbsenceDayLabel, formatAbsenceRangeLabel, getAbsencePeople, getDefaultAbsenceDate, shiftAbsenceMonth } from '@/lib/absence-calendar';
+import { buildAbsenceMonth, formatAbsenceDayLabel, formatAbsenceRangeLabel, getAbsencePeople, getDefaultAbsenceDate, shiftAbsenceMonth, type AbsenceMember } from '@/lib/absence-calendar';
 import styles from './absence-mini-calendar.module.css';
 
 interface AbsenceMiniCalendarProps {
   schedules: DashboardSchedule[];
+  members?: AbsenceMember[];
   referenceDate: string;
   onOpenSchedule: (schedule: DashboardSchedule) => void;
   onOpenAbsenceBoard?: () => void;
@@ -19,11 +20,11 @@ const fullDate = (key: string) => {
   return date ? new Intl.DateTimeFormat('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' }).format(date) : '';
 };
 
-export default function AbsenceMiniCalendar({ schedules, referenceDate, onOpenSchedule, onOpenAbsenceBoard }: AbsenceMiniCalendarProps) {
+export default function AbsenceMiniCalendar({ schedules, members = [], referenceDate, onOpenSchedule, onOpenAbsenceBoard }: AbsenceMiniCalendarProps) {
   const referenceMonth = referenceDate.slice(0, 7);
   const [monthKey, setMonthKey] = useState(referenceMonth);
   const [selectedDate, setSelectedDate] = useState(() => getDefaultAbsenceDate(schedules, referenceMonth, referenceDate));
-  const month = buildAbsenceMonth(schedules, monthKey);
+  const month = buildAbsenceMonth(schedules, monthKey, members);
   if (!month) return null;
   const selected = month.days.find((day) => day.date === selectedDate) ?? month.days[0];
   const changeMonth = (offset: number) => {
@@ -59,7 +60,7 @@ export default function AbsenceMiniCalendar({ schedules, referenceDate, onOpenSc
         {selected.items.length ? selected.items.map((schedule) => {
           const time = schedule.start_time || schedule.end_time ? formatScheduleTime({ start_time: schedule.start_time?.slice(0, 5) ?? null, end_time: schedule.end_time?.slice(0, 5) ?? null }) : '';
           const metadata = [getAbsenceTypeLabel(schedule), time, getScheduleEndDate(schedule) !== schedule.date ? formatAbsenceRangeLabel(schedule) : ''].filter(Boolean).join(' · ');
-          const names = getAbsencePeople(schedule).join(', ');
+          const names = getAbsencePeople(schedule, members).join(', ');
           return <button type="button" key={schedule.id} className={styles.person} data-absence-schedule-id={schedule.id} onClick={() => onOpenSchedule(schedule)} aria-label={`${names}, ${fullDate(selected.date)}, ${metadata} 상세 보기`}>
             <strong>{names}</strong><span>{metadata}</span>
           </button>;

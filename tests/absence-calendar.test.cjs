@@ -5,16 +5,18 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 const ts = require('typescript');
+const React = require('react');
+const { renderToStaticMarkup } = require('react-dom/server');
 const cache = new Map();
 function load(relative) {
   if (cache.has(relative)) return cache.get(relative);
   const source = readFileSync(path.join(__dirname, '..', relative), 'utf8');
-  const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   const current = { exports: {} };
   vm.runInNewContext(output, { exports: current.exports, module: current, require: (name) => {
-    if (!name.startsWith('.')) return require(name);
-    const base = path.join(path.dirname(relative), name);
-    const target = [base, `${base}.ts`].find(file => existsSync(path.join(__dirname, '..', file)));
+    if (!name.startsWith('.') && !name.startsWith('@/')) return require(name);
+    const base = name.startsWith('@/') ? name.slice(2) : path.join(path.dirname(relative), name);
+    const target = [base, `${base}.ts`, `${base}.tsx`].find(file => existsSync(path.join(__dirname, '..', file)));
     return load(target);
   } });
   cache.set(relative, current.exports); return current.exports;
@@ -27,6 +29,40 @@ test('absence names prefer explicit ownership and strip repeated legacy prefixes
   assert.deepEqual(Array.from(helpers.getAbsencePeople(leave(1, '2026-11-12', { title: '휴가) 휴가-희, 롱 / 희' }))), ['희', '롱']);
   assert.deepEqual(Array.from(helpers.getAbsencePeople(leave(1, '2026-11-12', { title: '오후 조퇴) 박팀원 (조퇴)' }))), ['박팀원']);
   assert.deepEqual(Array.from(helpers.getAbsencePeople(leave(1, '2026-11-12', { title: '휴가) 오후반차-희' }))), ['희']);
+});
+
+test('photographed absence titles use selected participant names instead of the operator or cleaned title', () => {
+  assert.deepEqual(Array.from(helpers.getAbsencePeople(leave(1, '2026-11-12', { title: '휴가', owner_name: '업무 담당자', attendee_names: ['김직원', '이직원'] }))), ['김직원', '이직원']);
+  assert.deepEqual(Array.from(helpers.getAbsencePeople(leave(1, '2026-11-12', { title: '휴가' }))), ['이름 미상']);
+});
+
+test('stable participant IDs count equal names separately and repeated schedules only once per person', () => {
+  const members = [{ id: 'member-a', display_name: '김민수', handle: 'minsu-a' }, { id: 'member-b', display_name: '김민수', handle: 'minsu-b' }];
+  const schedules = [leave(1, '2026-11-12', { title: '휴가', attendee_member_ids: ['member-a', 'member-b'], attendee_names: ['김민수'] }), leave(2, '2026-11-12', { title: '조퇴', absence_type: 'early', attendee_member_ids: ['member-a'], attendee_names: ['김민수'] })];
+  assert.deepEqual(Array.from(helpers.getAbsencePeople(schedules[0], members)), ['김민수 (@minsu-a)', '김민수 (@minsu-b)']);
+  const day = helpers.buildAbsenceMonth(schedules, '2026-11', members).days.find((item) => item.date === '2026-11-12');
+  assert.equal(day.people.length, 2);
+  assert.equal(helpers.collectAbsencePersonEntries(schedules, members).length, 2);
+  assert.equal(helpers.getAbsencePersonEntries(schedules[0], members)[0].key, 'member:member-a');
+});
+
+test('inactive selected IDs retain a single stored label and never infer an ID from a matching legacy name', () => {
+  const selected = leave(1, '2026-11-12', { title: '휴가', attendee_member_ids: ['inactive-a', 'inactive-b'], attendee_names: ['동명이인'] });
+  assert.equal(helpers.getAbsencePersonEntries(selected).length, 2);
+  assert.deepEqual(Array.from(helpers.getAbsencePeople(selected)), ['동명이인', '동명이인']);
+  const legacy = helpers.getAbsencePersonEntries(leave(2, '2026-11-12', { title: '휴가', attendee_names: ['김직원'] }), [{ id: 'member-a', display_name: '김직원', handle: 'kim' }]);
+  assert.equal(legacy[0].key, 'name:김직원');
+});
+
+test('monthly absence board creates separate ID-keyed rows for a multi-participant cleaned title', () => {
+  const Board = load('app/components/monthly-absence-board.tsx').default;
+  const members = [{ id: 'member-a', display_name: '김민수', handle: 'minsu-a' }, { id: 'member-b', display_name: '김민수', handle: 'minsu-b' }];
+  const html = renderToStaticMarkup(React.createElement(Board, { open: true, onClose: () => {}, currentDate: '2026-11-12', members, schedules: [leave(1, '2026-11-12', { title: '휴가', attendee_member_ids: ['member-a', 'member-b'], attendee_names: ['김민수'] })] }));
+  assert.ok(html.includes('data-absence-person-key="member:member-a"'));
+  assert.ok(html.includes('data-absence-person-key="member:member-b"'));
+  assert.ok(html.includes('김민수 (@minsu-a)'));
+  assert.ok(html.includes('김민수 (@minsu-b)'));
+  assert.ok(!html.includes('이름 미상'));
 });
 test('month geometry and weekday labels preserve leap days and year boundaries', () => {
   const leap = helpers.buildAbsenceMonth([], '2028-02');

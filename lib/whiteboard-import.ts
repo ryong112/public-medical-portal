@@ -7,6 +7,7 @@ export interface WhiteboardComparableSchedule {
   schedule_type: string;
   absence_type?: string;
   is_urgent?: boolean;
+  attendee_member_ids?: string[];
 }
 
 const normalizeTitle = (title: string) => title
@@ -17,6 +18,7 @@ const normalizeTitle = (title: string) => title
   .toLocaleLowerCase('ko-KR');
 
 const normalizeTime = (time: string | null) => (time ?? '').slice(0, 5);
+const attendeeKey = (ids?: string[]) => JSON.stringify([...new Set(Array.isArray(ids) ? ids : [])].sort());
 
 export const isWhiteboardDate = (value: string): boolean => {
   if (!/^\d{4}-\d{2}-\d{2}$/u.test(value) || value.startsWith('0000-')) return false;
@@ -48,6 +50,7 @@ export const compareWhiteboardSchedule = <T extends WhiteboardComparableSchedule
     schedule.schedule_type !== draft.schedule_type ? '일정 유형' : '',
     draft.schedule_type === 'leave' && schedule.absence_type !== draft.absence_type ? '휴가 구분' : '',
     Boolean(schedule.is_urgent) !== Boolean(draft.is_urgent) ? '긴급 표시' : '',
+    draft.attendee_member_ids !== undefined && attendeeKey(schedule.attendee_member_ids) !== attendeeKey(draft.attendee_member_ids) ? '참석 팀원' : '',
   ].filter((field): field is string => Boolean(field));
   const exactMatch = sameTitleAndDate.find((schedule) => differences(schedule).length === 0);
   if (exactMatch) return { status: 'duplicate', matched: exactMatch, changedFields: [] };
@@ -75,6 +78,7 @@ export const getWhiteboardImportError = (drafts: WhiteboardComparableSchedule[])
       normalizeTitle(draft.title), draft.date, draft.end_date || draft.date,
       normalizeTime(draft.start_time), normalizeTime(draft.end_time), draft.schedule_type,
       draft.schedule_type === 'leave' ? draft.absence_type : '', Boolean(draft.is_urgent),
+      attendeeKey(draft.attendee_member_ids),
     ]);
     if (seen.has(key)) return `${label}이 선택한 다른 일정과 중복됩니다. 한 건만 선택해 주십시오.`;
     seen.add(key);

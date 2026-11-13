@@ -89,6 +89,8 @@ test('display helpers show readable dates, time ranges and absence names without
   assert.equal(cleanKioskTitle('회의) 정책결정회의'), '정책결정회의');
   assert.equal(getKioskAbsencePeopleLabel({ title: '휴가) 휴가-희' }), '희');
   assert.equal(getKioskAbsencePeopleLabel({ title: '휴가) 옛이름', owner_name: '김팀원 / 이팀원 / 김팀원' }), '김팀원 · 이팀원');
+  assert.equal(getKioskAbsencePeopleLabel({ title: '휴가', attendee_names: ['김팀원', '이팀원'] }), '김팀원 · 이팀원');
+  assert.equal(getKioskAbsencePeopleLabel({ title: '휴가', attendee_member_ids: ['member-a', 'member-b'], attendee_names: ['김민수'] }, [{ id: 'member-a', display_name: '김민수', handle: 'minsu-a' }, { id: 'member-b', display_name: '김민수', handle: 'minsu-b' }]), '김민수 (@minsu-a) · 김민수 (@minsu-b)');
   assert.equal(getKioskAbsenceLabel({ title: '외출) 김팀원', absence_type: 'outing' }), '외출');
   assert.equal(getKioskAbsenceLabel({ title: '휴가) 김팀원', absence_type: 'early_pm' }), '오후 조퇴');
 });

@@ -13,7 +13,9 @@ export interface DashboardSchedule {
   absence_type?: 'annual' | 'early' | 'outing' | 'early_am' | 'early_pm';
   created_at?: string;
   owner_name?: string | null;
+  owner_member_id?: string | null;
   attendee_names?: string[];
+  attendee_member_ids?: string[];
   location?: string | null;
   linked_file_ids?: number[];
 }

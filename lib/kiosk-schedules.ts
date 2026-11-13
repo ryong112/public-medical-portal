@@ -1,4 +1,4 @@
-import { getAbsencePeople } from './absence-calendar';
+import { getAbsencePeople, type AbsenceMember, type AbsencePersonSchedule } from './absence-calendar';
 import { parseLocalDateKey, shiftDateKey, toLocalDateKey } from './dashboard-schedules';
 import { getScheduleCategory } from './schedule-category';
 import { getDayDistance } from './schedule-proximity';
@@ -17,7 +17,9 @@ export interface KioskSchedule {
   is_todo?: boolean | null;
   is_completed?: boolean | null;
   owner_name?: string | null;
+  owner_member_id?: string | null;
   attendee_names?: string[] | null;
+  attendee_member_ids?: string[] | null;
   location?: string | null;
   recurrence_status?: string | null;
 }
@@ -141,4 +143,4 @@ export const getKioskAbsenceLabel = (schedule: Pick<KioskSchedule, 'title' | 'ab
   return '연차';
 };
 
-export const getKioskAbsencePeopleLabel = (schedule: Pick<KioskSchedule, 'title' | 'owner_name'>): string => getAbsencePeople(schedule).join(' · ');
+export const getKioskAbsencePeopleLabel = (schedule: AbsencePersonSchedule, members: readonly AbsenceMember[] = []): string => getAbsencePeople(schedule, members).join(' · ');

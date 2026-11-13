@@ -7,7 +7,7 @@ import { ArrowUpRight, BellRing, CalendarDays, Check, ChevronLeft, ChevronRight,
 import AnchoredPreview, { useAnchoredPreview } from './anchored-preview';
 import AbsenceMiniCalendar from './absence-mini-calendar';
 import WeeklyDayTile from './weekly-day-tile';
-import { getAbsencePeople } from '@/lib/absence-calendar';
+import { collectAbsencePersonEntries, getAbsencePeople, type AbsenceMember } from '@/lib/absence-calendar';
 import { consumePreviewWheel, createPreviewWheelGesture, getPreviewPageWindow, normalizePreviewWheel } from '@/lib/preview-pagination';
 import { getDayProximityLabel, getScheduleProximityLabel } from '@/lib/schedule-proximity';
 import styles from './shared-dashboard.module.css';
@@ -16,6 +16,7 @@ type DashboardView = 'files' | 'calendar' | 'external_calendar' | 'dashboard';
 type DetailKey = 'todo' | 'notice' | 'week' | 'absence' | 'today-absence' | `date:${string}`;
 interface SharedDashboardProps {
   schedules: Schedule[];
+  members?: AbsenceMember[];
   holidaysByDate?: Record<string, string[]>;
   onChangeView: (view: DashboardView) => void;
   onOpenChat: () => void;
@@ -34,7 +35,7 @@ const sortSchedules = (a: Schedule, b: Schedule) => a.date.localeCompare(b.date)
   || (a.start_time ?? a.end_time ?? '99:99').localeCompare(b.start_time ?? b.end_time ?? '99:99') || a.id - b.id;
 const cleanTitle = (title: string) => title.replace(/^(?:회의|출장|내부일정|휴가|연차|조퇴|외출)\s*[)）]\s*/u, '').trim();
 const shortDate = (key: string) => `${Number(key.slice(5, 7))}.${Number(key.slice(8, 10))}`;
-const absencePeople = (items: Schedule[]) => [...new Set(items.flatMap(getAbsencePeople))];
+const absencePeople = (items: Schedule[], members: AbsenceMember[]) => collectAbsencePersonEntries(items, members).map((person) => person.label);
 const weekdayDate = (date: string, compact = false) => `${compact ? Number(date.slice(8)) : shortDate(date)}(${new Intl.DateTimeFormat('ko-KR', { weekday: 'short' }).format(new Date(`${date}T12:00:00`))})`;
 const absenceDates = (schedule: Schedule) => {
   const end = getScheduleEndDate(schedule);
@@ -211,10 +212,10 @@ function PreviewRows({ items, today, onOpen, onComplete }: { items: Schedule[]; 
   }) : <p className={styles.previewEmpty}>등록된 항목이 없습니다.</p>}</div>;
 }
 
-function UpcomingAbsences({ items, today, onOpen }: { items: Schedule[]; today: string; onOpen: (schedule: Schedule) => void }) {
+function UpcomingAbsences({ items, today, members, onOpen }: { items: Schedule[]; today: string; members: AbsenceMember[]; onOpen: (schedule: Schedule) => void }) {
   return <div className={styles.previewRows} data-dashboard-upcoming-absences>{items.length ? items.slice(0, 2).map((schedule) => {
     const dates = absenceDates(schedule);
-    const person = getAbsencePeople(schedule).join(', ');
+    const person = getAbsencePeople(schedule, members).join(', ');
     const type = getAbsenceTypeLabel(schedule);
     const time = schedule.start_time ? ` · ${schedule.start_time.slice(0, 5)}` : '';
     return <div key={schedule.id} className={styles.previewRow} data-schedule-category="leave">
@@ -226,7 +227,7 @@ function UpcomingAbsences({ items, today, onOpen }: { items: Schedule[]; today: 
   }) : <p className={styles.previewEmpty}>예정된 휴가가 없습니다.</p>}</div>;
 }
 
-export default function SharedDashboard({ schedules, holidaysByDate = {}, onChangeView, onOpenChat, onOpenSchedule, onToggleScheduleComplete, onOpenAbsenceBoard, onPrintWeek, onOpenCalendarDate }: SharedDashboardProps) {
+export default function SharedDashboard({ schedules, members = [], holidaysByDate = {}, onChangeView, onOpenChat, onOpenSchedule, onToggleScheduleComplete, onOpenAbsenceBoard, onPrintWeek, onOpenCalendarDate }: SharedDashboardProps) {
   const [detailKey, setDetailKey] = useState<DetailKey | null>(null);
   const [detailOpener, setDetailOpener] = useState<HTMLElement | null>(null);
   const [previewRowHeight, setPreviewRowHeight] = useState(64);
@@ -274,13 +275,13 @@ export default function SharedDashboard({ schedules, holidaysByDate = {}, onChan
   const week = schedules.filter((schedule) => scheduleOverlaps(schedule, today, weekEnd)).sort(sortSchedules);
   const absences = schedules.filter((schedule) => getScheduleCategory(schedule) === 'leave' && scheduleOverlaps(schedule, monthStart, monthEnd)).sort(sortSchedules);
   const upcomingAbsences = schedules.filter((schedule) => getScheduleCategory(schedule) === 'leave' && getScheduleEndDate(schedule) >= today).sort((a, b) => (a.date < today ? today : a.date).localeCompare(b.date < today ? today : b.date) || sortSchedules(a, b));
-  const todayAbsences = absencePeople(absences.filter((schedule) => scheduleOccursOn(schedule, today)));
+  const todayAbsences = absencePeople(absences.filter((schedule) => scheduleOccursOn(schedule, today)), members);
   const todayAbsenceItems = absences.filter((schedule) => scheduleOccursOn(schedule, today));
   const cards = [
     { key: 'todo' as const, label: '할 일', count: pendingTodos.length, unit: '건', icon: <Check size={16} />, items: todos, note: overdue ? `지연 ${overdue}건` : `완료 ${todos.length - pendingTodos.length}건`, range: '' },
     { key: 'notice' as const, label: '공지사항', count: notices.length, unit: '건', icon: <BellRing size={16} />, items: notices, note: '', range: '' },
     { key: 'week' as const, label: '주간 일정', count: week.length, unit: '건', icon: <CalendarDays size={16} />, items: week, note: '', range: `${shortDate(today)}–${shortDate(weekEnd)}` },
-    { key: 'absence' as const, label: '이번 달 휴가', count: absencePeople(absences).length, unit: '명', icon: <CalendarDays size={16} />, items: absences, note: todayAbsences.length ? `오늘 ${todayAbsences.join(', ')}` : '오늘 없음', range: '' },
+    { key: 'absence' as const, label: '이번 달 휴가', count: absencePeople(absences, members).length, unit: '명', icon: <CalendarDays size={16} />, items: absences, note: todayAbsences.length ? `오늘 ${todayAbsences.join(', ')}` : '오늘 없음', range: '' },
   ];
   const detailFor = (key: DetailKey | null) => {
     const date = key?.startsWith('date:') ? key.slice(5) : null;
@@ -328,7 +329,7 @@ export default function SharedDashboard({ schedules, holidaysByDate = {}, onChan
             <span className={styles.summaryHeading}>{card.icon}<h3>{card.label}</h3></span>
             <span className={styles.summaryValue}><strong data-dashboard-count>{card.count}</strong><span>{card.unit}</span></span><ArrowUpRight size={14} className={styles.summaryArrow} />
           </button>
-          {preview ? <button type="button" className={styles.summaryPreview} data-preview-schedule-id={preview.id} onClick={() => openSchedule(preview)} title={card.key === 'absence' ? `${absenceDates(preview)} · ${getAbsencePeople(preview).join(', ')} · ${getAbsenceTypeLabel(preview)}` : preview.title}>{preview.is_urgent && <span className={styles.previewStatus}><Siren size={12} />긴급</span>}{card.key === 'todo' && getTodoStatus(preview, today) === '기한 지남' && <span className={styles.previewStatus}>지연</span>}<span className={styles.summaryPreviewTitle}>{card.key === 'absence' ? `${weekdayDate(preview.date)} ${getAbsencePeople(preview).join(', ')} · ${getAbsenceTypeLabel(preview)}` : cleanTitle(preview.title)}</span></button> : <span className={styles.summaryPreview}>{card.key === 'todo' ? `완료 ${todos.length - pendingTodos.length}건` : card.key === 'absence' ? '오늘 휴가 없음' : '등록 없음'}</span>}
+          {preview ? <button type="button" className={styles.summaryPreview} data-preview-schedule-id={preview.id} onClick={() => openSchedule(preview)} title={card.key === 'absence' ? `${absenceDates(preview)} · ${getAbsencePeople(preview, members).join(', ')} · ${getAbsenceTypeLabel(preview)}` : preview.title}>{preview.is_urgent && <span className={styles.previewStatus}><Siren size={12} />긴급</span>}{card.key === 'todo' && getTodoStatus(preview, today) === '기한 지남' && <span className={styles.previewStatus}>지연</span>}<span className={styles.summaryPreviewTitle}>{card.key === 'absence' ? `${weekdayDate(preview.date)} ${getAbsencePeople(preview, members).join(', ')} · ${getAbsenceTypeLabel(preview)}` : cleanTitle(preview.title)}</span></button> : <span className={styles.summaryPreview}>{card.key === 'todo' ? `완료 ${todos.length - pendingTodos.length}건` : card.key === 'absence' ? '오늘 휴가 없음' : '등록 없음'}</span>}
         </section>;
       })}
     </section>
@@ -352,12 +353,12 @@ export default function SharedDashboard({ schedules, holidaysByDate = {}, onChan
       <aside className={styles.context} aria-label="확인할 내용">
         {[{ key: 'notice' as const, title: '공지사항', icon: <BellRing size={15} />, items: notices }, { key: 'todo' as const, title: '할 일', icon: <Check size={15} />, items: pendingTodos }, { key: 'absence' as const, title: '휴가·조퇴·외출', icon: <CalendarDays size={15} />, items: upcomingAbsences }].map((section) => <section key={section.key} className={styles.contextPanel} data-dashboard-context={section.key}>
           <header className={styles.contextHeading}><h3>{section.icon}{section.title}<span>{section.items.length}</span></h3><button type="button" {...peek.getTriggerProps(section.key)} aria-label={`${section.title} 미리보기`}>{section.key === 'absence' ? '월간' : '전체'} <ArrowUpRight size={13} /></button></header>
-          {section.key === 'absence' ? <UpcomingAbsences items={section.items} today={today} onOpen={openSchedule} /> : <PreviewRows items={section.items} today={today} onOpen={openSchedule} onComplete={onToggleScheduleComplete} />}
+          {section.key === 'absence' ? <UpcomingAbsences items={section.items} today={today} members={members} onOpen={openSchedule} /> : <PreviewRows items={section.items} today={today} onOpen={openSchedule} onComplete={onToggleScheduleComplete} />}
         </section>)}
       </aside>
     </div>
     <AnchoredPreview controller={peek} title={preview?.label ?? ''} preferredHeight={peek.active?.key === 'absence' ? 480 : Math.min(620, Math.max(155, Math.max(1, preview?.items.length ?? 0) * (previewRowHeight + 6) + 98))}>
-      {peek.active?.key === 'absence' ? <AbsenceMiniCalendar schedules={schedules} referenceDate={today} onOpenSchedule={openSchedule} onOpenAbsenceBoard={onOpenAbsenceBoard ? () => { peek.close({ immediate: true }); onOpenAbsenceBoard(); } : undefined} /> : preview && <div className={styles.peekList}>
+      {peek.active?.key === 'absence' ? <AbsenceMiniCalendar schedules={schedules} members={members} referenceDate={today} onOpenSchedule={openSchedule} onOpenAbsenceBoard={onOpenAbsenceBoard ? () => { peek.close({ immediate: true }); onOpenAbsenceBoard(); } : undefined} /> : preview && <div className={styles.peekList}>
         <SchedulePages key={`peek:${preview.key}`} items={preview.items} label={preview.label} listKey="detail" today={today} showDate showProximity={peek.active?.key === 'week' || Boolean(peek.active?.key.startsWith('date:'))} proximityDate={peek.active?.key.startsWith('date:') ? peek.active.key.slice(5) : undefined} onOpen={openSchedule} onComplete={onToggleScheduleComplete} navigation="dots" />
         <button type="button" className={styles.peekAll} onClick={() => openAll(peek.active!.key)}>전체 목록 보기 <ArrowUpRight size={14} /></button>
       </div>}
