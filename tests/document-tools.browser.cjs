@@ -20,7 +20,7 @@ const categories = [{ id: 1, name: '운영자료', order_index: 0 }, { id: 2, na
 const schedules = [{ id: 1, title: '문서 연결 확인 회의', date: '2026-11-11', end_date: null, start_time: '10:00', end_time: '11:00', schedule_type: 'meeting', absence_type: 'annual', is_notice: false, is_urgent: false, is_todo: false, is_completed: false, owner_name: '테스트 담당자', attendee_names: [], location: '회의실', linked_file_ids: [1, 3] }];
 
 (async () => {
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: true, ...(process.env.PLAYWRIGHT_EXECUTABLE_PATH ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH } : {}) });
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, timezoneId: 'Asia/Seoul', acceptDownloads: true });
   const errors = [];
   const storageRequests = [];
@@ -35,6 +35,9 @@ const schedules = [{ id: 1, title: '문서 연결 확인 회의', date: '2026-11
   let fallbackHealthy = false;
   let releaseImage;
   let imageGate = null;
+  let releaseUpload;
+  let uploadGate = null;
+  let hideNewMetadata = false;
   const userId = '11111111-1111-4111-8111-111111111111';
   const token = `${Buffer.from('{"alg":"HS256","typ":"JWT"}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: userId, exp: 2100000000, role: 'authenticated' })).toString('base64url')}.local-test-only`;
   await context.route('**/*', async (route) => {
@@ -53,10 +56,12 @@ const schedules = [{ id: 1, title: '문서 연결 확인 회의', date: '2026-11
     }
     if (url.pathname.startsWith('/storage/v1/object/files/') && ['POST', 'PUT'].includes(request.method())) {
       const payload = request.postDataBuffer()?.toString('utf8') ?? '';
-      const name = payload.includes('storage-fail-body') ? 'storage-fail.txt' : payload.includes('metadata-fail-body') ? 'metadata-fail.txt' : pathNames.get(url.pathname);
+      const name = payload.includes('storage-fail-body') ? 'storage-fail.txt' : payload.includes('metadata-fail-body') ? 'metadata-fail.txt' : payload.includes('dismiss-fail-body') ? 'dismiss-fail.txt' : pathNames.get(url.pathname);
       assert.ok(name, 'test upload should contain an expected fixture');
       pathNames.set(url.pathname, name);
       storageRequests.push({ name, path: url.pathname });
+      if (uploadGate) await uploadGate;
+      if (name === 'dismiss-fail.txt') return reply({ statusCode: '503', error: 'ServiceUnavailable', message: 'dismissed storage failure' }, 503);
       if (name === 'storage-fail.txt' && !storageFailed) { storageFailed = true; return reply({ statusCode: '503', error: 'ServiceUnavailable', message: 'test storage failure' }, 503); }
       return reply({ Key: `files/${url.pathname.split('/').pop()}`, Id: '11111111-2222-4333-8444-555555555555' });
     }
@@ -83,7 +88,7 @@ const schedules = [{ id: 1, title: '문서 연결 확인 회의', date: '2026-11
     if (url.pathname.startsWith('/rest/v1/')) {
       if (url.pathname.endsWith('/files')) {
         const targetUrl = url.searchParams.get('url')?.replace(/^eq\./, '');
-        return reply(targetUrl ? files.filter((file) => file.url === targetUrl).map(({ id }) => ({ id })) : files);
+        return reply(targetUrl ? files.filter((file) => file.url === targetUrl).map(({ id }) => ({ id })) : files.filter((file) => !(hideNewMetadata && file.name === 'metadata-fail.txt')));
       }
       if (url.pathname.endsWith('/categories')) return reply(categories);
       if (url.pathname.endsWith('/schedules')) {
@@ -108,8 +113,8 @@ const schedules = [{ id: 1, title: '문서 연결 확인 회의', date: '2026-11
   try {
     await page.goto(baseUrl);
     await page.getByRole('button', { name: '🏠 전체 문서 보기', exact: true }).click();
-    await page.getByRole('button', { name: '현장 회의 자료.png 이름 및 분류 변경', exact: true }).click();
-    const editor = page.getByRole('dialog', { name: '문서 이름·분류 변경' });
+    await page.getByRole('button', { name: '현장 회의 자료.png 문서 정보 수정', exact: true }).click();
+    const editor = page.getByRole('dialog', { name: '문서 정보 수정' });
     await editor.getByLabel('파일 이름', { exact: true }).fill('변경된 회의 자료');
     await editor.getByLabel('이동할 분류').selectOption('참고자료');
     await editor.getByRole('button', { name: '변경 저장', exact: true }).click();
@@ -151,17 +156,50 @@ const schedules = [{ id: 1, title: '문서 연결 확인 회의', date: '2026-11
 
     await page.setViewportSize({ width: 1600, height: 1000 });
     await page.getByRole('button', { name: '📁 운영자료', exact: true }).click();
+    const mainTop = await page.locator('main').evaluate((element) => element.getBoundingClientRect().top);
+    uploadGate = new Promise((resolve) => { releaseUpload = resolve; });
     await page.getByLabel('파일 업로드', { exact: true }).setInputFiles([
       { name: 'storage-fail.txt', mimeType: 'text/plain', buffer: Buffer.from('storage-fail-body') },
       { name: 'metadata-fail.txt', mimeType: 'text/plain', buffer: Buffer.from('metadata-fail-body') },
     ]);
-    const uploadStatus = page.getByRole('region', { name: '파일 업로드 현황' });
-    await uploadStatus.getByRole('button', { name: '실패한 2개 재시도', exact: true }).waitFor();
+    const uploadingRow = page.locator('tr[data-document-upload-id]').filter({ hasText: 'storage-fail.txt' });
+    const queuedRow = page.locator('tr[data-document-upload-id]').filter({ hasText: 'metadata-fail.txt' });
+    await uploadingRow.locator('[role="status"]').getByText('업로드 중…', { exact: true }).waitFor();
+    await queuedRow.locator('[role="status"]').getByText('업로드 대기', { exact: true }).waitFor();
+    assert.equal(await uploadingRow.locator('progress').getAttribute('value'), null, 'unknown storage progress must remain indeterminate');
+    assert.equal(await page.getByRole('region', { name: '파일 업로드 현황' }).count(), 0, 'the global upload panel must not push the page down');
+    assert.equal(await page.locator('main').evaluate((element) => element.getBoundingClientRect().top), mainTop);
+    await page.getByRole('button', { name: '📁 참고자료', exact: true }).click();
+    assert.equal(await page.locator('[data-document-upload-id]:visible').count(), 0, 'upload slots belong only to their destination folder');
+    await page.getByRole('button', { name: '📁 운영자료', exact: true }).click();
+    await page.getByLabel('파일명 검색').fill('metadata-fail');
+    assert.equal(await page.locator('tr[data-document-upload-id]').count(), 1, 'filename search applies to queued uploads');
+    await page.getByLabel('파일명 검색').fill('');
+    await page.setViewportSize({ width: 320, height: 844 });
+    await page.waitForFunction(() => document.querySelector('main > aside')?.getBoundingClientRect().right <= 1);
+    await assertNoOverflow();
+    assert.equal(await page.locator('article[data-document-upload-id]:visible').count(), 2, 'mobile upload rows stay in the document list');
+    await capture('upload-pending-mobile');
+    await page.setViewportSize({ width: 1600, height: 1000 });
+    await capture('upload-pending');
+    releaseUpload(); uploadGate = null;
+    await page.getByRole('button', { name: 'metadata-fail.txt 다시 시도', exact: true }).waitFor();
     assert.equal(storageRequests.length, 2);
     assert.equal(metadataRequests.length, 1, 'storage failure must not attempt metadata creation');
     await page.getByRole('button', { name: '📁 참고자료', exact: true }).click();
-    await uploadStatus.getByRole('button', { name: '실패한 2개 재시도', exact: true }).click();
-    await uploadStatus.getByRole('status').getByText('2 / 2개 처리 · 성공 2개', { exact: true }).waitFor();
+    assert.equal(await page.locator('[data-document-upload-id]:visible').count(), 0);
+    await page.getByRole('button', { name: '📁 운영자료', exact: true }).click();
+    await page.getByRole('button', { name: 'storage-fail.txt 다시 시도', exact: true }).click();
+    await page.getByRole('button', { name: 'storage-fail.txt 다운로드', exact: true }).waitFor();
+    assert.equal(await page.locator('tr[data-document-file-id]').filter({ hasText: 'storage-fail.txt' }).count(), 1, 'the saved document replaces the upload slot exactly once');
+    hideNewMetadata = true;
+    await page.getByRole('button', { name: 'metadata-fail.txt 다시 시도', exact: true }).click();
+    await page.getByRole('button', { name: 'metadata-fail.txt 목록 새로고침', exact: true }).waitFor();
+    await page.locator('tr[data-document-upload-id]').getByText('등록 완료 · 목록 확인 중', { exact: true }).waitFor();
+    hideNewMetadata = false;
+    await page.getByRole('button', { name: 'metadata-fail.txt 목록 새로고침', exact: true }).click();
+    await page.getByRole('button', { name: 'metadata-fail.txt 다운로드', exact: true }).waitFor();
+    assert.equal(await page.locator('[data-document-upload-id]').count(), 0, 'completed items automatically disappear after real file rows arrive');
     assert.equal(storageRequests.length, 3, 'metadata-only failure must not re-upload storage');
     assert.equal(storageRequests[0].path, storageRequests[2].path, 'storage retry reuses the exact path');
     assert.equal(metadataRequests.length, 3);
@@ -170,10 +208,13 @@ const schedules = [{ id: 1, title: '문서 연결 확인 회의', date: '2026-11
     assert.equal(files.filter((file) => file.name === 'storage-fail.txt').length, 1);
     assert.equal(files.filter((file) => file.name === 'metadata-fail.txt').length, 1);
     await capture('upload-retried');
-    await uploadStatus.getByRole('button', { name: '업로드 현황 닫기', exact: true }).click();
+    await page.getByLabel('파일 업로드', { exact: true }).setInputFiles({ name: 'dismiss-fail.txt', mimeType: 'text/plain', buffer: Buffer.from('dismiss-fail-body') });
+    await page.getByRole('button', { name: 'dismiss-fail.txt 업로드 항목 닫기', exact: true }).click();
+    assert.equal(await page.locator('[data-document-upload-id]').count(), 0, 'failed upload can be dismissed without affecting saved documents');
+    assert.equal(files.filter((file) => ['storage-fail.txt', 'metadata-fail.txt'].includes(file.name)).length, 2);
 
-    await page.getByRole('button', { name: '공공의료지원과 일정', exact: true }).click();
-    await page.getByText('문서 연결 확인 회의', { exact: true }).first().click();
+    await page.getByRole('button', { name: '홈', exact: true }).click();
+    await page.locator('[data-dashboard-day="today"]').getByText('문서 연결 확인 회의', { exact: true }).click();
     const scheduleDialog = page.getByRole('dialog', { name: '일정 상세', exact: true });
     await scheduleDialog.getByRole('button', { name: '변경된 회의 자료.png', exact: true }).click();
     await imageDialog.locator('img').waitFor();
@@ -189,9 +230,10 @@ const schedules = [{ id: 1, title: '문서 연결 확인 회의', date: '2026-11
     assert.equal(await officeDialog.locator('iframe, img').count(), 0, 'office format must never be embedded');
     await officeDialog.getByRole('button', { name: '미리보기 닫기', exact: true }).click();
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ passed: true, legacySchema, cases: ['rename errors remain open', 'rename/move preserves extension and URL', '320px and 390px mobile cards fit', 'verified image loading', 'preview download fallback', 'storage and metadata failures retry separately', 'retry retains captured category', 'schedule linked preview and focus restoration', 'office format download-only'], storageRequests: storageRequests.length, metadataRequests: metadataRequests.length, screenshots }, null, 2));
+    console.log(JSON.stringify({ passed: true, legacySchema, cases: ['rename errors remain open', 'rename/move preserves extension and URL', '320px and 390px mobile cards fit', 'verified image loading', 'preview download fallback', 'inline queued/uploading rows without global panel or fake progress', 'upload folder/search/mobile filtering', 'storage and metadata failures retry separately', 'retry retains captured category', 'real row replaces slot once and clears automatically', 'list-only refresh does not re-upload', 'failed upload dismissal leaves documents intact', 'schedule linked preview and focus restoration', 'office format download-only'], storageRequests: storageRequests.length, metadataRequests: metadataRequests.length, screenshots }, null, 2));
   } catch (error) {
     if (releaseImage) releaseImage();
+    if (releaseUpload) releaseUpload();
     console.error((await page.locator('body').innerText()).slice(0, 5000));
     console.error('Browser errors:', errors);
     await capture('failure').catch(() => {});

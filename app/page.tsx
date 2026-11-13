@@ -20,14 +20,14 @@ import { findDuplicateSchedules, getSchedulePeople, scheduleMatchesPerson, type 
 import PortalMobileActions from '@/app/components/portal-mobile-actions';
 import PortalDesktopActions from '@/app/components/portal-desktop-actions';
 import WeeklySchedulePrint from '@/app/components/weekly-schedule-print';
-import DocumentLibrary, { type DocumentFile } from '@/app/components/document-library';
+import DocumentLibrary, { type DocumentFile, type DocumentUpdateValues } from '@/app/components/document-library';
 import DocumentPreviewModal from '@/app/components/document-preview-modal';
-import DocumentUploadStatus from '@/app/components/document-upload-status';
 import CategoryActions from '@/app/components/category-actions';
 import PortalNotifications, { type PortalNotification } from '@/app/components/portal-notifications';
 import TeamChatPanel from '@/app/components/team-chat-panel';
+import { createTeamChatReconciler, upsertTeamChatMessages } from '@/lib/team-chat-feed';
 import useTeamIdentity from '@/lib/use-team-identity';
-import { createDocumentUploads, createDocumentUploadRunner, type UploadItem } from '@/lib/document-upload';
+import { createDocumentUploads, createDocumentUploadRunner, getSettledDocumentUploadIds, type UploadItem } from '@/lib/document-upload';
 import { getRequiredHolidayYears, mergeHolidayYear, type KoreanHoliday } from '@/lib/korean-holidays';
 import JSZip from 'jszip';
 import { 
@@ -100,6 +100,8 @@ export default function IntegratedPortal() {
   const [viewMode, setViewMode] = useState<'files' | 'calendar' | 'external_calendar' | 'dashboard'>('dashboard');
   
   const [messages, setMessages] = useState<any[]>([]);
+  const [chatReconciler] = useState(() => createTeamChatReconciler<{ id: number; [key: string]: unknown }>());
+  const remoteDeletedMessageIdsRef = useRef(new Set<string>());
   const [myId, setMyId] = useState<string | null>(null);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [focusedMessageId, setFocusedMessageId] = useState<number | null>(null);
@@ -122,6 +124,7 @@ export default function IntegratedPortal() {
   const uploadBusyRef = useRef(false);
   const [previewFile, setPreviewFile] = useState<DocumentFile | null>(null);
   const [metadataAvailable, setMetadataAvailable] = useState(false);
+  const [responsibilityAvailable, setResponsibilityAvailable] = useState(false);
   const metadataAvailableRef = useRef(false);
   const [myScheduleName, setMyScheduleName] = useState('');
   const [showMySchedules, setShowMySchedules] = useState(false);
@@ -138,15 +141,17 @@ export default function IntegratedPortal() {
       if (metadataAvailableRef.current) {
         const { error } = await supabase.rpc('register_uploaded_document', { p_name: item.file.name, p_url: item.url, p_size: item.file.size, p_category: item.targetCategory });
         if (error) throw new Error(`목록 등록 실패: ${error.message}`);
+        await fetchFiles();
         return;
       }
       // The URL belongs to this upload's stable UUID path. Recheck before retrying
       // a metadata request whose response may have been lost after committing.
       const { data, error: lookupError } = await supabase.from('files').select('id').eq('url', item.url).limit(1);
       if (lookupError) throw new Error(`등록 결과 확인 실패: ${lookupError.message}`);
-      if (data?.length) return;
+      if (data?.length) { await fetchFiles(); return; }
       const { error } = await supabase.from('files').insert({ name: item.file.name, url: item.url, size: item.file.size, category: item.targetCategory });
       if (error) throw new Error(`목록 등록 실패: ${error.message}`);
+      await fetchFiles();
     },
   }));
   const [isDownloadingAll, setIsDownloadingAll] = useState(false); 
@@ -311,23 +316,59 @@ export default function IntegratedPortal() {
 
   useEffect(() => {
     if (isAuthenticated) {
+      chatReconciler.reset();
+      remoteDeletedMessageIdsRef.current.clear();
+      let chatActive = true;
       fetchMessages(); fetchFiles(); fetchCategories(); fetchSchedules();
       void supabase.from('schedules').select('owner_name,attendee_names,location,linked_file_ids').limit(1)
         .then(({ error }) => { metadataAvailableRef.current = !error; setMetadataAvailable(!error); });
 
+      const receiveChatMessage = (message: { id: number; [key: string]: unknown }) => {
+        if (!chatActive) return;
+        chatReconciler.upsert(message);
+        remoteDeletedMessageIdsRef.current.delete(String(message.id));
+        if (!pendingDeleteKeysRef.current.has(`message:${message.id}`)) setMessages((current) => upsertTeamChatMessages(current, [message]));
+      };
       const chatChannel = supabase.channel('chat_main').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
-        setMessages(prev => [...prev, payload.new]); 
+        receiveChatMessage(payload.new as { id: number; [key: string]: unknown });
+      }).on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' }, (payload) => {
+        receiveChatMessage(payload.new as { id: number; [key: string]: unknown });
       }).on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, (payload) => {
-        setMessages(prev => prev.filter(m => m.id !== payload.old.id));
-      }).subscribe();
+        if (!chatActive) return;
+        chatReconciler.remove(payload.old.id);
+        remoteDeletedMessageIdsRef.current.add(String(payload.old.id));
+        setMessages((current) => current.filter((message) => String(message.id) !== String(payload.old.id)));
+      }).subscribe((status) => { if (chatActive && status === 'SUBSCRIBED') void fetchMessages(); });
       
       const fileChannel = supabase.channel('file_main').on('postgres_changes', { event: '*', schema: 'public', table: 'files' }, () => fetchFiles()).subscribe();
       const catChannel = supabase.channel('cat_main').on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, () => fetchCategories()).subscribe();
       const scheChannel = supabase.channel('sche_main').on('postgres_changes', { event: '*', schema: 'public', table: 'schedules' }, () => fetchSchedules()).subscribe();
 
-      return () => { supabase.removeChannel(chatChannel); supabase.removeChannel(fileChannel); supabase.removeChannel(catChannel); supabase.removeChannel(scheChannel); };
+      return () => { chatActive = false; chatReconciler.reset(); supabase.removeChannel(chatChannel); supabase.removeChannel(fileChannel); supabase.removeChannel(catChannel); supabase.removeChannel(scheChannel); };
     }
-  }, [isAuthenticated]);
+  }, [chatReconciler, isAuthenticated, myId]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !team.available) return;
+    let cancelled = false;
+    void supabase.rpc('team_responsibility_available').then(({ data, error }) => {
+      if (!cancelled) setResponsibilityAvailable(!error && data === true);
+    }, () => { if (!cancelled) setResponsibilityAvailable(false); });
+    return () => { cancelled = true; };
+  }, [isAuthenticated, team.available]);
+
+  // Completed uploads leave no permanent status panel or retained File objects.
+  // Wait for the authoritative document row before removing its placeholder.
+  useEffect(() => {
+    const completed = getSettledDocumentUploadIds(files, uploadItems);
+    if (completed.length === 0) return;
+    const timer = window.setTimeout(() => {
+      uploadRunner.forget(completed);
+      const ids = new Set(completed);
+      setUploadItems((current) => current.filter((item) => !ids.has(item.id)));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [files, uploadItems, uploadRunner]);
 
   // 데이터 필터링 계산 자동 처리 (오늘 날짜 기준 진행 중인 공지만 정렬 노출)
   const activeNotices = schedules
@@ -374,7 +415,7 @@ export default function IntegratedPortal() {
 
   const effectiveScheduleName = team.member?.display_name ?? myScheduleName;
   const visibleSchedules = showMySchedules ? schedules.filter((schedule) => team.available && team.member
-    ? (Array.isArray(schedule.attendee_member_ids) && schedule.attendee_member_ids.includes(team.member.id)) || schedule.owner_name === team.member.display_name
+    ? (Array.isArray(schedule.attendee_member_ids) && schedule.attendee_member_ids.includes(team.member.id)) || (schedule.owner_member_id ? schedule.owner_member_id === team.member.id : schedule.owner_name === team.member.display_name)
     : scheduleMatchesPerson(schedule, myScheduleName)) : schedules;
   const schedulePeople = [...new Set([...getSchedulePeople(schedules), ...team.members.map((member) => member.display_name)])];
   const getCalendarSchedulesForDate = (dateStr: string) => visibleSchedules
@@ -556,7 +597,7 @@ export default function IntegratedPortal() {
       label: '메시지가 삭제 대기 중입니다.',
       keys: [`message:${id}`],
       hide: () => setMessages((current) => current.filter((message) => message.id !== id)),
-      restore: () => setMessages((current) => current.some((message) => message.id === id) ? current : [...current, target].sort((a, b) => a.id - b.id)),
+      restore: () => { if (!remoteDeletedMessageIdsRef.current.has(String(id))) setMessages((current) => upsertTeamChatMessages(current, [target])); },
       commit: async () => {
         const { error } = await supabase.from('messages').delete().eq('id', id);
         if (error) throw new Error(`메시지를 삭제하지 못했습니다: ${error.message}`);
@@ -637,7 +678,13 @@ export default function IntegratedPortal() {
     });
   };
 
-  const fetchMessages = async () => { const { data } = await supabase.from('messages').select('*').order('created_at', { ascending: true }); if (data) setMessages(data.filter((message) => !pendingDeleteKeysRef.current.has(`message:${message.id}`))); };
+  const fetchMessages = async () => {
+    const token = chatReconciler.beginSnapshot();
+    const { data, error } = await supabase.from('messages').select('*').order('created_at', { ascending: true });
+    if (error || !data) return;
+    const snapshot = chatReconciler.finishSnapshot(token, data);
+    if (snapshot) setMessages(snapshot.filter((message) => !pendingDeleteKeysRef.current.has(`message:${message.id}`)));
+  };
   const fetchFiles = async () => { const { data } = await supabase.from('files').select('*').order('created_at', { ascending: false }); if (data) setFiles(data.filter((file) => !pendingDeleteKeysRef.current.has(`file:${file.id}`))); };
   const fetchCategories = async () => { const { data } = await supabase.from('categories').select('*').order('order_index', { ascending: true }); if (data) setCategories(data.filter((category) => !pendingDeleteKeysRef.current.has(`category:${category.id}`))); };
   const fetchSchedules = async () => {
@@ -668,7 +715,7 @@ export default function IntegratedPortal() {
   const restoreActivityLog = async (log: ActivityLogRow) => {
     if (!log.record_id || !log.before_data || (log.table_name !== 'schedules' && log.table_name !== 'messages')) return;
     const allowedFields = log.table_name === 'schedules'
-      ? ['title', 'date', 'end_date', 'start_time', 'end_time', 'is_notice', 'is_urgent', 'is_completed', 'is_todo', 'schedule_type', 'absence_type', 'recurrence_group_id', 'recurrence_original_date', 'recurrence_index', 'recurrence_status', 'recurrence_is_exception', 'recurrence_cancelled_at', ...(metadataAvailable ? ['owner_name', 'attendee_names', 'location', 'linked_file_ids'] : []), ...('attendee_member_ids' in log.before_data ? ['attendee_member_ids'] : [])]
+      ? ['title', 'date', 'end_date', 'start_time', 'end_time', 'is_notice', 'is_urgent', 'is_completed', 'is_todo', 'schedule_type', 'absence_type', 'recurrence_group_id', 'recurrence_original_date', 'recurrence_index', 'recurrence_status', 'recurrence_is_exception', 'recurrence_cancelled_at', ...(metadataAvailable ? ['owner_name', 'attendee_names', 'location', 'linked_file_ids'] : []), ...('attendee_member_ids' in log.before_data ? ['attendee_member_ids'] : []), ...(responsibilityAvailable && 'owner_member_id' in log.before_data ? ['owner_member_id'] : [])]
       : ['content', 'sender_id', 'created_at', ...('mentioned_member_ids' in log.before_data ? ['mentioned_member_ids'] : [])];
     const restoredValues = Object.fromEntries(
       allowedFields
@@ -713,7 +760,9 @@ export default function IntegratedPortal() {
         if (result.error) throw new Error('대화를 불러오지 못했습니다. 잠시 후 다시 확인해 주세요.');
         if (!result.data) throw new Error('삭제된 메시지입니다.');
         const message = result.data;
-        setMessages((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? message : item) : [...current, message]);
+        chatReconciler.upsert(message);
+        remoteDeletedMessageIdsRef.current.delete(String(message.id));
+        setMessages((current) => upsertTeamChatMessages(current, [message]));
         setFocusedMessageId(Number(message.id));
         setIsChatOpen(true);
       }
@@ -813,7 +862,8 @@ export default function IntegratedPortal() {
     setUploadItems((current) => [...current, ...items]);
     await runUploads(items);
   };
-  const updateDocument = async (file: DocumentFile, values: { name: string; category: string }) => {
+  const updateDocument = async (file: DocumentFile, values: DocumentUpdateValues) => {
+    if (values.owner_member_id !== undefined && !responsibilityAvailable) throw new Error('담당자 지정 기능을 준비 중입니다. 다시 열어 시도해 주세요.');
     const { data, error } = await supabase.from('files').update(values).eq('id', file.id).select('id');
     if (error || !data?.length) throw new Error(error?.message ?? '문서가 삭제되었거나 수정할 수 없습니다.');
     await fetchFiles();
@@ -898,6 +948,7 @@ export default function IntegratedPortal() {
           schedule_type: schedule.schedule_type,
           absence_type: schedule.absence_type,
           ...(schedule.owner_name !== undefined ? { owner_name: schedule.owner_name } : {}),
+          ...(responsibilityAvailable && schedule.owner_member_id !== undefined ? { owner_member_id: schedule.owner_member_id } : {}),
           ...(schedule.attendee_names !== undefined ? { attendee_names: schedule.attendee_names } : {}),
           ...(team.available && schedule.attendee_member_ids !== undefined ? { attendee_member_ids: schedule.attendee_member_ids } : {}),
           ...(schedule.location !== undefined ? { location: schedule.location } : {}),
@@ -1226,8 +1277,6 @@ export default function IntegratedPortal() {
         />
         <PortalMobileActions view={viewMode} onView={setViewMode} onChat={() => setIsChatOpen(true)} onSearch={() => setIsCommandPaletteOpen(true)} onQuickAdd={() => setIsQuickScheduleOpen(true)} onKiosk={openKioskWindow} onHistory={() => void openActivityHistory()} onDevices={() => setIsDeviceManagerOpen(true)} onCleanup={() => setIsYearlyCleanupOpen(true)} onExit={handlePortalExit} isAdmin={isDeviceAdmin} notificationControl={notificationControl} />
       </header>
-
-      {uploadItems.length > 0 && <DocumentUploadStatus items={uploadItems} onRetry={(ids) => void runUploads(uploadItems.filter((item) => ids.includes(item.id) && item.status === 'failed'))} onDismiss={() => { if (uploadBusyRef.current) return; uploadRunner.forget(uploadItems.map((item) => item.id)); setUploadItems([]); }} />}
 
       <main className="flex-1 flex overflow-hidden relative">
         <aside className={`
@@ -1593,7 +1642,34 @@ export default function IntegratedPortal() {
               ) : (
                 <div className="min-w-0 pb-10">
                   <label className="mb-4 block text-sm font-bold text-slate-700">문서 검색<input aria-label="파일명 검색" className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm font-medium text-slate-900 outline-none focus:ring-2 focus:ring-blue-500" placeholder="파일명 검색..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} /></label>
-                  <DocumentLibrary files={files.filter((file) => file.name.toLowerCase().includes(searchQuery.toLowerCase()) && (selectedCategory === '전체' || isSameCategory(file.category ?? '', selectedCategory)))} categories={categories.map((category) => category.name)} onDownload={(file) => void handleDownload(file.url, file.name)} onDelete={onDeleteFile} onUpdate={updateDocument} onPreview={setPreviewFile} />
+                  <DocumentLibrary
+                    files={files.filter((file) => file.name.toLowerCase().includes(searchQuery.toLowerCase()) && (selectedCategory === '전체' || isSameCategory(file.category ?? '', selectedCategory)))}
+                    allFiles={files}
+                    categories={categories.map((category) => category.name)}
+                    selectedCategory={selectedCategory}
+                    searchQuery={searchQuery}
+                    uploadItems={uploadItems}
+                    uploading={uploading}
+                    teamMembers={team.members}
+                    teamMembersLoading={team.loading}
+                    teamMembersError={team.error}
+                    ownerAssignmentAvailable={team.available && responsibilityAvailable}
+                    onRetryUpload={(id) => {
+                      const item = uploadItems.find((entry) => entry.id === id);
+                      if (item?.status === 'failed') void runUploads([item]);
+                      else if (item?.status === 'succeeded') void fetchFiles();
+                    }}
+                    onDismissUpload={(id) => {
+                      const item = uploadItems.find((entry) => entry.id === id);
+                      if (item?.status !== 'failed') return;
+                      uploadRunner.forget([id]);
+                      setUploadItems((current) => current.filter((entry) => entry.id !== id));
+                    }}
+                    onDownload={(file) => void handleDownload(file.url, file.name)}
+                    onDelete={onDeleteFile}
+                    onUpdate={updateDocument}
+                    onPreview={setPreviewFile}
+                  />
                 </div>
               )}
             </div>
@@ -1683,6 +1759,7 @@ export default function IntegratedPortal() {
           teamMembersAvailable={team.available}
           teamMembersLoading={team.loading}
           teamMembersError={team.error}
+          ownerAssignmentAvailable={team.available && responsibilityAvailable}
           onClose={() => { setScheduleFormDate(null); setEditingSchedule(null); setIsCopyingSchedule(false); setRecurrenceScope('this'); }}
           onSubmit={onSaveSchedule}
         />

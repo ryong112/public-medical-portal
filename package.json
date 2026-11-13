@@ -11,7 +11,7 @@
     "test:schedules": "node --test tests/schedule-category.test.cjs tests/schedule-classification.test.cjs tests/schedule-workflow.test.cjs tests/dashboard-schedules.test.cjs tests/absence-calendar.test.cjs tests/preview-pagination.test.cjs tests/schedule-proximity.test.cjs tests/week-carousel.test.cjs tests/korean-holidays.test.cjs",
     "test:documents": "node --test tests/document-upload.test.cjs tests/document-preview.test.cjs",
     "test:kiosk": "node --test tests/kiosk-schedules.test.cjs tests/kiosk-pagination.test.cjs tests/kiosk-launcher.test.cjs",
-    "test:team": "node --test tests/team-chat-mentions.test.cjs tests/team-identity-components.test.cjs tests/team-identity-sql.test.cjs"
+    "test:team": "node --test tests/team-chat-feed.test.cjs tests/team-chat-window.test.cjs tests/team-chat-mentions.test.cjs tests/team-identity-components.test.cjs tests/team-identity-sql.test.cjs tests/schedule-team-owner.test.cjs tests/team-responsibility-sql.test.cjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.104.0",

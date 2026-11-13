@@ -1,7 +1,9 @@
 'use client';
 
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { AtSign, LoaderCircle, MessageCircle, Send, Trash2, X } from 'lucide-react';
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { AtSign, Grip, LoaderCircle, MessageCircle, Move, RotateCcw, Send, Trash2, X } from 'lucide-react';
+import { CHAT_WINDOW_DESKTOP_WIDTH, CHAT_WINDOW_STORAGE_KEY, clampChatWindow, defaultChatWindow, parseChatWindow, type ChatWindowGeometry } from '@/lib/team-chat-window';
+import { upsertTeamChatMessages } from '@/lib/team-chat-feed';
 import {
   getChatMentionQuery,
   getChatMentionRanges,
@@ -62,12 +64,18 @@ export default function TeamChatPanel({
   const [isSending, setIsSending] = useState(false);
   const [deletingIds, setDeletingIds] = useState<number[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [desktopGeometry, setDesktopGeometry] = useState<ChatWindowGeometry | null>(null);
+  const [isDesktop, setIsDesktop] = useState(false);
+  const [manipulating, setManipulating] = useState<'move' | 'resize' | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const lastFocusedMessageRef = useRef<number | null>(null);
   const sendingRef = useRef(false);
   const deletingRef = useRef(new Set<number>());
+  const geometryRef = useRef<ChatWindowGeometry | null>(null);
+  const desktopRef = useRef(false);
+  const manipulationRef = useRef<{ pointerId: number; mode: 'move' | 'resize'; startX: number; startY: number; geometry: ChatWindowGeometry } | null>(null);
   const identifier = useId();
   const titleId = `${identifier}-title`;
   const hintId = `${identifier}-hint`;
@@ -91,11 +99,91 @@ export default function TeamChatPanel({
   const suggestionIndex = Math.min(activeSuggestion, Math.max(0, suggestions.length - 1));
   const activeRecipients = selectedMembers.filter((member) => memberById.get(member.id)?.handle === member.handle
     && getChatMentionRanges(draft, member.handle).length > 0);
-  const sortedMessages = useMemo(() => [...messages].sort((left, right) => {
+  const sortedMessages = useMemo(() => upsertTeamChatMessages([], messages).sort((left, right) => {
     const leftTime = messageDate(left.created_at)?.getTime();
     const rightTime = messageDate(right.created_at)?.getTime();
     return leftTime !== undefined && rightTime !== undefined ? leftTime - rightTime || left.id - right.id : left.id - right.id;
   }), [messages]);
+
+  useEffect(() => {
+    let initial = true;
+    const updateViewport = () => {
+      const desktop = window.innerWidth >= CHAT_WINDOW_DESKTOP_WIDTH;
+      desktopRef.current = desktop;
+      setIsDesktop(desktop);
+      manipulationRef.current = null;
+      setManipulating(null);
+      if (!desktop) return;
+      const viewport = { width: window.innerWidth, height: window.innerHeight };
+      let saved = geometryRef.current;
+      if (initial) {
+        initial = false;
+        try { saved = parseChatWindow(window.localStorage.getItem(CHAT_WINDOW_STORAGE_KEY)); } catch { /* Storage is optional. */ }
+      }
+      const next = saved ? clampChatWindow(saved, viewport) : defaultChatWindow(viewport);
+      geometryRef.current = next;
+      setDesktopGeometry(next);
+    };
+    const frame = window.requestAnimationFrame(updateViewport);
+    window.addEventListener('resize', updateViewport);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener('resize', updateViewport);
+      manipulationRef.current = null;
+    };
+  }, []);
+
+  const persistGeometry = (geometry: ChatWindowGeometry) => {
+    try { window.localStorage.setItem(CHAT_WINDOW_STORAGE_KEY, JSON.stringify({ version: 1, ...geometry })); } catch { /* Storage is optional. */ }
+  };
+  const updateGeometry = (geometry: ChatWindowGeometry, persist = false) => {
+    const next = clampChatWindow(geometry, { width: window.innerWidth, height: window.innerHeight });
+    geometryRef.current = next;
+    setDesktopGeometry(next);
+    if (persist) persistGeometry(next);
+  };
+  const resetGeometry = () => {
+    if (!desktopRef.current) return;
+    updateGeometry(defaultChatWindow({ width: window.innerWidth, height: window.innerHeight }));
+    try { window.localStorage.removeItem(CHAT_WINDOW_STORAGE_KEY); } catch { /* Storage is optional. */ }
+  };
+  const startManipulation = (event: PointerEvent<HTMLElement>, mode: 'move' | 'resize') => {
+    if (!desktopRef.current || event.button !== 0 || !geometryRef.current) return;
+    if (mode === 'move' && event.target instanceof Element && event.target.closest('button, a, input, textarea, select')) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    manipulationRef.current = { pointerId: event.pointerId, mode, startX: event.clientX, startY: event.clientY, geometry: geometryRef.current };
+    setManipulating(mode);
+  };
+  const moveManipulation = (event: PointerEvent<HTMLElement>) => {
+    const action = manipulationRef.current;
+    if (!action || action.pointerId !== event.pointerId || !desktopRef.current) return;
+    event.preventDefault();
+    const dx = event.clientX - action.startX;
+    const dy = event.clientY - action.startY;
+    updateGeometry(action.mode === 'move'
+      ? { ...action.geometry, x: action.geometry.x + dx, y: action.geometry.y + dy }
+      : { ...action.geometry, width: action.geometry.width + dx, height: action.geometry.height + dy });
+  };
+  const endManipulation = (event: PointerEvent<HTMLElement>) => {
+    if (manipulationRef.current?.pointerId !== event.pointerId) return;
+    manipulationRef.current = null;
+    setManipulating(null);
+    if (geometryRef.current) persistGeometry(geometryRef.current);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+  const keyboardManipulation = (event: KeyboardEvent<HTMLElement>, mode: 'move' | 'resize') => {
+    if (event.currentTarget !== event.target || !desktopRef.current || !geometryRef.current) return;
+    const step = event.shiftKey ? 50 : 20;
+    const dx = event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0;
+    const dy = event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0;
+    if (!dx && !dy) return;
+    event.preventDefault();
+    const current = geometryRef.current;
+    updateGeometry(mode === 'move'
+      ? { ...current, x: current.x + dx, y: current.y + dy }
+      : { ...current, width: current.width + dx, height: current.height + dy }, true);
+  };
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -186,7 +274,9 @@ export default function TeamChatPanel({
       ref={panelRef}
       role="dialog"
       aria-labelledby={titleId}
-      className="fixed bottom-0 right-0 z-[100] flex h-[min(82dvh,720px)] w-full min-w-0 flex-col overflow-hidden rounded-t-[28px] border border-slate-200 bg-slate-50 shadow-2xl md:bottom-6 md:right-6 md:w-[420px] md:max-w-[calc(100vw-3rem)] md:rounded-[28px]"
+      data-chat-desktop={isDesktop ? 'true' : 'false'}
+      style={isDesktop && desktopGeometry ? { left: desktopGeometry.x, top: desktopGeometry.y, width: desktopGeometry.width, height: desktopGeometry.height, right: 'auto', bottom: 'auto' } : undefined}
+      className={`fixed bottom-0 right-0 z-[100] flex h-[min(82dvh,720px)] w-full min-w-0 flex-col overflow-hidden rounded-t-[24px] border border-slate-300 bg-[#e9eff6] shadow-[0_18px_65px_rgba(15,23,42,0.28)] md:bottom-6 md:right-6 md:w-[420px] md:rounded-[22px] ${manipulating ? 'select-none' : ''}`}
       onKeyDown={(event) => {
         if (event.key !== 'Escape' || event.nativeEvent.isComposing) return;
         event.stopPropagation();
@@ -196,15 +286,18 @@ export default function TeamChatPanel({
         } else onClose();
       }}
     >
-      <header className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-4">
+      <header data-chat-drag-handle tabIndex={isDesktop ? 0 : undefined} aria-label={isDesktop ? '채팅창 위치 이동' : undefined} title={isDesktop ? '드래그 또는 방향키로 이동' : undefined} onPointerDown={(event) => startManipulation(event, 'move')} onPointerMove={moveManipulation} onPointerUp={endManipulation} onPointerCancel={endManipulation} onLostPointerCapture={endManipulation} onKeyDown={(event) => keyboardManipulation(event, 'move')} className={`flex shrink-0 items-center justify-between gap-3 border-b border-slate-950 bg-slate-900 px-4 py-3.5 text-white outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400 ${isDesktop ? `touch-none ${manipulating === 'move' ? 'cursor-grabbing' : 'cursor-grab'}` : ''}`}>
         <div className="flex min-w-0 items-center gap-3">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-blue-600"><MessageCircle size={20} /></span>
-          <div className="min-w-0"><h2 id={titleId} className="text-sm font-black text-slate-900">정보공유방</h2><p className="mt-1 text-[11px] font-medium text-slate-500">팀의 소식과 이야기를 나눠 보세요</p></div>
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-500/20 text-blue-300 ring-1 ring-blue-400/25"><MessageCircle size={19} /></span>
+          <div className="min-w-0"><h2 id={titleId} className="text-sm font-black tracking-tight text-white">정보공유방</h2><p className="mt-1 flex items-center gap-1 text-[10px] font-medium text-slate-300">{isDesktop ? <><Move size={10} aria-hidden="true" />상단을 드래그해 이동</> : '팀의 소식과 이야기를 나눠 보세요'}</p></div>
         </div>
-        <button type="button" onClick={onClose} aria-label="정보공유방 닫기" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500 transition hover:bg-slate-200 focus-visible:outline-2 focus-visible:outline-blue-500"><X size={18} /></button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {isDesktop && <button type="button" onClick={resetGeometry} aria-label="채팅창 위치와 크기 초기화" title="기본 위치·크기로 복원" className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-300 transition hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-blue-400"><RotateCcw size={15} /></button>}
+          <button type="button" onClick={onClose} aria-label="정보공유방 닫기" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/10 text-slate-200 transition hover:bg-white/20 hover:text-white focus-visible:outline-2 focus-visible:outline-blue-400"><X size={18} /></button>
+        </div>
       </header>
 
-      <div role="log" aria-label="정보공유방 메시지" aria-live="polite" aria-relevant="additions" className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5">
+      <div role="log" aria-label="정보공유방 메시지" aria-live="polite" aria-relevant="additions" className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-[#e9eff6] px-4 py-5">
         {!sortedMessages.length && <div className="flex min-h-36 flex-col items-center justify-center gap-2 text-center"><MessageCircle size={26} className="text-slate-300" /><p className="text-sm font-bold text-slate-500">아직 나눈 이야기가 없어요</p><p className="text-xs text-slate-400">첫 소식을 남겨 보세요.</p></div>}
         {sortedMessages.map((message, index) => {
           const date = messageDate(message.created_at);
@@ -219,12 +312,12 @@ export default function TeamChatPanel({
           const authorName = message.sender_display_name || author?.display_name || (isOwn ? '나' : message.sender_member_id ? '이전 팀원' : '이전 대화 참여자');
           return (
             <div key={message.id}>
-              {showDate && <div className="mb-5 mt-2 flex items-center gap-3" aria-label={date ? dateLabelFormatter.format(date) : '날짜 정보 없음'}><span className="h-px flex-1 bg-slate-200" /><span className="shrink-0 text-[10px] font-bold text-slate-400">{date ? dateLabelFormatter.format(date) : '날짜 정보 없음'}</span><span className="h-px flex-1 bg-slate-200" /></div>}
+              {showDate && <div className="mb-5 mt-2 flex items-center justify-center" aria-label={date ? dateLabelFormatter.format(date) : '날짜 정보 없음'}><span className="rounded-full border border-slate-300/60 bg-white/75 px-3 py-1 text-[10px] font-semibold text-slate-600">{date ? dateLabelFormatter.format(date) : '날짜 정보 없음'}</span></div>}
               <article data-team-message-id={message.id} className={`group mb-4 flex min-w-0 gap-2 ${isOwn ? 'flex-row-reverse' : ''} ${focusedMessageId === message.id ? 'rounded-2xl bg-amber-50/70 ring-2 ring-amber-200 ring-offset-4' : ''}`} aria-label={`${authorName}의 메시지`}>
-                <span aria-hidden="true" className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-xs font-black ${isOwn ? 'bg-blue-100 text-blue-700' : 'bg-white text-slate-500 ring-1 ring-slate-200'}`}>{authorName.slice(0, 1)}</span>
+                <span aria-hidden="true" className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-xs font-black ${isOwn ? 'bg-blue-100 text-blue-700 ring-1 ring-blue-200' : 'bg-slate-600 text-white ring-1 ring-slate-600'}`}>{authorName.slice(0, 1)}</span>
                 <div className={`flex min-w-0 max-w-[calc(100%-3rem)] flex-col ${isOwn ? 'items-end' : 'items-start'}`}>
-                  <div className={`mb-1.5 flex max-w-full items-baseline gap-2 ${isOwn ? 'flex-row-reverse' : ''}`}><span className="truncate text-[11px] font-bold text-slate-600">{authorName}</span><time dateTime={date ? date.toISOString() : undefined} className="shrink-0 text-[10px] text-slate-400">{date ? timeFormatter.format(date) : '--:--'}</time></div>
-                  <div className={`max-w-full whitespace-pre-wrap break-words rounded-2xl px-3.5 py-3 text-[13px] font-medium leading-relaxed [overflow-wrap:anywhere] ${isOwn ? 'rounded-tr-sm bg-blue-600 text-white' : 'rounded-tl-sm border border-slate-200 bg-white text-slate-800'}`}>
+                  <div className={`mb-1.5 flex max-w-full items-baseline gap-2 ${isOwn ? 'flex-row-reverse' : ''}`}><span className="truncate text-[11px] font-bold text-slate-700">{authorName}</span><time dateTime={date ? date.toISOString() : undefined} className="shrink-0 text-[10px] text-slate-500">{date ? timeFormatter.format(date) : '--:--'}</time></div>
+                  <div className={`max-w-full whitespace-pre-wrap break-words rounded-2xl px-3.5 py-3 text-[13px] font-medium leading-relaxed shadow-sm [overflow-wrap:anywhere] ${isOwn ? 'rounded-tr-sm bg-blue-600 text-white shadow-blue-950/10' : 'rounded-tl-sm border border-slate-300/80 bg-white text-slate-900 shadow-slate-900/5'}`}>
                     {getChatTextSegments(message.content, availableMembers, message.mentioned_member_ids ?? []).map((segment, segmentIndex) => segment.memberId
                       ? <span key={segmentIndex} title={memberById.get(segment.memberId)?.display_name} className={`rounded px-0.5 font-bold ${isOwn ? 'bg-white/20 text-white' : 'bg-blue-50 text-blue-700'}`}>{segment.text}</span>
                       : <span key={segmentIndex}>{segment.text}</span>)}
@@ -238,14 +331,14 @@ export default function TeamChatPanel({
         <div ref={bottomRef} />
       </div>
 
-      <form onSubmit={(event) => { event.preventDefault(); void sendMessage(); }} className="relative shrink-0 border-t border-slate-200 bg-white p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:p-4">
+      <form onSubmit={(event) => { event.preventDefault(); void sendMessage(); }} className="relative shrink-0 border-t border-slate-300 bg-slate-50 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:p-4">
         {mentionQuery && <div id={listId} role="listbox" aria-label="멘션할 팀원" className="absolute bottom-full left-3 right-3 mb-2 max-h-64 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-1.5 shadow-xl">
           <div className="flex items-center gap-1.5 px-2.5 py-2 text-[10px] font-bold text-slate-400"><AtSign size={12} />알림을 받을 팀원을 선택하세요</div>
           {suggestions.length ? suggestions.map((member, index) => <button type="button" role="option" id={`${listId}-${index}`} key={member.id} aria-selected={index === suggestionIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => chooseMember(member)} className={`flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2.5 text-left ${index === suggestionIndex ? 'bg-blue-50 text-blue-700' : 'text-slate-700 hover:bg-slate-50'}`}><span className="truncate text-xs font-bold">{member.display_name}</span><span className="truncate text-[11px] text-slate-400">@{member.handle}</span></button>) : <p className="px-3 py-3 text-xs text-slate-500">일치하는 팀원이 없습니다.</p>}
         </div>}
         {activeRecipients.length > 0 && <div aria-label="멘션 알림 대상" className="mb-2 flex flex-wrap gap-1.5">{activeRecipients.map((member) => <span key={member.id} className="inline-flex max-w-full items-center gap-1 rounded-lg bg-blue-50 py-1 pl-2 text-[10px] font-bold text-blue-700"><AtSign size={10} className="shrink-0" /><span className="truncate">{member.display_name}</span><button type="button" aria-label={`${member.display_name} 멘션 알림 대상에서 제외`} onClick={() => setSelectedMembers((previous) => previous.filter((item) => item.id !== member.id))} disabled={isSending} className="flex h-5 w-5 shrink-0 items-center justify-center rounded hover:bg-blue-100 disabled:opacity-50"><X size={11} /></button></span>)}</div>}
         {error && <p role="alert" className="mb-2 rounded-xl bg-red-50 px-3 py-2 text-xs leading-relaxed text-red-600">{error}</p>}
-        <div className="flex items-end gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-2 focus-within:border-blue-300 focus-within:ring-2 focus-within:ring-blue-100">
+        <div className="flex items-end gap-2 rounded-2xl border border-slate-300 bg-white p-2 shadow-sm focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100">
           <textarea
             ref={inputRef}
             value={draft}
@@ -274,8 +367,9 @@ export default function TeamChatPanel({
           />
           <button type="submit" disabled={!draft.trim() || isSending} aria-label={isSending ? '메시지 전송 중' : '메시지 전송'} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white transition hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400">{isSending ? <LoaderCircle size={17} className="animate-spin" /> : <Send size={17} />}</button>
         </div>
-        <p id={hintId} className="mt-2 px-1 text-[10px] leading-relaxed text-slate-400">{canMention ? '@ 입력 후 목록에서 선택한 팀원에게만 알림 · ' : '팀원 연결 후 @멘션 사용 가능 · '}Enter 전송 / Shift+Enter 줄바꿈</p>
+        <p id={hintId} className="mt-2 px-1 text-[10px] leading-relaxed text-slate-500 md:pr-5">{canMention ? '@ 입력 후 목록에서 선택한 팀원에게만 알림 · ' : '팀원 연결 후 @멘션 사용 가능 · '}Enter 전송 / Shift+Enter 줄바꿈</p>
       </form>
+      {isDesktop && <button type="button" data-chat-resize-handle aria-label="채팅창 크기 조절" title="드래그 또는 방향키로 크기 조절" onPointerDown={(event) => startManipulation(event, 'resize')} onPointerMove={moveManipulation} onPointerUp={endManipulation} onPointerCancel={endManipulation} onLostPointerCapture={endManipulation} onKeyDown={(event) => keyboardManipulation(event, 'resize')} className="absolute bottom-0 right-0 z-10 flex h-7 w-7 touch-none cursor-nwse-resize items-center justify-center rounded-tl-xl bg-slate-200/90 text-slate-500 hover:bg-blue-100 hover:text-blue-600 focus-visible:outline-2 focus-visible:outline-offset-[-3px] focus-visible:outline-blue-500"><Grip size={15} aria-hidden="true" /></button>}
     </section>
   );
 }

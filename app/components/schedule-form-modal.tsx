@@ -6,6 +6,7 @@ import DirectTimeInput from '@/app/components/direct-time-input';
 import TeamMemberPicker, { type TeamMember } from '@/app/components/team-member-picker';
 import { scheduleCategoryStyles } from '@/lib/schedule-category';
 import { getLegacyAttendeeText, getScheduleAttendeeNames, normalizeAttendeeMemberIds } from '@/lib/schedule-team-attendees';
+import { changeScheduleOwner, getScheduleOwnerName, normalizeOwnerMemberId } from '@/lib/schedule-team-owner';
 
 export type ScheduleType = 'meeting' | 'business_trip' | 'internal' | 'leave' | 'unclassified';
 export type AbsenceType = 'annual' | 'early' | 'outing';
@@ -23,6 +24,7 @@ export interface NewScheduleInput {
   schedule_type: ScheduleType;
   absence_type: AbsenceType;
   owner_name?: string | null;
+  owner_member_id?: string | null;
   attendee_names?: string[];
   attendee_member_ids?: string[];
   location?: string | null;
@@ -49,6 +51,7 @@ interface ScheduleFormModalProps {
   teamMembersAvailable?: boolean;
   teamMembersLoading?: boolean;
   teamMembersError?: string | null;
+  ownerAssignmentAvailable?: boolean;
   onClose: () => void;
   onSubmit: (schedules: NewScheduleInput[], recurrence?: ScheduleRecurrenceSubmission) => Promise<void>;
 }
@@ -156,7 +159,7 @@ const removeStoredDraft = (key: string) => {
 
 const fieldClassName = 'w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-base font-medium text-slate-900 outline-none transition-colors placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-500 sm:text-sm';
 
-export default function ScheduleFormModal({ date, initialSchedule, existingSchedules = [], copyMode = false, availableFiles = [], people = [], metadataAvailable = true, teamMembers = [], teamMembersAvailable = false, teamMembersLoading = false, teamMembersError = null, onClose, onSubmit }: ScheduleFormModalProps) {
+export default function ScheduleFormModal({ date, initialSchedule, existingSchedules = [], copyMode = false, availableFiles = [], people = [], metadataAvailable = true, teamMembers = [], teamMembersAvailable = false, teamMembersLoading = false, teamMembersError = null, ownerAssignmentAvailable = false, onClose, onSubmit }: ScheduleFormModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const formId = useId();
@@ -178,13 +181,14 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
   const [scheduleType, setScheduleType] = useState<ScheduleType>(initialSchedule?.schedule_type ?? 'unclassified');
   const [absenceType, setAbsenceType] = useState<AbsenceType>(normalizeAbsenceType(initialSchedule?.absence_type));
   const [ownerName, setOwnerName] = useState(initialSchedule?.owner_name ?? '');
+  const [ownerMemberId, setOwnerMemberId] = useState(() => normalizeOwnerMemberId(initialSchedule?.owner_member_id));
   const [attendees, setAttendees] = useState(initialSchedule?.attendee_names?.join(', ') ?? '');
   const [attendeeMemberIds, setAttendeeMemberIds] = useState(() => normalizeAttendeeMemberIds(initialSchedule?.attendee_member_ids));
   const [attendeeBaselineIds, setAttendeeBaselineIds] = useState(() => normalizeAttendeeMemberIds(initialSchedule?.attendee_member_ids));
   const [location, setLocation] = useState(initialSchedule?.location ?? '');
   const [linkedFileIds, setLinkedFileIds] = useState(() => normalizeFileIds(initialSchedule?.linked_file_ids));
   const [fileSearch, setFileSearch] = useState('');
-  const [detailsOpen, setDetailsOpen] = useState(Boolean(initialSchedule?.owner_name || initialSchedule?.attendee_names?.length || initialSchedule?.attendee_member_ids?.length || initialSchedule?.location || initialSchedule?.linked_file_ids?.length));
+  const [detailsOpen, setDetailsOpen] = useState(Boolean(initialSchedule?.owner_name || initialSchedule?.owner_member_id || initialSchedule?.attendee_names?.length || initialSchedule?.attendee_member_ids?.length || initialSchedule?.location || initialSchedule?.linked_file_ids?.length));
   const [recurrenceMode, setRecurrenceMode] = useState<RecurrenceMode>('none');
   const [monthlyWeek, setMonthlyWeek] = useState<MonthlyWeek>('first');
   const [error, setError] = useState('');
@@ -239,7 +243,8 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
       is_todo: isTodo,
       schedule_type: scheduleType,
       absence_type: absenceType,
-      owner_name: ownerName.trim() || null,
+      owner_name: getScheduleOwnerName(ownerName, ownerMemberId, teamMembers),
+      owner_member_id: ownerMemberId,
       attendee_names: getScheduleAttendeeNames(legacyAttendeeText, attendeeMemberIds, teamMembers),
       attendee_member_ids: attendeeMemberIds,
       ...(teamMembersAvailable ? { legacy_attendee_names: normalizeAttendees(legacyAttendeeText) } : {}),
@@ -255,7 +260,7 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
     } catch {
       // Draft storage must never prevent the user from saving the schedule.
     }
-  }, [absenceType, attendeeMemberIds, dateMode, dateValue, draftStorageKey, endDateValue, endTime, initialSchedule, isNotice, isTodo, isUrgent, legacyAttendeeText, linkedFileIds, location, monthlyWeek, ownerName, recurrenceMode, scheduleType, startTime, teamMembers, teamMembersAvailable, timeMode, title]);
+  }, [absenceType, attendeeMemberIds, dateMode, dateValue, draftStorageKey, endDateValue, endTime, initialSchedule, isNotice, isTodo, isUrgent, legacyAttendeeText, linkedFileIds, location, monthlyWeek, ownerName, ownerMemberId, recurrenceMode, scheduleType, startTime, teamMembers, teamMembersAvailable, timeMode, title]);
 
   const conflicts = (() => {
     const currentEndDate = dateMode === 'range' ? endDateValue : dateValue;
@@ -287,12 +292,13 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
     setScheduleType(savedDraft.schedule_type);
     setAbsenceType(normalizeAbsenceType(savedDraft.absence_type));
     setOwnerName(savedDraft.owner_name ?? '');
+    setOwnerMemberId(normalizeOwnerMemberId(savedDraft.owner_member_id));
     setAttendees((savedDraft.legacy_attendee_names ?? savedDraft.attendee_names)?.join(', ') ?? '');
     setAttendeeMemberIds(normalizeAttendeeMemberIds(savedDraft.attendee_member_ids));
     setAttendeeBaselineIds(savedDraft.legacy_attendee_names ? [] : normalizeAttendeeMemberIds(savedDraft.attendee_member_ids));
     setLocation(savedDraft.location ?? '');
     setLinkedFileIds(normalizeFileIds(savedDraft.linked_file_ids));
-    setDetailsOpen(Boolean(savedDraft.owner_name || savedDraft.attendee_names?.length || savedDraft.attendee_member_ids?.length || savedDraft.location || savedDraft.linked_file_ids?.length));
+    setDetailsOpen(Boolean(savedDraft.owner_name || savedDraft.owner_member_id || savedDraft.attendee_names?.length || savedDraft.attendee_member_ids?.length || savedDraft.location || savedDraft.linked_file_ids?.length));
     setRecurrenceMode(savedDraft.recurrenceMode ?? 'none');
     setMonthlyWeek(savedDraft.monthlyWeek ?? 'first');
     setSavedDraft(null);
@@ -331,7 +337,8 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
         absence_type: absenceType,
         ...(teamMembersAvailable ? { attendee_member_ids: attendeeMemberIds } : {}),
         ...(metadataAvailable ? {
-          owner_name: ownerName.trim() || null,
+          owner_name: getScheduleOwnerName(ownerName, ownerMemberId, teamMembers),
+          ...(ownerAssignmentAvailable ? { owner_member_id: ownerMemberId } : {}),
           attendee_names: teamMembersAvailable ? getScheduleAttendeeNames(legacyAttendeeText, attendeeMemberIds, teamMembers) : normalizeAttendees(attendees),
           location: location.trim() || null,
           linked_file_ids: linkedFileIds,
@@ -365,6 +372,11 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
   const recurrenceCount = createRecurringDates(dateValue, recurrenceMode, monthlyWeek).length;
   const scheduleTitle = copyMode ? '일정 복사' : initialSchedule ? '일정 수정' : '일정 추가';
   const toggleFile = (id: number) => setLinkedFileIds((current) => current.includes(id) ? current.filter((fileId) => fileId !== id) : [...current, id]);
+  const changeOwner = (memberIds: string[]) => {
+    const next = changeScheduleOwner(ownerMemberId, memberIds, ownerName, teamMembers);
+    setOwnerMemberId(next.ownerMemberId);
+    setOwnerName(next.ownerName);
+  };
 
   return (
     <dialog
@@ -526,7 +538,11 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
               <fieldset disabled={!metadataAvailable} className="min-w-0 space-y-4 disabled:opacity-60">
                 <legend className="sr-only">선택 일정 정보</legend>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="min-w-0"><span className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-slate-700"><Users size={14} />담당자</span><input value={ownerName} maxLength={120} onChange={(event) => setOwnerName(event.target.value)} list={formId + '-people'} placeholder="담당자 이름" autoComplete="off" className={fieldClassName} /></label>
+                  <div className="min-w-0">
+                    {ownerAssignmentAvailable && <TeamMemberPicker members={teamMembers} selectedIds={ownerMemberId ? [ownerMemberId] : []} onChange={changeOwner} multiple={false} label="담당 팀원" loading={teamMembersLoading} error={teamMembersError} unavailable={!teamMembersAvailable && !teamMembersLoading && !teamMembersError} disabled={isSaving || !metadataAvailable} />}
+                    {(!ownerMemberId || !ownerAssignmentAvailable) && <label className={ownerAssignmentAvailable ? 'mt-3 block min-w-0' : 'block min-w-0'}><span className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-slate-700"><Users size={14} />{ownerAssignmentAvailable ? '담당자 직접 입력' : '담당자'}</span><input value={ownerName} maxLength={120} disabled={Boolean(ownerMemberId)} onChange={(event) => setOwnerName(event.target.value)} list={formId + '-people'} placeholder="담당자 이름" autoComplete="off" className={fieldClassName} /></label>}
+                    {ownerMemberId && !teamMembers.some((member) => member.id === ownerMemberId) && ownerName.trim() && <p className="mt-1.5 break-words text-xs text-slate-500">기존 담당자: {ownerName.trim()}</p>}
+                  </div>
                   <label className="min-w-0"><span className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-slate-700"><MapPin size={14} />장소</span><input value={location} maxLength={300} onChange={(event) => setLocation(event.target.value)} placeholder="예: 본관 2층 회의실" className={fieldClassName} /></label>
                 </div>
                 <datalist id={formId + '-people'}>{personSuggestions.map((name) => <option key={name} value={name} />)}</datalist>

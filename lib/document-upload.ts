@@ -25,6 +25,55 @@ export interface DocumentUploadServices {
   ensureMetadata: (item: UploadItem & { url: string }) => Promise<void>;
 }
 
+interface ListedDocument {
+  url: string;
+  name: string;
+  category?: string | null;
+}
+
+export type DocumentListRow<T extends ListedDocument> =
+  | { type: 'file'; file: T; uploadId?: string }
+  | { type: 'upload'; item: UploadItem };
+
+/** A lost registration response is also settled once its real server row exists. */
+export function getSettledDocumentUploadIds(files: readonly Pick<ListedDocument, 'url'>[], uploads: readonly UploadItem[]): string[] {
+  const urls = new Set(files.map((file) => file.url));
+  return uploads.filter((item) => (item.status === 'succeeded' || item.status === 'failed') && item.url && urls.has(item.url)).map((item) => item.id);
+}
+
+/** Merge temporary upload slots with persisted rows by stable URL, never by name. */
+export function getDocumentListRows<T extends ListedDocument>(
+  files: readonly T[],
+  uploads: readonly UploadItem[],
+  selectedCategory = '전체',
+  searchQuery = '',
+  allFiles: readonly T[] = files,
+): DocumentListRow<T>[] {
+  const persisted = new Map(allFiles.map((file) => [file.url, file]));
+  const visible = new Map(files.map((file) => [file.url, file]));
+  const promoted = new Set<string>();
+  const rows: DocumentListRow<T>[] = [];
+  const query = searchQuery.trim().toLocaleLowerCase('ko-KR');
+  for (const item of uploads) {
+    // A real server row is authoritative even if a metadata response was lost.
+    // Do not resurrect its old name/category after it was moved or renamed.
+    const actual = item.url ? persisted.get(item.url) : undefined;
+    if (actual) {
+      const file = visible.get(actual.url);
+      if (file && !promoted.has(file.url)) {
+        rows.push({ type: 'file', file, uploadId: item.id });
+        promoted.add(file.url);
+      }
+      continue;
+    }
+    if (selectedCategory !== '전체' && item.targetCategory !== selectedCategory) continue;
+    if (query && !item.file.name.toLocaleLowerCase('ko-KR').includes(query)) continue;
+    rows.push({ type: 'upload', item });
+  }
+  for (const file of files) if (!promoted.has(file.url)) rows.push({ type: 'file', file });
+  return rows;
+}
+
 export function createDocumentUploads(files: readonly File[], targetCategory: string): UploadItem[] {
   return files.map((file) => {
     const id = globalThis.crypto.randomUUID();

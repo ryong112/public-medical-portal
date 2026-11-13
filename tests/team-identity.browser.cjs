@@ -38,6 +38,7 @@ const holdMark = (state) => { state.holdNextMark = true; return new Promise((res
         const rpc = url.pathname.split('/').at(-1);
         if (['list_team_members', 'get_my_team_member', 'list_my_team_notifications'].includes(rpc) && !state.capable) return reply({ code: 'PGRST202', message: `Function ${rpc} is unavailable in the old schema` }, 404);
         if (rpc === 'list_team_members') return reply(members);
+        if (rpc === 'team_responsibility_available') return reply(false);
         if (rpc === 'get_my_team_member') return reply(state.currentMember);
         if (rpc === 'list_my_team_notifications') {
           state.listCalls += 1;
