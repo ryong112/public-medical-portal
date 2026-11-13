@@ -46,14 +46,6 @@ type ManagedScreen = Screen & {
   availTop?: number;
 };
 
-type ScreenDetails = {
-  currentScreen: ManagedScreen;
-};
-
-type WindowWithScreenDetails = Window & {
-  getScreenDetails?: () => Promise<ScreenDetails>;
-};
-
 const normalizeCategoryLinkName = (name: string) => name
   .replace(/\s*\([^)]*\)\s*$/u, '')
   .replace(/^\s*\d{2,4}년(?:도)?\s*/u, '')
@@ -177,6 +169,7 @@ export default function IntegratedPortal() {
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isActivityHistoryOpen, setIsActivityHistoryOpen] = useState(false);
   const [isKioskOpen, setIsKioskOpen] = useState(isDedicatedKioskLocation);
+  const [kioskLaunchNotice, setKioskLaunchNotice] = useState('');
   const [isDedicatedKiosk] = useState(isDedicatedKioskLocation);
   const [isAbsenceBoardOpen, setIsAbsenceBoardOpen] = useState(false);
   const [isQuickScheduleOpen, setIsQuickScheduleOpen] = useState(false);
@@ -198,7 +191,11 @@ export default function IntegratedPortal() {
   useEffect(() => {
     if (!isDedicatedKiosk) return;
     const kioskUrl = new URL('/kiosk', window.location.origin);
-    kioskUrl.searchParams.set('launcher', '1');
+    // 오래된 전광판 링크도 기본은 설치 없는 브라우저 창으로 엽니다.
+    // 실행기를 명시한 기존 링크만 별도 호환 경로를 유지합니다.
+    if (new URLSearchParams(window.location.search).get('launcher') === '1') {
+      kioskUrl.searchParams.set('launcher', '1');
+    }
     window.location.replace(kioskUrl.toString());
   }, [isDedicatedKiosk]);
 
@@ -1060,7 +1057,8 @@ export default function IntegratedPortal() {
   };
 
   const openKioskWindow = () => {
-    const openInlineKiosk = () => {
+    const openInlineKiosk = (notice = '') => {
+      setKioskLaunchNotice(notice);
       setIsKioskOpen(true);
       if (!document.fullscreenElement) {
         void document.documentElement.requestFullscreen?.().catch(() => undefined);
@@ -1073,56 +1071,34 @@ export default function IntegratedPortal() {
       return;
     }
 
-    // Windows에서는 설치된 전용 실행기를 호출해 문서함 브라우저와 완전히
-    // 분리된 Edge 앱 창으로 엽니다. 실행기는 같은 창을 재사용하므로 중복으로
-    // 전광판이 열리지 않고 보조 모니터 전체 화면 상태도 직접 관리합니다.
-    if (/Windows/i.test(navigator.userAgent)) {
-      const launcherLink = document.createElement('a');
-      launcherLink.href = 'dphskiosk://open';
-      launcherLink.hidden = true;
-      document.body.append(launcherLink);
-      launcherLink.click();
-      launcherLink.remove();
-      return;
-    }
-
     const kioskUrl = new URL('/kiosk', window.location.origin);
 
     // 팝업은 클릭 이벤트와 같은 실행 흐름에서 즉시 열어야 브라우저가
-    // 사용자 동작으로 인식합니다. 화면 권한 확인은 창을 연 뒤 처리합니다.
+    // 사용자 동작으로 인식합니다. 설치나 모니터 접근 권한은 요청하지 않습니다.
+    // 같은 이름의 창을 재사용하고, 다른 모니터로의 이동은 사용자가 선택합니다.
     const targetScreen = window.screen as ManagedScreen;
     const left = targetScreen.availLeft ?? 0;
     const top = targetScreen.availTop ?? 0;
     const width = targetScreen.availWidth || window.screen.availWidth;
     const height = targetScreen.availHeight || window.screen.availHeight;
-    const kioskWindow = window.open(
-      kioskUrl.toString(),
-      'dphs-dashboard-kiosk',
-      `popup,fullscreen,left=${left},top=${top},width=${width},height=${height}`,
-    );
+    let kioskWindow: Window | null;
+    try {
+      kioskWindow = window.open(
+        kioskUrl.toString(),
+        'dphs-dashboard-kiosk',
+        `popup,fullscreen,left=${left},top=${top},width=${width},height=${height}`,
+      );
+    } catch {
+      openInlineKiosk('별도 창을 열지 못해 현재 화면에서 전광판을 열었습니다.');
+      return;
+    }
 
     if (!kioskWindow) {
-      openInlineKiosk();
+      openInlineKiosk('별도 창을 열지 못해 현재 화면에서 전광판을 열었습니다.');
       return;
     }
 
     kioskWindow.focus();
-
-    // 다중 모니터 창 관리 권한이 있으면 이미 열린 전광판 창을 현재
-    // 모니터의 작업 영역에 맞춥니다. 권한이 없어도 전광판은 그대로 열립니다.
-    const screenDetailsWindow = window as WindowWithScreenDetails;
-    if (screenDetailsWindow.getScreenDetails) {
-      void screenDetailsWindow.getScreenDetails()
-        .then(({ currentScreen }) => {
-          kioskWindow.moveTo(currentScreen.availLeft ?? 0, currentScreen.availTop ?? 0);
-          kioskWindow.resizeTo(
-            currentScreen.availWidth || window.screen.availWidth,
-            currentScreen.availHeight || window.screen.availHeight,
-          );
-          kioskWindow.focus();
-        })
-        .catch(() => undefined);
-    }
   };
 
   const selectedCalendarSchedules = getCalendarSchedulesForDate(selectedCalendarDate);
@@ -1663,7 +1639,7 @@ export default function IntegratedPortal() {
         />
       )}
 
-      {isKioskOpen && <DashboardKiosk schedules={schedules} dedicatedWindow={isDedicatedKiosk} onClose={() => {
+      {isKioskOpen && <DashboardKiosk schedules={schedules} dedicatedWindow={isDedicatedKiosk} initialNotice={kioskLaunchNotice} onClose={() => {
         if (isDedicatedKiosk) window.close();
         else setIsKioskOpen(false);
       }} />}

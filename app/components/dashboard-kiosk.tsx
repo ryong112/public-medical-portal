@@ -1,557 +1,303 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { BellRing, CalendarDays, CheckCircle2, Clock3, Minimize2, MonitorUp, Siren, X } from 'lucide-react';
-import { getScheduleCategory, scheduleCategoryStyles, type ScheduleCategory } from '@/lib/schedule-category';
-
-export interface KioskSchedule {
-  id: number | string;
-  title: string;
-  date: string;
-  end_date?: string | null;
-  start_time?: string | null;
-  end_time?: string | null;
-  schedule_type?: string | null;
-  absence_type?: string | null;
-  is_notice?: boolean | null;
-  is_urgent?: boolean | null;
-  is_todo?: boolean | null;
-  is_completed?: boolean | null;
-}
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { createPortal } from 'react-dom';
+import { Minimize2, MonitorUp, X } from 'lucide-react';
+import KioskBoard from './kiosk-board';
+import KioskController from './kiosk-controller';
+import { type KioskSchedule } from '@/lib/kiosk-schedules';
+export type { KioskSchedule } from '@/lib/kiosk-schedules';
 
 interface DashboardKioskProps {
   schedules: KioskSchedule[];
   onClose: () => void;
   dedicatedWindow?: boolean;
   nativeLauncher?: boolean;
+  initialNotice?: string;
 }
 
-type ScheduleBreakdownItem = {
-  label: string;
-  count: number;
-  category: ScheduleCategory;
-};
-
-const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-const addDays = (date: Date, days: number) => { const next = new Date(date); next.setDate(next.getDate() + days); return next; };
-const endOfThisWeek = (date: Date) => addDays(date, (7 - date.getDay()) % 7);
-const startOfNextWeek = (date: Date) => addDays(endOfThisWeek(date), 1);
-const endOfNextWeek = (date: Date) => {
-  const daysUntilThisSunday = (7 - date.getDay()) % 7;
-  return addDays(date, daysUntilThisSunday + 7);
-};
-const scheduleEnd = (schedule: KioskSchedule) => schedule.end_date && schedule.end_date >= schedule.date ? schedule.end_date : schedule.date;
-const happensOn = (schedule: KioskSchedule, day: string) => schedule.date <= day && scheduleEnd(schedule) >= day;
-const overlapsRange = (schedule: KioskSchedule, start: string, end: string) => schedule.date <= end && scheduleEnd(schedule) >= start;
-const cleanTitle = (title: string) => title.replace(/^(?:회의|출장|내부일정|휴가|조퇴|외출)\s*[)）]\s*/u, '').trim();
-const formatTime = (schedule: KioskSchedule) => schedule.start_time && schedule.end_time
-  ? `${schedule.start_time}–${schedule.end_time}`
-  : schedule.start_time ? `${schedule.start_time}부터` : schedule.end_time ? `${schedule.end_time}까지` : '시간 미정';
-const absenceLabel = (schedule: KioskSchedule) => {
-  if (['early', 'early_am', 'early_pm'].includes(schedule.absence_type ?? '') || schedule.title.includes('조퇴')) return '조퇴';
-  if (schedule.absence_type === 'outing' || schedule.title.includes('외출')) return '외출';
-  return '연차';
-};
-const formatShortDate = (value: string) => {
-  const [year, month, day] = value.split('-').map(Number);
-  const weekday = ['일', '월', '화', '수', '목', '금', '토'][new Date(year, month - 1, day).getDay()];
-  return `${month}.${day}(${weekday})`;
-};
-const formatAbsenceDate = (value: string) => {
-  const [year, month, day] = value.split('-').map(Number);
-  const weekday = ['일', '월', '화', '수', '목', '금', '토'][new Date(year, month - 1, day).getDay()];
-  return `${month}월 ${day}일(${weekday})`;
-};
-
-const getScheduleBreakdown = (items: KioskSchedule[], includeLeave = false): ScheduleBreakdownItem[] => {
-  const counts = { general: 0, internal: 0, business_trip: 0, meeting: 0, leave: 0 };
-  for (const schedule of items) counts[getScheduleCategory(schedule)] += 1;
-  const result: ScheduleBreakdownItem[] = [
-    { label: '일반', count: counts.general, category: 'general' },
-    { label: '내부일정', count: counts.internal, category: 'internal' },
-    { label: '출장', count: counts.business_trip, category: 'business_trip' },
-    { label: '회의', count: counts.meeting, category: 'meeting' },
-  ];
-  if (includeLeave) result.push({ label: '휴가', count: counts.leave, category: 'leave' });
-  return result;
-};
-
-const getAbsenceBreakdown = (items: KioskSchedule[]): ScheduleBreakdownItem[] => [
-  { label: '연차', count: items.filter((schedule) => absenceLabel(schedule) === '연차').length, category: 'leave' },
-  { label: '조퇴', count: items.filter((schedule) => absenceLabel(schedule) === '조퇴').length, category: 'leave' },
-  { label: '외출', count: items.filter((schedule) => absenceLabel(schedule) === '외출').length, category: 'leave' },
-];
-
-type ExtendedScreen = Screen & {
-  availLeft?: number;
-  availTop?: number;
-};
-
-type DocumentPictureInPictureApi = {
-  requestWindow: (options?: { width?: number; height?: number }) => Promise<Window>;
-};
-
+type ExtendedScreen = Screen & { availLeft?: number; availTop?: number };
 type WindowWithDocumentPictureInPicture = Window & {
-  documentPictureInPicture?: DocumentPictureInPictureApi;
+  documentPictureInPicture?: {
+    requestWindow: (options: { width: number; height: number; disallowReturnToOpener: boolean }) => Promise<Window>;
+  };
 };
 
 const getAvailableScreenBounds = () => {
-  const currentScreen = window.screen as ExtendedScreen;
-  return {
-    left: currentScreen.availLeft ?? 0,
-    top: currentScreen.availTop ?? 0,
-    width: currentScreen.availWidth,
-    height: currentScreen.availHeight,
-  };
+  const screen = window.screen as ExtendedScreen;
+  return { left: screen.availLeft ?? window.screenX, top: screen.availTop ?? window.screenY, width: screen.availWidth, height: screen.availHeight };
 };
+const subscribeFullscreen = (listener: () => void) => {
+  document.addEventListener('fullscreenchange', listener);
+  return () => document.removeEventListener('fullscreenchange', listener);
+};
+const getFullscreen = () => Boolean(document.fullscreenElement);
+const getServerFullscreen = () => false;
+const FULLSCREEN_RETRY = '전체화면을 열지 못했습니다. 다시 열기를 누르거나 창 모드로 볼 수 있습니다.';
 
-export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = false, nativeLauncher = false }: DashboardKioskProps) {
+export default function DashboardKiosk({ schedules, onClose, dedicatedWindow = false, nativeLauncher = false, initialNotice = '' }: DashboardKioskProps) {
   const [now, setNow] = useState(() => new Date());
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [isPictureInPictureOpen, setIsPictureInPictureOpen] = useState(false);
-  const collapseRequestedRef = useRef(false);
+  const [controllerWindow, setControllerWindow] = useState<Window | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState(initialNotice);
+  const isFullscreen = useSyncExternalStore(subscribeFullscreen, getFullscreen, getServerFullscreen);
+  const collapsedRef = useRef(false);
+  const busyRef = useRef(false);
+  const operationRef = useRef(0);
+  const activeRef = useRef(true);
+  const closingRef = useRef(false);
   const pictureInPictureWindowRef = useRef<Window | null>(null);
+  const lastScreenRef = useRef<ReturnType<typeof getAvailableScreenBounds> | null>(null);
   const nativeCommandResetTimerRef = useRef<number | null>(null);
-  const today = dateKey(now);
-  const tomorrow = dateKey(addDays(now, 1));
-  const thisWeekEnd = dateKey(endOfThisWeek(now));
-  const nextWeekStart = dateKey(startOfNextWeek(now));
-  const nextWeekEnd = dateKey(endOfNextWeek(now));
+  const initialFullscreenRequestRef = useRef<Promise<void> | null>(null);
+  const actionsRef = useRef({ expand: () => {}, collapse: () => {}, close: () => {} });
 
   const setDedicatedWindowTitle = (collapsed: boolean) => {
-    if (!dedicatedWindow) return;
-    document.title = collapsed ? '전광판 제어' : '공공의료지원과 전광판';
+    if (dedicatedWindow) document.title = collapsed ? '전광판 제어' : '공공의료지원과 전광판';
+  };
+  const setNativeCommandTitle = (command: 'collapse' | 'exit' | null) => {
+    if (dedicatedWindow && nativeLauncher) document.title = command ? `DPHS_KIOSK_COMMAND_${command.toUpperCase()}_${Date.now()}` : '공공의료지원과 전광판';
+  };
+  const isCurrent = (operation: number) => activeRef.current && !closingRef.current && operationRef.current === operation;
+  const setTransition = (value: boolean) => { busyRef.current = value; setBusy(value); };
+  const closePictureInPicture = () => {
+    const pipWindow = pictureInPictureWindowRef.current;
+    pictureInPictureWindowRef.current = null;
+    setControllerWindow(null);
+    pipWindow?.close();
   };
 
-  const setNativeCommandTitle = (command: 'collapse' | 'exit' | null) => {
-    if (!dedicatedWindow || !nativeLauncher) return;
-    document.title = command
-      ? `DPHS_KIOSK_COMMAND_${command.toUpperCase()}_${Date.now()}`
-      : '공공의료지원과 전광판';
-  };
+  useEffect(() => {
+    activeRef.current = true;
+    return () => {
+      activeRef.current = false;
+      operationRef.current += 1;
+      const pipWindow = pictureInPictureWindowRef.current;
+      pictureInPictureWindowRef.current = null;
+      pipWindow?.close();
+      if (nativeCommandResetTimerRef.current !== null) window.clearTimeout(nativeCommandResetTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (!dedicatedWindow) return;
     const previousTitle = document.title;
     document.title = '공공의료지원과 전광판';
-    // 설치형 전광판의 전체화면은 전용 Edge 키오스크가 단독으로 관리합니다.
-    // 브라우저 전용 창에서만 DOM Fullscreen API를 사용합니다.
+    let cancelled = false;
+    // A newly loaded window may not inherit the initiating click's activation.
+    // Try fullscreen, but keep an explicit user-gesture entry point if denied.
     if (!nativeLauncher && !document.fullscreenElement) {
-      void document.documentElement.requestFullscreen?.({ navigationUI: 'hide' }).catch(() => undefined);
+      const operation = operationRef.current;
+      const request = async () => {
+        try {
+          // Reuse the in-flight request across Strict Mode effect replay.
+          if (!initialFullscreenRequestRef.current) {
+            initialFullscreenRequestRef.current = document.documentElement.requestFullscreen
+              ? document.documentElement.requestFullscreen({ navigationUI: 'hide' })
+              : Promise.reject(new Error('Fullscreen unavailable'));
+          }
+          await initialFullscreenRequestRef.current;
+          // A slow initial request must not fullscreen a controller after the
+          // user has already collapsed or closed the board.
+          if ((!activeRef.current || closingRef.current || collapsedRef.current) && document.fullscreenElement) {
+            await document.exitFullscreen().catch(() => undefined);
+          }
+          if (!cancelled && isCurrent(operation) && !collapsedRef.current) setMessage('');
+        } catch {
+          if (!cancelled && activeRef.current && !closingRef.current && operationRef.current === operation) setMessage('전체화면 시작을 누르면 전광판이 화면을 가득 채웁니다.');
+        }
+      };
+      void request();
     }
-    return () => { document.title = previousTitle; };
+    return () => { cancelled = true; document.title = previousTitle; };
   }, [dedicatedWindow, nativeLauncher]);
 
   useEffect(() => {
     const clock = window.setInterval(() => setNow(new Date()), 250);
     let enteredFullscreen = Boolean(document.fullscreenElement);
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.stopPropagation();
-      onClose();
-      if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+      if (event.repeat || event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (event.key === 'F8') {
+        event.preventDefault();
+        if (collapsedRef.current) actionsRef.current.expand();
+        else actionsRef.current.collapse();
+      } else if (event.key === 'Escape') {
+        event.stopPropagation();
+        actionsRef.current.close();
+      }
     };
     const onFullscreenChange = () => {
-      const nextIsFullscreen = Boolean(document.fullscreenElement);
-      setIsFullscreen(nextIsFullscreen);
-      if (nextIsFullscreen) enteredFullscreen = true;
-      else if (enteredFullscreen && !dedicatedWindow && !collapseRequestedRef.current) onClose();
+      if (document.fullscreenElement) enteredFullscreen = true;
+      else if (enteredFullscreen && !dedicatedWindow && !collapsedRef.current && !closingRef.current) actionsRef.current.close();
     };
-    document.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('keydown', onKeyDown, true);
     document.addEventListener('fullscreenchange', onFullscreenChange);
     return () => {
       window.clearInterval(clock);
-      document.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('keydown', onKeyDown, true);
       document.removeEventListener('fullscreenchange', onFullscreenChange);
     };
-  }, [dedicatedWindow, onClose]);
-
-  useEffect(() => () => {
-    pictureInPictureWindowRef.current?.close();
-    pictureInPictureWindowRef.current = null;
-    if (nativeCommandResetTimerRef.current !== null) {
-      window.clearTimeout(nativeCommandResetTimerRef.current);
-      nativeCommandResetTimerRef.current = null;
-    }
-  }, []);
-
-  const data = useMemo(() => {
-    const active = schedules
-      .filter((schedule) => schedule.date && scheduleEnd(schedule) >= today)
-      .sort((left, right) => `${left.date}-${left.start_time ?? '99:99'}`.localeCompare(`${right.date}-${right.start_time ?? '99:99'}`));
-    return {
-      today: active.filter((schedule) => happensOn(schedule, today) && getScheduleCategory(schedule) !== 'leave'),
-      thisWeek: tomorrow <= thisWeekEnd
-        ? active.filter((schedule) => getScheduleCategory(schedule) !== 'leave' && overlapsRange(schedule, tomorrow, thisWeekEnd))
-        : [],
-      nextWeek: active.filter((schedule) => getScheduleCategory(schedule) !== 'leave' && overlapsRange(schedule, nextWeekStart, nextWeekEnd)),
-      absences: active.filter((schedule) => getScheduleCategory(schedule) === 'leave' && scheduleEnd(schedule) >= today && schedule.date <= nextWeekEnd),
-      notices: active.filter((schedule) => schedule.is_notice),
-      todos: schedules.filter((schedule) => schedule.date && schedule.is_todo && !schedule.is_completed)
-        .sort((left, right) => `${scheduleEnd(left)}-${left.start_time ?? '99:99'}`.localeCompare(`${scheduleEnd(right)}-${right.start_time ?? '99:99'}`)),
-    };
-  }, [nextWeekEnd, nextWeekStart, schedules, thisWeekEnd, today, tomorrow]);
+  }, [dedicatedWindow]);
 
   const closeKiosk = () => {
-    if (dedicatedWindow && nativeLauncher) {
-      setNativeCommandTitle('exit');
-      return;
-    }
-    pictureInPictureWindowRef.current?.close();
-    pictureInPictureWindowRef.current = null;
-    setIsPictureInPictureOpen(false);
-    collapseRequestedRef.current = false;
-    if (document.fullscreenElement) void document.exitFullscreen().finally(onClose);
+    if (closingRef.current) return;
+    closingRef.current = true;
+    operationRef.current += 1;
+    if (dedicatedWindow && nativeLauncher) { setNativeCommandTitle('exit'); return; }
+    closePictureInPicture();
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined).then(onClose);
     else onClose();
   };
 
-  const mountPictureInPictureController = (controllerWindow: Window) => {
-    const controllerDocument = controllerWindow.document;
-    controllerDocument.documentElement.lang = 'ko';
-    controllerDocument.title = '전광판 제어';
-    controllerDocument.head.replaceChildren();
-    controllerDocument.body.replaceChildren();
-
-    const style = controllerDocument.createElement('style');
-    style.textContent = `
-      * { box-sizing: border-box; }
-      html, body { width: 100%; height: 100%; margin: 0; }
-      body {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 12px;
-        overflow: hidden;
-        background: #071022;
-        color: #fff;
-        font-family: Arial, "Noto Sans KR", sans-serif;
-      }
-      .controller { width: 100%; }
-      .eyebrow { margin: 0 0 7px; color: #93c5fd; font-size: 10px; font-weight: 800; letter-spacing: .08em; }
-      .actions { display: grid; grid-template-columns: minmax(0, 1fr) 42px; gap: 8px; }
-      button {
-        min-height: 48px;
-        border: 0;
-        border-radius: 13px;
-        cursor: pointer;
-        font-size: 14px;
-        font-weight: 900;
-      }
-      #reopen-kiosk { background: #2563eb; color: #fff; box-shadow: 0 10px 24px rgba(37, 99, 235, .35); }
-      #reopen-kiosk:hover { background: #1d4ed8; }
-      #close-kiosk { background: rgba(255, 255, 255, .1); color: #cbd5e1; }
-      #close-kiosk:hover { background: #ef4444; color: #fff; }
-      button:focus-visible { outline: 3px solid #93c5fd; outline-offset: 2px; }
-    `;
-    controllerDocument.head.append(style);
-
-    const controller = controllerDocument.createElement('main');
-    controller.className = 'controller';
-    const eyebrow = controllerDocument.createElement('p');
-    eyebrow.className = 'eyebrow';
-    eyebrow.textContent = '공공의료지원과 공유 현황';
-    const actions = controllerDocument.createElement('div');
-    actions.className = 'actions';
-    const reopenButton = controllerDocument.createElement('button');
-    reopenButton.id = 'reopen-kiosk';
-    reopenButton.type = 'button';
-    reopenButton.textContent = '전광판 다시 열기 · F8';
-    const closeButton = controllerDocument.createElement('button');
-    closeButton.id = 'close-kiosk';
-    closeButton.type = 'button';
-    closeButton.setAttribute('aria-label', '전광판 완전히 종료');
-    closeButton.title = '전광판 완전히 종료';
-    closeButton.textContent = '×';
-
-    actions.append(reopenButton, closeButton);
-    controller.append(eyebrow, actions);
-    controllerDocument.body.append(controller);
-
-    reopenButton.addEventListener('click', () => void expandKiosk());
-    closeButton.addEventListener('click', closeKiosk);
-    controllerWindow.addEventListener('keydown', (event) => {
-      if (event.key !== 'F8' || event.repeat) return;
+  const preparePictureInPicture = (pipWindow: Window) => {
+    const doc = pipWindow.document;
+    doc.documentElement.lang = 'ko';
+    doc.title = '전광판 제어';
+    doc.body.replaceChildren();
+    doc.documentElement.style.cssText = 'height:100%;background:#071022;color-scheme:dark';
+    doc.body.style.cssText = 'margin:0;min-height:100%;display:flex;align-items:center;background:#071022';
+    pictureInPictureWindowRef.current = pipWindow;
+    setControllerWindow(pipWindow);
+    pipWindow.addEventListener('keydown', (event) => {
+      if (event.key !== 'F8' || event.repeat || event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
       event.preventDefault();
-      void expandKiosk();
+      actionsRef.current.expand();
     });
-    controllerWindow.addEventListener('pagehide', () => {
-      if (pictureInPictureWindowRef.current !== controllerWindow) return;
+    pipWindow.addEventListener('pagehide', () => {
+      if (pictureInPictureWindowRef.current !== pipWindow) return;
       pictureInPictureWindowRef.current = null;
-      setIsPictureInPictureOpen(false);
+      if (activeRef.current && !closingRef.current) {
+        setControllerWindow(null);
+        setMessage('PiP를 닫았습니다. 이 창에서 전광판을 다시 열 수 있습니다.');
+      }
     }, { once: true });
   };
 
   const collapseKiosk = async () => {
-    collapseRequestedRef.current = true;
-
-    if (dedicatedWindow) {
-      if (nativeLauncher) {
-        // Edge 키오스크는 전체화면 상태 그대로 숨고, 작은 제어창은 실행기가
-        // 별도 네이티브 창으로 즉시 표시합니다. React 화면은 접지 않습니다.
-        setNativeCommandTitle('collapse');
-        if (nativeCommandResetTimerRef.current !== null) {
-          window.clearTimeout(nativeCommandResetTimerRef.current);
-        }
-        nativeCommandResetTimerRef.current = window.setTimeout(() => {
-          setNativeCommandTitle(null);
-          nativeCommandResetTimerRef.current = null;
-        }, 800);
-        return;
-      }
-      if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
-      setDedicatedWindowTitle(true);
-      setIsCollapsed(true);
-      const bounds = getAvailableScreenBounds();
-      window.resizeTo(360, 180);
-      window.moveTo(bounds.left + Math.max(0, bounds.width - 360), bounds.top + Math.max(0, Math.round((bounds.height - 180) / 2)));
+    if (busyRef.current || closingRef.current || collapsedRef.current) return;
+    if (dedicatedWindow && nativeLauncher) {
+      setNativeCommandTitle('collapse');
+      if (nativeCommandResetTimerRef.current !== null) window.clearTimeout(nativeCommandResetTimerRef.current);
+      nativeCommandResetTimerRef.current = window.setTimeout(() => { setNativeCommandTitle(null); nativeCommandResetTimerRef.current = null; }, 800);
       return;
     }
+    const operation = ++operationRef.current;
+    setTransition(true);
+    collapsedRef.current = true;
+    lastScreenRef.current = getAvailableScreenBounds();
+    setMessage('');
 
-    setDedicatedWindowTitle(true);
-    setIsCollapsed(true);
-
-    const pictureInPictureApi = (window as WindowWithDocumentPictureInPicture).documentPictureInPicture;
-    const pictureInPictureRequest = pictureInPictureApi?.requestWindow({ width: 360, height: 145 });
-    if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
-
-    if (!pictureInPictureRequest) return;
+    // Request PiP during the click/F8, BEFORE awaiting fullscreen exit. Catch
+    // immediately so an early rejection cannot become unhandled.
+    let pipRequest: Promise<Window | null> = Promise.resolve(null);
     try {
-      const controllerWindow = await pictureInPictureRequest;
-      pictureInPictureWindowRef.current = controllerWindow;
-      setIsPictureInPictureOpen(true);
-      mountPictureInPictureController(controllerWindow);
-    } catch {
-      setIsPictureInPictureOpen(false);
+      const api = (window as WindowWithDocumentPictureInPicture).documentPictureInPicture;
+      if (api) pipRequest = api.requestWindow({ width: 360, height: 210, disallowReturnToOpener: true }).catch(() => null);
+    } catch { /* Small dedicated window remains available when PiP is denied. */ }
+    const pipResult = pipRequest.then((pipWindow) => {
+      if (!isCurrent(operation)) { pipWindow?.close(); return null; }
+      return pipWindow;
+    });
+    if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
+    if (!isCurrent(operation)) { void pipResult.then((pipWindow) => pipWindow?.close()); return; }
+    if (document.fullscreenElement) {
+      collapsedRef.current = false;
+      setMessage('접기를 완료하지 못했습니다. 다시 시도해 주세요.');
+      setTransition(false);
+      operationRef.current += 1;
+      void pipResult.then((pipWindow) => pipWindow?.close());
+      return;
     }
+    setIsCollapsed(true);
+    setDedicatedWindowTitle(true);
+    if (dedicatedWindow) {
+      const bounds = lastScreenRef.current;
+      try {
+        window.resizeTo(380, 260);
+        window.moveTo(bounds.left + Math.max(0, bounds.width - 380), bounds.top + Math.max(0, Math.round((bounds.height - 260) / 2)));
+      } catch { /* Browsers may refuse resize on a user-created tab. */ }
+    }
+    const pipWindow = await pipResult;
+    if (!isCurrent(operation)) { pipWindow?.close(); return; }
+    if (pipWindow && !pipWindow.closed) {
+      try { preparePictureInPicture(pipWindow); }
+      catch { closePictureInPicture(); pipWindow.close(); setMessage('PiP를 사용할 수 없어 이 창으로 접었습니다.'); }
+    } else {
+      setMessage(dedicatedWindow ? 'PiP를 사용할 수 없어 이 창으로 접었습니다.' : 'PiP를 사용할 수 없어 현재 페이지에 복귀 버튼을 표시합니다.');
+    }
+    setTransition(false);
   };
 
   const expandKiosk = async () => {
-    collapseRequestedRef.current = false;
-    if (dedicatedWindow) {
-      if (nativeLauncher) {
-        if (nativeCommandResetTimerRef.current !== null) {
-          window.clearTimeout(nativeCommandResetTimerRef.current);
-          nativeCommandResetTimerRef.current = null;
-        }
-        setNativeCommandTitle(null);
+    if (busyRef.current || closingRef.current) return;
+    if (dedicatedWindow && nativeLauncher) { setNativeCommandTitle(null); return; }
+    const operation = ++operationRef.current;
+    setTransition(true);
+    setMessage('');
+    try {
+      // PiP clicks share activation with the opener. Focusing the opener consumes
+      // it, so neither focus(), closing PiP, nor an await may precede this call.
+      if (!document.fullscreenElement) {
+        if (!document.documentElement.requestFullscreen) throw new Error('Fullscreen unavailable');
+        await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+      }
+      if (!isCurrent(operation)) {
+        if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
         return;
       }
-      setDedicatedWindowTitle(false);
+      if (!document.fullscreenElement) throw new Error('Fullscreen not entered');
+      collapsedRef.current = false;
       setIsCollapsed(false);
-      window.focus();
-
-      // 접힌 전용 창 안에서 누른 버튼/F8의 사용자 동작을 바로 사용해야
-      // 브라우저가 전체 화면 요청을 허용할 가능성이 가장 높습니다.
-      try {
-        await document.documentElement.requestFullscreen?.({ navigationUI: 'hide' });
-        if (document.fullscreenElement) return;
-      } catch {
-        // 아래의 설치형 실행기/창 크기 복원 경로로 계속 진행합니다.
-      }
-
-      const bounds = getAvailableScreenBounds();
-      window.moveTo(bounds.left, bounds.top);
-      window.resizeTo(bounds.width, bounds.height);
-      window.focus();
-      return;
+      setDedicatedWindowTitle(false);
+      // Fullscreen is confirmed; the return control can now safely disappear.
+      // Do not call window.focus() here: fullscreen already activates its window,
+      // and an extra focus transition can make Chromium leave fullscreen again.
+      closePictureInPicture();
+    } catch {
+      if (isCurrent(operation)) setMessage(FULLSCREEN_RETRY);
+    } finally {
+      if (isCurrent(operation)) setTransition(false);
     }
-    setIsCollapsed(false);
-    window.focus();
-    // PIP 창을 먼저 닫으면 그 창에서 발생한 클릭 권한까지 함께 사라져
-    // 전체 화면 요청이 거절될 수 있습니다. 클릭 권한이 살아 있을 때 요청을
-    // 먼저 시작하고, 그 다음 작은 제어창을 정리합니다.
-    const fullscreenRequest = document.documentElement.requestFullscreen?.({ navigationUI: 'hide' });
-    await fullscreenRequest?.catch(() => undefined);
-    pictureInPictureWindowRef.current?.close();
-    pictureInPictureWindowRef.current = null;
-    setIsPictureInPictureOpen(false);
   };
 
-  const shortcutActionRef = useRef<() => void>(() => undefined);
+  const showWindowMode = () => {
+    if (busyRef.current || closingRef.current) return;
+    operationRef.current += 1;
+    collapsedRef.current = false;
+    setIsCollapsed(false);
+    setMessage('');
+    setDedicatedWindowTitle(false);
+    closePictureInPicture();
+    if (dedicatedWindow) {
+      const bounds = lastScreenRef.current ?? getAvailableScreenBounds();
+      try { window.moveTo(bounds.left, bounds.top); window.resizeTo(bounds.width, bounds.height); } catch { /* User can resize manually. */ }
+    }
+    window.focus();
+  };
 
   useEffect(() => {
-    shortcutActionRef.current = () => {
-      if (isCollapsed) void expandKiosk();
-      else void collapseKiosk();
-    };
+    actionsRef.current = { expand: () => void expandKiosk(), collapse: () => void collapseKiosk(), close: closeKiosk };
   });
 
-  useEffect(() => {
-    const onShortcut = (event: KeyboardEvent) => {
-      if (event.key !== 'F8' || event.repeat) return;
-      event.preventDefault();
-      shortcutActionRef.current();
-    };
-    window.addEventListener('keydown', onShortcut);
-    return () => window.removeEventListener('keydown', onShortcut);
-  }, []);
-
   if (isCollapsed) {
-    if (!dedicatedWindow && isPictureInPictureOpen) return null;
-
-    if (!dedicatedWindow) {
-      return (
-        <aside className="fixed bottom-5 right-5 z-[400] w-[min(22rem,calc(100vw-2rem))] rounded-2xl border border-blue-200 bg-white p-3 text-slate-900 shadow-2xl ring-1 ring-slate-900/5">
-          <p className="mb-2 px-1 text-[10px] font-black tracking-[0.12em] text-blue-600">공공의료지원과 전광판</p>
-          <div className="grid grid-cols-[1fr_44px] gap-2">
-            <button type="button" onClick={() => void expandKiosk()} className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-black text-white shadow-lg transition-colors hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
-              <MonitorUp size={18} /> 전광판 다시 열기 <span className="rounded-md bg-white/15 px-1.5 py-0.5 text-[10px]">F8</span>
-            </button>
-            <button type="button" onClick={closeKiosk} aria-label="전광판 완전히 종료" title="전광판 완전히 종료" className="flex min-h-12 items-center justify-center rounded-xl bg-slate-100 text-slate-500 transition-colors hover:bg-red-500 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2">
-              <X size={18} />
-            </button>
-          </div>
-        </aside>
-      );
-    }
-
-    return (
-      <div className="fixed inset-0 z-[400] flex items-center justify-center bg-[#071022] p-3 text-white">
-        <button
-          type="button"
-          onClick={() => void expandKiosk()}
-          aria-label="전광판 다시 전체 화면으로 펼치기"
-          className="group flex w-full items-center justify-center gap-3 rounded-2xl border border-blue-400/40 bg-blue-600 px-5 py-4 font-black shadow-2xl transition-colors hover:bg-blue-500"
-        >
-          <MonitorUp size={21} className="text-blue-100" />
-          <span>전광판 열기</span>
-        </button>
-      </div>
-    );
+    const controllerProps = { busy, message, onExpand: () => void expandKiosk(), onWindowMode: showWindowMode, onClose: closeKiosk };
+    return <>
+      {(dedicatedWindow || !controllerWindow) && <aside className={dedicatedWindow ? 'fixed inset-0 z-[400] flex items-center justify-center overflow-auto bg-[#071022]' : 'fixed bottom-5 right-5 z-[400] w-[min(24rem,calc(100vw-2rem))] rounded-2xl bg-[#071022] shadow-2xl'}>
+        <KioskController {...controllerProps} companion={Boolean(controllerWindow)} />
+      </aside>}
+      {controllerWindow && createPortal(<KioskController {...controllerProps} />, controllerWindow.document.body)}
+    </>;
   }
 
-  return (
-    <div className="fixed inset-0 z-[400] overflow-hidden bg-[#050b18] text-white">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(37,99,235,0.24),transparent_32%),radial-gradient(circle_at_bottom_left,rgba(124,58,237,0.16),transparent_28%)]" />
-      <div className="relative flex h-full flex-col p-3 sm:p-5 lg:p-6 2xl:p-7">
-        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-white/20 pb-3 lg:pb-4">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 text-blue-300"><MonitorUp size={18} /><span className="text-[10px] font-black tracking-[0.18em] lg:text-xs">공공의료지원과 공유 현황</span></div>
-            <h1 className="mt-1.5 truncate text-2xl font-black tracking-tight sm:text-3xl lg:text-4xl 2xl:text-5xl">{now.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}</h1>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <div className="mr-1 hidden text-right sm:block">
-              <p className="flex items-baseline justify-end gap-1 font-black tabular-nums">
-                <span className="text-2xl lg:text-4xl 2xl:text-5xl">{now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
-                <span key={now.getSeconds()} className="kiosk-second-tick inline-block min-w-[1.45em] text-lg text-blue-200 lg:text-2xl 2xl:text-3xl">:{String(now.getSeconds()).padStart(2, '0')}</span>
-              </p>
-            </div>
-            {!isFullscreen && !nativeLauncher && <button onClick={() => void document.documentElement.requestFullscreen?.({ navigationUI: 'hide' })} aria-label="전체 화면" title="전체 화면" className="rounded-xl border border-blue-300/30 bg-blue-500/20 p-2.5 text-blue-100 hover:bg-blue-500/35"><MonitorUp size={18} /></button>}
-            <button onClick={() => void collapseKiosk()} aria-label="전광판 접기" title="전광판 접기 (F8)" className="flex items-center gap-1.5 rounded-xl bg-blue-500/15 p-2.5 text-blue-200 transition-colors hover:bg-blue-600 hover:text-white"><Minimize2 size={18} /><span className="hidden text-[10px] font-black lg:inline">F8</span></button>
-            <button onClick={closeKiosk} aria-label="전광판 닫기" className="rounded-xl bg-white/10 p-2.5 text-slate-200 hover:bg-red-500"><X size={18} /></button>
-          </div>
-        </header>
-
-        <main className="grid min-h-0 flex-1 gap-3 overflow-y-auto pt-3 lg:grid-cols-12 lg:grid-rows-[minmax(0,1.25fr)_minmax(0,0.75fr)] lg:gap-4 lg:overflow-hidden lg:pt-4">
-          <Panel title="오늘 일정" count={data.today.length} breakdown={getScheduleBreakdown(data.today)} tone="blue" className="lg:col-span-3">
-            <ScheduleList items={data.today} empty="오늘 등록된 일정이 없습니다." />
-          </Panel>
-
-          <Panel title="이번 주 일정" count={data.thisWeek.length} breakdown={getScheduleBreakdown(data.thisWeek)} tone="violet" className="lg:col-span-4">
-            <ScheduleList items={data.thisWeek} empty="이번 주 남은 일정이 없습니다." showDate allowColumns />
-          </Panel>
-
-          <Panel title="다음 주 일정" count={data.nextWeek.length} breakdown={getScheduleBreakdown(data.nextWeek)} tone="violet" className="lg:col-span-5">
-            <ScheduleList items={data.nextWeek} empty="다음 주 등록된 일정이 없습니다." showDate allowColumns />
-          </Panel>
-
-          <Panel title="진행 중인 공지" count={data.notices.length} breakdown={getScheduleBreakdown(data.notices, true)} icon={<BellRing size={17} />} tone="red" className="lg:col-span-4">
-            <CompactList items={data.notices} empty="진행 중인 공지가 없습니다." />
-          </Panel>
-
-          <Panel title="미완료 TO DO" count={data.todos.length} breakdown={getScheduleBreakdown(data.todos, true)} icon={<CheckCircle2 size={17} />} tone="emerald" className="lg:col-span-4">
-            <CompactList items={data.todos} empty="미완료 항목이 없습니다." today={today} />
-          </Panel>
-
-          <Panel title="이번 주·다음 주 휴가" count={data.absences.length} breakdown={getAbsenceBreakdown(data.absences)} icon={<CalendarDays size={17} />} tone="orange" className="lg:col-span-4">
-            <AbsenceList items={data.absences} />
-          </Panel>
-        </main>
-      </div>
-    </div>
-  );
-}
-
-const toneStyles = {
-  blue: { panel: 'border-blue-400/35 bg-[#101c34]', text: 'text-blue-300', badge: 'border-blue-400/30 bg-blue-500/25 text-blue-100', chip: 'border-blue-400/20 bg-blue-500/15 text-blue-100' },
-  violet: { panel: 'border-violet-400/35 bg-[#171a38]', text: 'text-violet-300', badge: 'border-violet-400/30 bg-violet-500/25 text-violet-100', chip: 'border-violet-400/20 bg-violet-500/15 text-violet-100' },
-  red: { panel: 'border-rose-400/35 bg-[#24172a]', text: 'text-rose-300', badge: 'border-rose-400/30 bg-rose-500/25 text-rose-100', chip: 'border-rose-400/20 bg-rose-500/15 text-rose-100' },
-  emerald: { panel: 'border-emerald-400/35 bg-[#10252b]', text: 'text-emerald-300', badge: 'border-emerald-400/30 bg-emerald-500/25 text-emerald-100', chip: 'border-emerald-400/20 bg-emerald-500/15 text-emerald-100' },
-  orange: { panel: 'border-orange-300/35 bg-[#2c211a]', text: 'text-orange-300', badge: 'border-orange-300/30 bg-orange-400/25 text-orange-100', chip: 'border-orange-300/20 bg-orange-400/15 text-orange-100' },
-};
-
-function Panel({ title, count, breakdown, tone, icon, className = '', children }: { title: string; count: number; breakdown?: ScheduleBreakdownItem[]; tone: keyof typeof toneStyles; icon?: React.ReactNode; className?: string; children: React.ReactNode }) {
-  const style = toneStyles[tone];
-  return (
-    <section className={`flex min-h-0 flex-col rounded-[20px] border-2 p-3 shadow-[0_18px_45px_rgba(0,0,0,0.2)] sm:p-4 lg:rounded-[24px] lg:p-5 ${style.panel} ${className}`}>
-      <div className="mb-2.5 flex shrink-0 items-center gap-2 border-b border-white/10 pb-2.5">{icon ? <span className={style.text}>{icon}</span> : <span className={`h-5 w-1 rounded-full ${style.badge.split(' ')[1]}`} />}<h2 className="text-base font-black tracking-tight sm:text-lg lg:text-xl 2xl:text-2xl">{title}</h2><span className={`ml-auto rounded-lg border px-2.5 py-1 text-[10px] font-black lg:text-xs ${style.badge}`}>전체 {count}건</span></div>
-      {breakdown && (
-        <div className="mb-2.5 grid shrink-0 grid-flow-col auto-cols-fr gap-1.5 lg:mb-3">
-          {breakdown.map((item) => (
-            <div key={`${title}-${item.label}`} data-schedule-category={item.category} className={`flex min-w-0 items-center justify-center gap-1 rounded-lg border border-white/10 px-1.5 py-1 text-[8px] font-black ring-1 ring-inset lg:text-[9px] ${scheduleCategoryStyles[item.category].darkBadge}`}>
-              <span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full ${scheduleCategoryStyles[item.category].darkDot}`} /><span className="truncate">{item.label}</span><strong className={item.count === 0 ? 'text-slate-400' : 'text-white'}>{item.count}</strong>
-            </div>
-          ))}
-        </div>
-      )}
-      <div className="min-h-0 flex-1">{children}</div>
-    </section>
-  );
-}
-
-function ScheduleList({ items, empty, showDate = false, allowColumns = false }: { items: KioskSchedule[]; empty: string; showDate?: boolean; allowColumns?: boolean }) {
-  if (items.length === 0) return <Empty label={empty} />;
-  const columnCount = allowColumns ? Math.max(1, Math.ceil(items.length / 6)) : 1;
-  const rowCount = Math.ceil(items.length / columnCount);
-  return (
-    <div
-      className="grid h-full min-h-0 gap-1 overflow-hidden lg:gap-1.5"
-      style={{
-        gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))`,
-        gridTemplateRows: `repeat(${rowCount}, minmax(0, 1fr))`,
-        gridAutoFlow: 'column',
-      }}
-    >
-      {items.map((schedule) => <ScheduleRow key={schedule.id} schedule={schedule} showDate={showDate} />)}
-    </div>
-  );
-}
-
-function ScheduleRow({ schedule, showDate = false }: { schedule: KioskSchedule; showDate?: boolean }) {
-  const category = getScheduleCategory(schedule);
-  const categoryStyle = scheduleCategoryStyles[category];
-  return (
-    <div data-schedule-category={category} className={`flex min-h-0 flex-1 items-center gap-3 rounded-xl border border-l-4 border-white/15 bg-[#071126]/75 px-3 py-2 shadow-sm lg:rounded-2xl lg:px-4 ${categoryStyle.darkAccent}`}>
-      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${schedule.is_urgent ? 'bg-rose-500/25 text-rose-200' : categoryStyle.darkIcon} lg:h-9 lg:w-9`}>{schedule.is_urgent ? <Siren size={16} /> : <CalendarDays size={16} />}</span>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <p className="min-w-0 flex-1 truncate text-xs font-black sm:text-sm lg:text-base 2xl:text-lg">{cleanTitle(schedule.title)}</p>
-          <span className={`shrink-0 rounded-md px-1.5 py-1 text-[8px] font-black ring-1 ring-inset lg:text-[9px] ${categoryStyle.darkBadge}`}>{category === 'leave' ? absenceLabel(schedule) : categoryStyle.label}</span>
-        </div>
-        <div className="mt-0.5 flex items-center gap-2">
-          {showDate && <span className="shrink-0 text-xs font-black tracking-tight text-white lg:text-sm 2xl:text-base">{formatShortDate(schedule.date)}</span>}
-          <span className="flex min-w-0 items-center gap-1 truncate text-[9px] font-bold text-slate-300 lg:text-[10px]"><Clock3 size={10} className="shrink-0" />{formatTime(schedule)}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function CompactList({ items, empty, today }: { items: KioskSchedule[]; empty: string; today?: string }) {
-  if (items.length === 0) return <Empty label={empty} />;
-  return <div className="grid h-full min-h-0 gap-1 overflow-hidden lg:gap-1.5" style={{ gridTemplateRows: `repeat(${items.length}, minmax(0, 1fr))` }}>{items.map((schedule) => {
-    const category = getScheduleCategory(schedule);
-    const categoryStyle = scheduleCategoryStyles[category];
-    return <div key={schedule.id} data-schedule-category={category} className={`flex min-h-0 items-center gap-2 rounded-xl border border-l-4 border-white/10 bg-[#071126]/70 px-3 py-1.5 ${categoryStyle.darkAccent}`}><span className={`rounded-md px-1.5 py-1 text-[8px] font-black ring-1 ring-inset ${categoryStyle.darkBadge}`}>{category === 'leave' ? absenceLabel(schedule) : categoryStyle.label}</span>{schedule.is_urgent && <Siren size={13} className="shrink-0 text-rose-300" />}<span className="min-w-0 flex-1 truncate text-xs font-black text-white lg:text-sm">{cleanTitle(schedule.title)}</span>{today && <span className={`shrink-0 text-xs font-bold ${scheduleEnd(schedule) < today ? 'text-rose-300' : 'text-slate-300'}`}>{scheduleEnd(schedule) < today ? '기한 지남' : happensOn(schedule, today) ? '오늘' : '예정'}</span>}<span className="shrink-0 text-[9px] font-bold text-slate-300">{schedule.date.slice(5).replace('-', '.')}</span></div>;
-  })}</div>;
-}
-
-function AbsenceList({ items }: { items: KioskSchedule[] }) {
-  if (items.length === 0) return <Empty label="예정된 휴가·조퇴·외출이 없습니다." />;
-  return <div className="grid h-full min-h-0 gap-1 overflow-hidden lg:gap-1.5" style={{ gridTemplateRows: `repeat(${items.length}, minmax(0, 1fr))` }}>{items.map((schedule) => <div key={schedule.id} data-schedule-category="leave" className={`flex min-h-0 items-center gap-2 rounded-xl border border-l-4 border-orange-200/15 bg-orange-950/35 px-3 py-1.5 ${scheduleCategoryStyles.leave.darkAccent}`}><span className={`rounded-md px-2 py-1 text-[9px] font-black ring-1 ring-inset ${scheduleCategoryStyles.leave.darkBadge}`}>{absenceLabel(schedule)}</span><span className="shrink-0 text-xs font-black tracking-tight text-orange-50 lg:text-sm 2xl:text-base">{schedule.end_date && schedule.end_date > schedule.date ? `${formatAbsenceDate(schedule.date)}–${formatAbsenceDate(schedule.end_date)}` : formatAbsenceDate(schedule.date)}</span><span className="min-w-0 flex-1 truncate text-xs font-black text-white lg:text-sm 2xl:text-base">{cleanTitle(schedule.title)}</span></div>)}</div>;
-}
-
-function Empty({ label }: { label: string }) {
-  return <div className="flex h-full min-h-16 items-center justify-center rounded-xl border border-white/10 bg-black/15 px-3 text-center text-[10px] font-bold text-slate-400 lg:text-xs">{label}</div>;
+  return <>
+    <KioskBoard schedules={schedules} now={now} controls={<>
+      {!isFullscreen && !nativeLauncher && <button disabled={busy} onClick={() => void expandKiosk()} aria-label="전체 화면" title="전체화면 시작" className="flex items-center gap-2 rounded-xl border border-blue-300/30 bg-blue-500/20 p-2.5 text-blue-100 hover:bg-blue-500/35 sm:px-3"><MonitorUp size={18} /><span className="hidden text-sm font-semibold sm:inline">전체화면 시작</span></button>}
+      <button disabled={busy} onClick={() => void collapseKiosk()} aria-label="전광판 접기" title="전광판 또는 제어창을 선택한 상태에서 F8" className="flex items-center gap-2 rounded-lg border border-white/15 bg-white/5 px-3 py-2.5 text-slate-100 transition-colors hover:bg-white/15 disabled:opacity-50"><Minimize2 size={18} /><span className="hidden text-sm font-semibold sm:inline">접기</span><kbd className="hidden rounded border border-white/15 px-1 text-[11px] text-slate-400 lg:inline">F8</kbd></button>
+      <button onClick={closeKiosk} aria-label="전광판 닫기" className="rounded-xl bg-white/10 p-2.5 text-slate-200 hover:bg-red-500"><X size={18} /></button>
+    </>} />
+    {message && <aside role="status" className="fixed bottom-5 left-1/2 z-[410] flex w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 items-center gap-3 rounded-xl border border-blue-300/30 bg-slate-900 p-3 text-sm text-blue-100 shadow-2xl">
+      <span className="flex-1">{message}</span><button type="button" onClick={() => setMessage('')} aria-label="안내 닫기" className="p-2"><X size={16} /></button>
+    </aside>}
+  </>;
 }
