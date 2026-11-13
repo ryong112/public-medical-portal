@@ -27,6 +27,7 @@ import PortalNotifications, { type PortalNotification } from '@/app/components/p
 import TeamChatPanel from '@/app/components/team-chat-panel';
 import { createTeamChatReconciler, upsertTeamChatMessages } from '@/lib/team-chat-feed';
 import useTeamIdentity from '@/lib/use-team-identity';
+import useTeamChatNotice from '@/lib/use-team-chat-notice';
 import { createDocumentUploads, createDocumentUploadRunner, getSettledDocumentUploadIds, type UploadItem } from '@/lib/document-upload';
 import { getRequiredHolidayYears, mergeHolidayYear, type KoreanHoliday } from '@/lib/korean-holidays';
 import JSZip from 'jszip';
@@ -105,6 +106,7 @@ export default function IntegratedPortal() {
   const [myId, setMyId] = useState<string | null>(null);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [focusedMessageId, setFocusedMessageId] = useState<number | null>(null);
+  const chatNotice = useTeamChatNotice(isAuthenticated && isChatOpen, team.member ? `member:${team.member.id}` : myId ? `user:${myId}` : '');
   
   // 알림 상태
   const [hasUnread, setHasUnread] = useState(false);
@@ -1841,6 +1843,17 @@ export default function IntegratedPortal() {
         currentMemberId={team.member?.id}
         canMention={team.available}
         focusedMessageId={focusedMessageId}
+        notice={chatNotice.notice}
+        noticeAvailable={chatNotice.available}
+        noticeLoading={chatNotice.loading}
+        noticeBusy={chatNotice.busy}
+        noticeError={chatNotice.error}
+        noticeCollapsed={chatNotice.collapsed}
+        noticeHidden={chatNotice.hidden}
+        onPublishNotice={chatNotice.publish}
+        onNoticePreference={chatNotice.setPreference}
+        onRemoveNotice={chatNotice.remove}
+        onRefreshNotice={chatNotice.refresh}
         onSend={onSendTeamMessage}
         onDelete={onDeleteMessage}
         onClose={() => { setIsChatOpen(false); setFocusedMessageId(null); }}

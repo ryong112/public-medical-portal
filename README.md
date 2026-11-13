@@ -115,6 +115,14 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 - 좌표·크기만 브라우저에 저장하며 다시 열 때 복원합니다. 창 크기가 바뀌면 화면 안으로 제한하고 모바일에서는 기존 하단 시트로 표시합니다. 메시지나 개인정보는 이 창 설정에 저장하지 않습니다.
 - 전송 후 REST 목록과 실시간 이벤트가 같은 메시지를 전달해도 고유 메시지 ID 기준으로 한 번만 표시합니다. 내용이 같아도 ID가 다른 실제 메시지는 합치거나 삭제하지 않습니다. 조회 중 들어온 INSERT·UPDATE·DELETE는 최신 응답에 재적용하고, 오래된 요청·이전 인증 상태의 응답은 무시합니다. 재연결 시 전체 목록으로 동기화하여 삭제된 메시지가 계속 남지 않게 합니다.
 
+### 공유방 고정 공지·개인 표시 설정 (2026-11-13)
+
+- 공유방 메시지의 `공지로 등록`으로 상단 아래 고정 영역에 공지 한 개를 표시합니다. 다른 메시지로 교체할 때에는 팀 전체의 공지가 바뀐다는 확인을 거칩니다. 기존 메시지를 복사하거나 자동으로 공지하지 않습니다.
+- 공지 내용은 팀 전체가 공유하지만 접기·숨김·다시 보기는 고유 팀원 ID별 설정입니다. 같은 사람으로 명시적으로 연결된 기기에서는 설정을 공유하고, 다른 팀원에게는 영향을 주지 않습니다. 관리자·팀원 없는 승인 프로필은 해당 승인 auth ID별로 저장하며 팀원을 새로 만들지 않습니다.
+- `내 화면에서 공지 숨기기`와 `전체 공지 종료`를 분리합니다. 전체 종료는 등록자 또는 관리자만 할 수 있습니다. 공지 UUID가 바뀌면 이전 숨김·접기 설정은 새 공지에 적용하지 않습니다. 원문 수정은 공지에 반영되고 원문 삭제 시 공지도 정리됩니다.
+- 적용 SQL은 `supabase/migrations/20261113_team_chat_notices.sql` 하나이며 기존 팀원 ID SQL 뒤에 실행합니다. 미적용 환경은 기존 채팅을 유지합니다. 개인 설정은 서버가 현재 ID로 결정하며 클라이언트가 다른 사람의 ID를 지정할 수 없습니다. 기존 알림이나 공유 권한은 변경하지 않습니다.
+- 공유방을 연 동안 표시 중인 페이지에서 8초마다 갱신하고 창에 다시 포커스할 때도 확인합니다. 개인 설정 저장 중 도착한 오래된 조회나 이전 ID의 응답은 무시합니다.
+
 ### 로컬 검증
 
 ```powershell
@@ -140,6 +148,7 @@ node tests/portal-header.browser.cjs
 node tests/team-identity.browser.cjs
 node tests/team-chat.browser.cjs
 node tests/team-chat-window.browser.cjs
+node tests/team-chat-notice.browser.cjs
 node tests/schedule-owner.browser.cjs
 node tests/document-owner.browser.cjs
 node tests/schedule-category.browser.cjs

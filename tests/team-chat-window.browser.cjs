@@ -32,6 +32,7 @@ const closeEnough = (actual, expected, label) => assert.ok(Math.abs(actual - exp
     if (url.pathname.endsWith('/list_team_members')) return reply([{ id: memberId, display_name: '테스트 팀원', handle: 'test-member' }]);
     if (url.pathname.endsWith('/get_my_team_member')) return reply({ id: memberId, display_name: '테스트 팀원', handle: 'test-member' });
     if (url.pathname.endsWith('/team_responsibility_available')) return reply(false);
+    if (url.pathname.endsWith('/get_team_chat_notice_state')) return reply({ code: 'PGRST202', message: 'Chat notice capability unavailable in this fixture' }, 404);
     if (url.pathname.endsWith('/list_my_team_notifications')) return reply([]);
     if (url.pathname.startsWith('/rest/v1/')) {
       if (url.pathname.endsWith('/messages')) {

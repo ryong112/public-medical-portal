@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
-import { AtSign, Grip, LoaderCircle, MessageCircle, Move, RotateCcw, Send, Trash2, X } from 'lucide-react';
+import { AtSign, Grip, LoaderCircle, MessageCircle, Move, Pin, RotateCcw, Send, Trash2, X } from 'lucide-react';
+import ChatNoticeCard, { type TeamChatNotice } from '@/app/components/chat-notice-card';
 import { CHAT_WINDOW_DESKTOP_WIDTH, CHAT_WINDOW_STORAGE_KEY, clampChatWindow, defaultChatWindow, parseChatWindow, type ChatWindowGeometry } from '@/lib/team-chat-window';
 import { upsertTeamChatMessages } from '@/lib/team-chat-feed';
 import {
@@ -13,6 +14,7 @@ import {
 } from '@/lib/team-chat-mentions';
 
 export type TeamChatMember = ChatMentionMember;
+export type { TeamChatNotice } from '@/app/components/chat-notice-card';
 
 export interface TeamChatMessage {
   id: number;
@@ -34,6 +36,17 @@ interface TeamChatPanelProps {
   onClose: () => void;
   canMention?: boolean;
   focusedMessageId?: number | null;
+  notice?: TeamChatNotice | null;
+  noticeAvailable?: boolean;
+  noticeLoading?: boolean;
+  noticeBusy?: boolean;
+  noticeError?: string;
+  noticeCollapsed?: boolean;
+  noticeHidden?: boolean;
+  onPublishNotice?: (messageId: number) => Promise<void>;
+  onNoticePreference?: (collapsed: boolean, hidden: boolean) => Promise<void>;
+  onRemoveNotice?: () => Promise<void>;
+  onRefreshNotice?: () => void;
 }
 
 const dateKeyFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -55,6 +68,17 @@ export default function TeamChatPanel({
   onClose,
   canMention = true,
   focusedMessageId = null,
+  notice = null,
+  noticeAvailable = false,
+  noticeLoading = false,
+  noticeBusy = false,
+  noticeError = '',
+  noticeCollapsed = false,
+  noticeHidden = false,
+  onPublishNotice,
+  onNoticePreference,
+  onRemoveNotice,
+  onRefreshNotice,
 }: TeamChatPanelProps) {
   const [draft, setDraft] = useState('');
   const [caret, setCaret] = useState(0);
@@ -67,12 +91,22 @@ export default function TeamChatPanel({
   const [desktopGeometry, setDesktopGeometry] = useState<ChatWindowGeometry | null>(null);
   const [isDesktop, setIsDesktop] = useState(false);
   const [manipulating, setManipulating] = useState<'move' | 'resize' | null>(null);
+  const noticeActionScope = `${currentUserId ?? ''}:${currentMemberId ?? ''}:${notice?.id ?? ''}`;
+  const [noticeAction, setNoticeAction] = useState<{ scope: string; version: number; request: symbol | null; pending: boolean; error: string }>({ scope: noticeActionScope, version: 0, request: null, pending: false, error: '' });
+  // Reset before painting a new identity/notice, not later in an effect. Async
+  // completions below must still own this version and request token to update it.
+  if (noticeAction.scope !== noticeActionScope) setNoticeAction({ scope: noticeActionScope, version: noticeAction.version + 1, request: null, pending: false, error: '' });
+  const noticeActionPending = noticeAction.scope === noticeActionScope && noticeAction.pending;
+  const noticeActionError = noticeAction.scope === noticeActionScope ? noticeAction.error : '';
+  const [noticeSourceFocus, setNoticeSourceFocus] = useState<{ scope: string; version: number; messageId: number } | null>(null);
+  const noticeSourceFocusId = noticeSourceFocus?.scope === noticeActionScope && noticeSourceFocus.version === noticeAction.version ? noticeSourceFocus.messageId : null;
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const lastFocusedMessageRef = useRef<number | null>(null);
   const sendingRef = useRef(false);
   const deletingRef = useRef(new Set<number>());
+  const noticeActionRef = useRef<{ scope: string; version: number; request: symbol } | null>(null);
   const geometryRef = useRef<ChatWindowGeometry | null>(null);
   const desktopRef = useRef(false);
   const manipulationRef = useRef<{ pointerId: number; mode: 'move' | 'resize'; startX: number; startY: number; geometry: ChatWindowGeometry } | null>(null);
@@ -82,6 +116,7 @@ export default function TeamChatPanel({
   const listId = `${identifier}-members`;
   const queryKey = `${caret}:${draft}`;
   const mentionQuery = canMention && !isSending && dismissedQuery !== queryKey ? getChatMentionQuery(draft, caret) : null;
+  const noticeLocked = noticeBusy || noticeActionPending || noticeLoading;
 
   const availableMembers = useMemo(() => {
     const ids = new Set<string>();
@@ -269,6 +304,37 @@ export default function TeamChatPanel({
     }
   };
 
+  const runNoticeAction = async (action: () => Promise<void>) => {
+    if (noticeLocked || (noticeActionRef.current?.scope === noticeActionScope && noticeActionRef.current.version === noticeAction.version)) return;
+    const operation = { scope: noticeActionScope, version: noticeAction.version, request: Symbol('chat-notice-action') };
+    noticeActionRef.current = operation;
+    setNoticeAction({ ...operation, pending: true, error: '' });
+    try { await action(); }
+    catch (failure) { setNoticeAction((current) => current.scope === operation.scope && current.version === operation.version && current.request === operation.request ? { ...current, error: failure instanceof Error ? failure.message : '공지를 변경하지 못했습니다. 다시 시도해 주세요.' } : current); }
+    finally {
+      if (noticeActionRef.current?.request === operation.request) noticeActionRef.current = null;
+      setNoticeAction((current) => current.scope === operation.scope && current.version === operation.version && current.request === operation.request ? { ...current, pending: false } : current);
+    }
+  };
+  const publishNotice = (messageId: number) => {
+    if (!onPublishNotice || notice?.message_id === messageId || noticeLocked || (noticeActionRef.current?.scope === noticeActionScope && noticeActionRef.current.version === noticeAction.version)) return;
+    if (notice && !window.confirm('팀 전체에 보이는 고정 공지를 이 메시지로 바꾸시겠습니까?')) return;
+    void runNoticeAction(() => onPublishNotice(messageId));
+  };
+  const removeNotice = () => {
+    if (!onRemoveNotice || noticeLocked || (noticeActionRef.current?.scope === noticeActionScope && noticeActionRef.current.version === noticeAction.version)) return;
+    if (!window.confirm('팀 전체의 고정 공지를 종료하시겠습니까? 채팅 원문은 삭제되지 않습니다.')) return;
+    void runNoticeAction(onRemoveNotice);
+  };
+  const openNoticeSource = () => {
+    if (!notice) return;
+    const source = panelRef.current?.querySelector<HTMLElement>(`[data-team-message-id="${notice.message_id}"]`);
+    if (!source) return;
+    setNoticeSourceFocus({ scope: noticeActionScope, version: noticeAction.version, messageId: notice.message_id });
+    source.scrollIntoView?.({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+    source.focus({ preventScroll: true });
+  };
+
   return (
     <section
       ref={panelRef}
@@ -297,6 +363,9 @@ export default function TeamChatPanel({
         </div>
       </header>
 
+      {noticeAvailable && notice && <ChatNoticeCard notice={notice} collapsed={noticeCollapsed} hidden={noticeHidden} busy={noticeLocked} canOpenSource={sortedMessages.some((message) => message.id === notice.message_id)} onPreference={(collapsed, hidden) => { if (onNoticePreference) void runNoticeAction(() => onNoticePreference(collapsed, hidden)); }} onOpenSource={openNoticeSource} onRemove={onRemoveNotice ? removeNotice : undefined} />}
+      {(noticeError || noticeActionError) && <div role="alert" className="flex max-h-16 shrink-0 items-start justify-between gap-2 overflow-y-auto border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-950"><span className="min-w-0 flex-1 break-words">{noticeActionError || noticeError}</span>{onRefreshNotice && <button type="button" disabled={noticeLocked} onClick={() => { setNoticeAction((current) => current.scope === noticeActionScope ? { ...current, error: '' } : current); onRefreshNotice(); }} className="shrink-0 rounded px-1 font-bold underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-amber-600 disabled:opacity-40">다시 시도</button>}</div>}
+
       <div role="log" aria-label="정보공유방 메시지" aria-live="polite" aria-relevant="additions" className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-[#e9eff6] px-4 py-5">
         {!sortedMessages.length && <div className="flex min-h-36 flex-col items-center justify-center gap-2 text-center"><MessageCircle size={26} className="text-slate-300" /><p className="text-sm font-bold text-slate-500">아직 나눈 이야기가 없어요</p><p className="text-xs text-slate-400">첫 소식을 남겨 보세요.</p></div>}
         {sortedMessages.map((message, index) => {
@@ -313,16 +382,19 @@ export default function TeamChatPanel({
           return (
             <div key={message.id}>
               {showDate && <div className="mb-5 mt-2 flex items-center justify-center" aria-label={date ? dateLabelFormatter.format(date) : '날짜 정보 없음'}><span className="rounded-full border border-slate-300/60 bg-white/75 px-3 py-1 text-[10px] font-semibold text-slate-600">{date ? dateLabelFormatter.format(date) : '날짜 정보 없음'}</span></div>}
-              <article data-team-message-id={message.id} className={`group mb-4 flex min-w-0 gap-2 ${isOwn ? 'flex-row-reverse' : ''} ${focusedMessageId === message.id ? 'rounded-2xl bg-amber-50/70 ring-2 ring-amber-200 ring-offset-4' : ''}`} aria-label={`${authorName}의 메시지`}>
+              <article data-team-message-id={message.id} data-chat-notice-source={notice?.message_id === message.id ? 'true' : undefined} tabIndex={-1} className={`group mb-4 flex min-w-0 gap-2 outline-none ${isOwn ? 'flex-row-reverse' : ''} ${focusedMessageId === message.id || noticeSourceFocusId === message.id ? 'rounded-2xl bg-amber-50/70 ring-2 ring-amber-200 ring-offset-4' : ''}`} aria-label={`${authorName}의 메시지`}>
                 <span aria-hidden="true" className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-xs font-black ${isOwn ? 'bg-blue-100 text-blue-700 ring-1 ring-blue-200' : 'bg-slate-600 text-white ring-1 ring-slate-600'}`}>{authorName.slice(0, 1)}</span>
                 <div className={`flex min-w-0 max-w-[calc(100%-3rem)] flex-col ${isOwn ? 'items-end' : 'items-start'}`}>
-                  <div className={`mb-1.5 flex max-w-full items-baseline gap-2 ${isOwn ? 'flex-row-reverse' : ''}`}><span className="truncate text-[11px] font-bold text-slate-700">{authorName}</span><time dateTime={date ? date.toISOString() : undefined} className="shrink-0 text-[10px] text-slate-500">{date ? timeFormatter.format(date) : '--:--'}</time></div>
+                  <div className={`mb-1.5 flex max-w-full items-baseline gap-2 ${isOwn ? 'flex-row-reverse' : ''}`}><span className="truncate text-[11px] font-bold text-slate-700">{authorName}</span><time dateTime={date ? date.toISOString() : undefined} className="shrink-0 text-[10px] text-slate-500">{date ? timeFormatter.format(date) : '--:--'}</time>{notice?.message_id === message.id && <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-bold text-amber-900"><Pin size={9} />공지</span>}</div>
                   <div className={`max-w-full whitespace-pre-wrap break-words rounded-2xl px-3.5 py-3 text-[13px] font-medium leading-relaxed shadow-sm [overflow-wrap:anywhere] ${isOwn ? 'rounded-tr-sm bg-blue-600 text-white shadow-blue-950/10' : 'rounded-tl-sm border border-slate-300/80 bg-white text-slate-900 shadow-slate-900/5'}`}>
                     {getChatTextSegments(message.content, availableMembers, message.mentioned_member_ids ?? []).map((segment, segmentIndex) => segment.memberId
                       ? <span key={segmentIndex} title={memberById.get(segment.memberId)?.display_name} className={`rounded px-0.5 font-bold ${isOwn ? 'bg-white/20 text-white' : 'bg-blue-50 text-blue-700'}`}>{segment.text}</span>
                       : <span key={segmentIndex}>{segment.text}</span>)}
                   </div>
-                  <button type="button" aria-label={`${authorName}의 메시지 삭제`} disabled={deletingIds.includes(message.id)} onClick={() => void deleteMessage(message.id)} className="mt-1 flex min-h-7 items-center gap-1 px-1 text-[10px] text-slate-400 transition hover:text-red-500 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-blue-500 disabled:opacity-50 md:opacity-0 md:group-hover:opacity-100">{deletingIds.includes(message.id) ? <LoaderCircle size={11} className="animate-spin" /> : <Trash2 size={11} />}삭제</button>
+                  <div className="mt-1 flex min-h-7 flex-wrap items-center gap-2 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100">
+                    {noticeAvailable && onPublishNotice && <button type="button" aria-label={`${authorName}의 메시지 공지로 등록`} disabled={noticeLocked || notice?.message_id === message.id} onClick={() => publishNotice(message.id)} className="inline-flex min-h-7 items-center gap-1 rounded px-1 text-[10px] font-semibold text-slate-600 transition hover:bg-amber-100 hover:text-amber-900 focus-visible:outline-2 focus-visible:outline-amber-600 disabled:opacity-50"><Pin size={11} />{notice?.message_id === message.id ? '공지 중' : '공지로 등록'}</button>}
+                    <button type="button" aria-label={`${authorName}의 메시지 삭제`} disabled={deletingIds.includes(message.id)} onClick={() => void deleteMessage(message.id)} className="flex min-h-7 items-center gap-1 rounded px-1 text-[10px] text-slate-500 transition hover:text-red-500 focus-visible:outline-2 focus-visible:outline-blue-500 disabled:opacity-50">{deletingIds.includes(message.id) ? <LoaderCircle size={11} className="animate-spin" /> : <Trash2 size={11} />}삭제</button>
+                  </div>
                 </div>
               </article>
             </div>
