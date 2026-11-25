@@ -4,17 +4,18 @@ const assert = require('node:assert/strict');
 const os = require('node:os');
 const path = require('node:path');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+require('@next/env').loadEnvConfig(path.join(__dirname, '..'), true);
 const baseUrl = process.env.DOCUMENT_TEST_URL || 'http://127.0.0.1:3000';
 const legacySchema = process.env.DOCUMENT_TEST_LEGACY_SCHEMA === '1';
 assert.ok(['127.0.0.1', 'localhost'].includes(new URL(baseUrl).hostname));
 
 const imageBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jWZkAAAAASUVORK5CYII=', 'base64');
-const assetBase = 'https://portal-test.invalid/storage/v1/object/public/files/';
+const assetBase = `${new URL(process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://portal-test.invalid').origin}/storage/v1/object/public/files/`;
 const files = [
   { id: 1, name: '현장 회의 자료.png', url: `${assetBase}preview.png`, category: '운영자료', size: imageBytes.length, created_at: '2026-11-10T01:00:00Z' },
-  { id: 2, name: '불러오기 실패.png', url: `${assetBase}fallback.png`, category: '운영자료', size: imageBytes.length, created_at: '2026-11-10T02:00:00Z' },
-  { id: 3, name: '한글 문서.hwp', url: `${assetBase}office.hwp`, category: '참고자료', size: 1234, created_at: '2026-11-10T03:00:00Z' },
-  { id: 4, name: `${'매우 긴 문서 이름 '.repeat(10)}.docx`, url: `${assetBase}long.docx`, category: '참고자료', size: null, created_at: null },
+  { id: 2, name: '불러오기 실패.png', url: 'storage://files/fallback.png', category: '운영자료', size: imageBytes.length, created_at: '2026-11-10T02:00:00Z' },
+  { id: 3, name: '한글 문서.hwp', url: 'storage://files/office.hwp', category: '참고자료', size: 1234, created_at: '2026-11-10T03:00:00Z' },
+  { id: 4, name: `${'매우 긴 문서 이름 '.repeat(10)}.docx`, url: 'storage://files/long.docx', category: '참고자료', size: null, created_at: null },
 ];
 const categories = [{ id: 1, name: '운영자료', order_index: 0 }, { id: 2, name: '참고자료', order_index: 1 }];
 const schedules = [{ id: 1, title: '문서 연결 확인 회의', date: '2026-11-11', end_date: null, start_time: '10:00', end_time: '11:00', schedule_type: 'meeting', absence_type: 'annual', is_notice: false, is_urgent: false, is_todo: false, is_completed: false, owner_name: '테스트 담당자', attendee_names: [], location: '회의실', linked_file_ids: [1, 3] }];
@@ -24,6 +25,7 @@ const schedules = [{ id: 1, title: '문서 연결 확인 회의', date: '2026-11
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, timezoneId: 'Asia/Seoul', acceptDownloads: true });
   const errors = [];
   const storageRequests = [];
+  const readRequests = [];
   const metadataRequests = [];
   const metadataPaths = [];
   const updateRequests = [];
@@ -49,7 +51,13 @@ const schedules = [{ id: 1, title: '문서 연결 확인 회의', date: '2026-11
       user: { id: userId, aud: 'authenticated', role: 'authenticated', is_anonymous: true, created_at: '2026-11-01T00:00:00Z' },
     });
     if (url.pathname.endsWith('/get_device_access_status')) return reply({ status: 'approved', user_id: userId, is_admin: false });
-    if (url.hostname === 'portal-test.invalid') {
+    if (url.pathname.startsWith('/storage/v1/object/public/files/')) {
+      assert.fail('A persisted public address must never be used as a download target');
+    }
+    if (url.pathname.startsWith('/storage/v1/object/authenticated/files/')) {
+      readRequests.push(url.pathname);
+      assert.equal(request.method(), 'GET');
+      assert.equal(request.headers().authorization, `Bearer ${token}`);
       if (url.pathname.endsWith('/preview.png') && imageGate) await imageGate;
       if (url.pathname.endsWith('/fallback.png') && !fallbackHealthy) return reply({ message: 'test preview unavailable' }, 503);
       return route.fulfill({ status: 200, contentType: url.pathname.endsWith('.png') ? 'image/png' : 'application/octet-stream', body: imageBytes });
@@ -203,6 +211,7 @@ const schedules = [{ id: 1, title: '문서 연결 확인 회의', date: '2026-11
     assert.equal(storageRequests.length, 3, 'metadata-only failure must not re-upload storage');
     assert.equal(storageRequests[0].path, storageRequests[2].path, 'storage retry reuses the exact path');
     assert.equal(metadataRequests.length, 3);
+    assert.ok(metadataRequests.every((item) => /^storage:\/\/files\/[a-f0-9-]+\.txt$/.test(item.url)), 'new uploads only persist object references');
     assert.ok(metadataPaths.every((pathname) => legacySchema ? pathname.endsWith('/files') : pathname.endsWith('/rpc/register_uploaded_document')), 'metadata registration uses the matching migrated or legacy route');
     assert.ok(metadataRequests.every((item) => item.category === '운영자료'), 'retry keeps original category after navigation');
     assert.equal(files.filter((file) => file.name === 'storage-fail.txt').length, 1);
@@ -218,8 +227,9 @@ const schedules = [{ id: 1, title: '문서 연결 확인 회의', date: '2026-11
     const scheduleDialog = page.getByRole('dialog', { name: '일정 상세', exact: true });
     await scheduleDialog.getByRole('button', { name: '변경된 회의 자료.png', exact: true }).click();
     await imageDialog.locator('img').waitFor();
+    await imageDialog.getByRole('button').first().focus();
     await page.keyboard.press('Shift+Tab');
-    assert.ok(await imageDialog.getByRole('button', { name: '미리보기 닫기', exact: true }).evaluate((element) => document.activeElement === element), 'preview traps backwards tab within top dialog');
+    assert.ok(await imageDialog.evaluate((element) => element.contains(document.activeElement) && document.activeElement !== element.querySelector('button')), 'preview traps backwards tab within top dialog, including linked schedule controls');
     await page.keyboard.press('Escape');
     await imageDialog.waitFor({ state: 'detached' });
     await page.waitForFunction(() => document.activeElement?.textContent === '변경된 회의 자료.png');
@@ -230,7 +240,9 @@ const schedules = [{ id: 1, title: '문서 연결 확인 회의', date: '2026-11
     assert.equal(await officeDialog.locator('iframe, img').count(), 0, 'office format must never be embedded');
     await officeDialog.getByRole('button', { name: '미리보기 닫기', exact: true }).click();
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ passed: true, legacySchema, cases: ['rename errors remain open', 'rename/move preserves extension and URL', '320px and 390px mobile cards fit', 'verified image loading', 'preview download fallback', 'inline queued/uploading rows without global panel or fake progress', 'upload folder/search/mobile filtering', 'storage and metadata failures retry separately', 'retry retains captured category', 'real row replaces slot once and clears automatically', 'list-only refresh does not re-upload', 'failed upload dismissal leaves documents intact', 'schedule linked preview and focus restoration', 'office format download-only'], storageRequests: storageRequests.length, metadataRequests: metadataRequests.length, screenshots }, null, 2));
+    assert.ok(readRequests.some((urlPath) => urlPath.endsWith('/preview.png')), 'a legacy record reads through the authenticated endpoint');
+    assert.ok(readRequests.some((urlPath) => urlPath.endsWith('/fallback.png')), 'a canonical record reads through the authenticated endpoint');
+    console.log(JSON.stringify({ passed: true, legacySchema, cases: ['rename errors remain open', 'rename/move preserves extension and URL', '320px and 390px mobile cards fit', 'verified authenticated reads for legacy and new object references', 'preview download fallback', 'inline queued/uploading rows without global panel or fake progress', 'upload folder/search/mobile filtering', 'storage and metadata failures retry separately', 'retry retains captured category', 'real row replaces slot once and clears automatically', 'list-only refresh does not re-upload', 'failed upload dismissal leaves documents intact', 'schedule linked preview and focus restoration', 'office format download-only'], storageRequests: storageRequests.length, metadataRequests: metadataRequests.length, screenshots }, null, 2));
   } catch (error) {
     if (releaseImage) releaseImage();
     if (releaseUpload) releaseUpload();

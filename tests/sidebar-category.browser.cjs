@@ -17,9 +17,9 @@ const categories = [
   { id: 99, name: bottomName, order_index: 24 },
 ];
 const files = [
-  { id: 101, name: '연결된 운영 문서.pdf', category: originalName, url: 'https://portal-test.invalid/storage/v1/object/public/files/operations.pdf', size: 1234, created_at: '2026-11-11T01:00:00Z' },
-  { id: 102, name: '참고 문서.pdf', category: '참고자료', url: 'https://portal-test.invalid/storage/v1/object/public/files/reference.pdf', size: 4321, created_at: '2026-11-10T01:00:00Z' },
-  { id: 103, name: '아래쪽 문서.pdf', category: bottomName, url: 'https://portal-test.invalid/storage/v1/object/public/files/bottom.pdf', size: 100, created_at: '2026-11-09T01:00:00Z' },
+  { id: 101, name: '연결된 운영 문서.pdf', category: originalName, url: 'storage://files/operations.pdf', size: 1234, created_at: '2026-11-11T01:00:00Z' },
+  { id: 102, name: '참고 문서.pdf', category: '참고자료', url: 'storage://files/reference.pdf', size: 4321, created_at: '2026-11-10T01:00:00Z' },
+  { id: 103, name: '아래쪽 문서.pdf', category: bottomName, url: 'storage://files/bottom.pdf', size: 100, created_at: '2026-11-09T01:00:00Z' },
 ];
 
 (async () => {
@@ -41,6 +41,9 @@ const files = [
     const reply = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
     if (url.pathname.startsWith('/auth/v1/')) return reply({ access_token: token, refresh_token: 'local-refresh', token_type: 'bearer', expires_in: 3600, expires_at: 2100000000, user: { id: userId, aud: 'authenticated', role: 'authenticated', is_anonymous: true, created_at: '2026-11-01T00:00:00Z' } });
     if (url.pathname.endsWith('/get_device_access_status')) return reply({ status: 'approved', user_id: userId, is_admin: false });
+    if (['list_team_members', 'list_important_schedules', 'list_my_team_notifications'].some((name) => url.pathname.endsWith(`/rpc/${name}`))) return reply([]);
+    if (url.pathname.endsWith('/rpc/get_my_team_member')) return reply(null);
+    if (url.pathname.endsWith('/rpc/team_responsibility_available')) return reply(false);
     if (url.pathname.startsWith('/rest/v1/')) {
       if (request.method() !== 'GET') writes.push({ method: request.method(), pathname: url.pathname, query: url.search, body: request.postDataJSON() });
       if (url.pathname.endsWith('/rpc/rename_category_with_files')) {

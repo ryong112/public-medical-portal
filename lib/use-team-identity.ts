@@ -14,7 +14,7 @@ const isNotification = (value: unknown): value is PortalNotification => {
   if (!value || typeof value !== 'object') return false;
   const row = value as Record<string, unknown>;
   return typeof row.id === 'string' && typeof row.source_id === 'string' && typeof row.title === 'string'
-    && typeof row.created_at === 'string' && ['schedule_attendee', 'chat_mention'].includes(String(row.kind));
+    && typeof row.created_at === 'string' && ['schedule_attendee', 'chat_mention', 'important_schedule'].includes(String(row.kind));
 };
 const isUnavailable = (error: { code?: string } | null) => Boolean(error && ['PGRST202', '42883', '42P01'].includes(error.code ?? ''));
 

@@ -22,6 +22,10 @@ const closeEnough = (actual, expected, label) => assert.ok(Math.abs(actual - exp
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, timezoneId: 'Asia/Seoul', serviceWorkers: 'block' });
   const state = { messages: [makeMessage(1, '이전 안내 메시지')], posts: [], errors: [], nextId: 10, holdNextList: true, heldList: null, chat: null, unexpectedWrites: [], wsEventsSent: 0 };
+  const shared = [
+    { schedule_id: 31, title: '지역 연계 점검 회의', date: '2090-11-27', end_date: null, start_time: '14:00:00', end_time: '15:00:00', location: '2층 회의실', attendee_count: 3, file_count: 1, status: 'changed', revision: 2, read: false, source_available: true, can_withdraw: false },
+    { schedule_id: 32, title: '외부 점검 방문', date: '2090-11-28', end_date: null, start_time: null, end_time: null, location: null, attendee_count: 0, file_count: 0, status: 'cancelled', revision: 3, read: false, source_available: false, can_withdraw: false },
+  ];
   const screenshots = [];
   let releaseInitial;
   await context.route('**/*', async (route) => {
@@ -34,6 +38,13 @@ const closeEnough = (actual, expected, label) => assert.ok(Math.abs(actual - exp
     if (url.pathname.endsWith('/team_responsibility_available')) return reply(false);
     if (url.pathname.endsWith('/get_team_chat_notice_state')) return reply({ code: 'PGRST202', message: 'Chat notice capability unavailable in this fixture' }, 404);
     if (url.pathname.endsWith('/list_my_team_notifications')) return reply([]);
+    if (url.pathname.endsWith('/list_important_schedules')) return reply(shared);
+    if (url.pathname.endsWith('/mark_important_schedule_read')) {
+      const { p_schedule_id, p_revision } = request.postDataJSON();
+      const item = shared.find((entry) => entry.schedule_id === p_schedule_id && entry.revision === p_revision);
+      if (item) item.read = true;
+      return reply(Boolean(item));
+    }
     if (url.pathname.startsWith('/rest/v1/')) {
       if (url.pathname.endsWith('/messages')) {
         if (request.method() === 'POST') {
@@ -140,6 +151,34 @@ const closeEnough = (actual, expected, label) => assert.ok(Math.abs(actual - exp
     assert.equal(await panel.locator('[data-team-message-id="21"]').count(), 1, 'an event arriving during a later refresh must remain present');
     await panel.locator('[data-team-message-id="2"]').getByText('실시간으로 수정된 메시지', { exact: true }).waitFor();
 
+    for (let id = 22; id <= 42; id += 1) {
+      const entry = makeMessage(id, `업무 변경 확인 메시지 ${id}`);
+      state.messages.push(entry); emit(entry);
+    }
+    await panel.locator('[data-team-message-id="42"]').waitFor();
+    const log = panel.getByRole('log');
+    await log.evaluate((element) => { element.scrollTop = 0; });
+    await page.waitForTimeout(80);
+    const newMessage = makeMessage(43, '읽던 위치 유지 확인');
+    state.messages.push(newMessage); emit(newMessage);
+    await panel.getByRole('button', { name: '새 메시지 1건으로 이동' }).waitFor();
+    assert.equal(await log.evaluate((element) => element.scrollTop), 0, 'older transcript position should stay fixed');
+    await panel.getByRole('button', { name: '새 메시지 1건으로 이동' }).click();
+    assert.ok(await log.evaluate((element) => element.scrollHeight - element.clientHeight - element.scrollTop <= 3));
+
+    const tabs = panel.getByRole('tablist');
+    const chatTab = tabs.getByRole('tab', { name: '정보 공유' });
+    const importantTab = tabs.getByRole('tab', { name: /중요 일정/ });
+    assert.equal(await tabs.getAttribute('aria-orientation'), 'horizontal');
+    await chatTab.focus(); await page.keyboard.press('ArrowRight');
+    assert.equal(await importantTab.getAttribute('aria-selected'), 'true');
+    await panel.getByRole('heading', { name: '지역 연계 점검 회의', exact: true }).waitFor();
+    assert.equal(await panel.locator('[data-important-schedule-id="32"]').getByRole('button', { name: '일정 보기' }).count(), 0);
+    await panel.locator('[data-important-schedule-id="32"]').getByRole('button', { name: '읽음' }).click();
+    await until(() => shared[1].read, 'Expected the selected cancellation to be marked read');
+    await importantTab.locator('[aria-label="안 읽음 1건"]').waitFor();
+    await chatTab.click();
+
     const header = panel.locator('[data-chat-drag-handle]');
     const resize = panel.locator('[data-chat-resize-handle]');
     await header.waitFor(); await resize.waitFor();
@@ -163,11 +202,19 @@ const closeEnough = (actual, expected, label) => assert.ok(Math.abs(actual - exp
     await resize.focus(); await page.keyboard.press('ArrowRight');
     assert.ok((await bounds(panel)).width > resized.width, 'resize handle keyboard arrows are supported');
     const persisted = await bounds(panel);
+    await input.fill('창을 닫아도 이 ID의 초안은 보존합니다.');
     await panel.getByRole('button', { name: '정보공유방 닫기', exact: true }).click();
     await page.getByRole('button', { name: '정보공유방', exact: true }).click();
     const reopened = await bounds(panel);
     closeEnough(reopened.x, persisted.x, 'reopened x'); closeEnough(reopened.width, persisted.width, 'reopened width');
+    assert.equal(await input.inputValue(), '창을 닫아도 이 ID의 초안은 보존합니다.');
     await capture('desktop');
+    await resize.focus();
+    for (let n = 0; n < 5; n += 1) await page.keyboard.press('ArrowRight');
+    assert.equal(await tabs.getAttribute('aria-orientation'), 'vertical');
+    await importantTab.click();
+    await capture('important-desktop');
+    await chatTab.click();
     await page.setViewportSize({ width: 900, height: 650 });
     await page.waitForTimeout(80);
     const clamped = await bounds(panel);
@@ -187,6 +234,12 @@ const closeEnough = (actual, expected, label) => assert.ok(Math.abs(actual - exp
     assert.ok(mobile.x >= -1 && mobile.right <= 321 && mobile.y >= 0 && mobile.bottom <= 641, JSON.stringify(mobile));
     assert.equal(await resize.isVisible(), false, 'small mobile screens must use the fixed bottom sheet, not a resize handle');
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    assert.equal(await tabs.getAttribute('aria-orientation'), 'horizontal');
+    await importantTab.click();
+    await panel.getByRole('heading', { name: '지역 연계 점검 회의' }).waitFor();
+    assert.ok(await panel.evaluate((element) => element.scrollWidth <= element.clientWidth + 1));
+    await capture('important-mobile-320');
+    await chatTab.click();
     await input.fill('@');
     await panel.getByRole('listbox', { name: '멘션할 팀원' }).waitFor();
     const mentionBounds = await bounds(panel.getByRole('listbox', { name: '멘션할 팀원' }));
@@ -194,7 +247,7 @@ const closeEnough = (actual, expected, label) => assert.ok(Math.abs(actual - exp
     await capture('mobile-320');
     assert.deepEqual(state.unexpectedWrites, []);
     assert.deepEqual(state.errors, []);
-    console.log(JSON.stringify({ passed: true, cases: ['real Phoenix Realtime INSERT survives an older REST snapshot', 'one POST plus repeated same-ID Realtime emits only one message', 'different IDs with equal content remain separate', 'new INSERT, UPDATE and DELETE survive a concurrent post-send REST refresh', 'contrasting header, transcript and composer', 'header pointer drag', 'pointer and keyboard resize', 'reopening retains geometry', 'viewport shrink clamps panel', 'reset and input interactions', '320px fixed mobile sheet and mention list'], wsEventsSent: state.wsEventsSent, screenshots }, null, 2));
+    console.log(JSON.stringify({ passed: true, cases: ['real Phoenix Realtime INSERT survives an older REST snapshot', 'one POST plus repeated same-ID Realtime emits only one message', 'different IDs with equal content remain separate', 'new INSERT, UPDATE and DELETE survive a concurrent post-send REST refresh', 'old transcript position does not jump on new messages', 'independent important schedule pane, keyboard tabs and reads', 'contrasting header, transcript and composer', 'header pointer drag', 'pointer and keyboard resize', 'reopening retains geometry and draft', 'viewport shrink clamps panel', 'reset and input interactions', '320px fixed mobile sheet, two tabs and mention list'], wsEventsSent: state.wsEventsSent, screenshots }, null, 2));
   } catch (error) {
     if (releaseInitial) releaseInitial();
     console.error('Browser errors:', state.errors);

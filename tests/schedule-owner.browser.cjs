@@ -32,6 +32,7 @@ const schedule = (id, title, extra = {}) => ({ id, title, date: '2026-11-13', en
         if (rpc === 'list_team_members') return reply(members);
         if (rpc === 'get_my_team_member') return reply(memberA);
         if (rpc === 'list_my_team_notifications') return reply([]);
+        if (rpc === 'list_important_schedules') return reply([]);
         if (rpc === 'team_responsibility_available') return capable ? reply(true) : reply({ code: 'PGRST202', message: 'Old schema has no optional owner ID capability' }, 404);
         state.writes.push({ unexpectedRpc: rpc });
         return reply({ message: 'Unexpected RPC blocked' }, 403);

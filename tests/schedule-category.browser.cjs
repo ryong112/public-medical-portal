@@ -60,6 +60,9 @@ const assertColor = async (locator, property, category) => {
       user: { id: userId, aud: 'authenticated', role: 'authenticated', is_anonymous: true, created_at: '2026-11-01T00:00:00Z' },
     });
     if (url.pathname.endsWith('/get_device_access_status')) return reply({ status: 'approved', user_id: userId, is_admin: false });
+    if (url.pathname.endsWith('/get_my_team_member')) return reply(null);
+    if (['list_team_members', 'list_my_team_notifications', 'list_important_schedules'].some((rpc) => url.pathname.endsWith('/' + rpc))) return reply([]);
+    if (url.pathname.endsWith('/team_responsibility_available')) return reply(false);
     if (url.pathname.startsWith('/rest/v1/')) {
       if (request.method() !== 'GET') writes.push(url.pathname);
       return reply(url.pathname.endsWith('/schedules') ? fixtures : []);
@@ -116,7 +119,7 @@ const assertColor = async (locator, property, category) => {
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
     await page.screenshot({ path: path.join(os.tmpdir(), 'my-portal-category-mobile.png') });
     await page.getByRole('button', { name: '이 날짜에 일정 추가' }).click();
-    for (const [label, category] of [['출장', 'business_trip'], ['회의', 'meeting'], ['내부일정', 'internal'], ['연차·조퇴·외출', 'leave']]) {
+    for (const [label, category] of [['출장', 'business_trip'], ['회의', 'meeting'], ['내부일정', 'internal'], ['휴가 (연차·조퇴·외출)', 'leave']]) {
       const button = page.getByRole('button', { name: label, exact: true });
       await button.click();
       await assertColor(button, 'background-color', category);

@@ -29,13 +29,15 @@ import { createTeamChatReconciler, upsertTeamChatMessages } from '@/lib/team-cha
 import useTeamIdentity from '@/lib/use-team-identity';
 import useTeamChatNotice from '@/lib/use-team-chat-notice';
 import { createDocumentUploads, createDocumentUploadRunner, getSettledDocumentUploadIds, type UploadItem } from '@/lib/document-upload';
+import { downloadDocumentBlob, getDocumentStoragePath, getNewDocumentReference } from '@/lib/document-access';
+import { useImportantSchedules } from '@/lib/use-important-schedules';
 import { getRequiredHolidayYears, mergeHolidayYear, type KoreanHoliday } from '@/lib/korean-holidays';
 import JSZip from 'jszip';
 import { 
   FilePlus,
   Trash2,
   GripVertical, LayoutDashboard, Plus,
-  ChevronLeft, ChevronRight, X, Clock, CalendarDays, Archive, Menu, Siren, Pencil, ScanLine, Copy, ExternalLink
+  ChevronLeft, ChevronRight, X, Clock, CalendarDays, Archive, Menu, Siren, Pencil, ScanLine, Copy, ExternalLink, Pin
 } from 'lucide-react';
 
 type PortalSchedule = NewScheduleInput & Partial<RecurrenceOccurrenceFields> & { id: number };
@@ -105,7 +107,10 @@ export default function IntegratedPortal() {
   const remoteDeletedMessageIdsRef = useRef(new Set<string>());
   const [myId, setMyId] = useState<string | null>(null);
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [shareRoomTab, setShareRoomTab] = useState<'chat' | 'important'>('chat');
+  const [chatTabRequest, setChatTabRequest] = useState<{ tab: 'chat' | 'important'; requestId: number }>();
   const [focusedMessageId, setFocusedMessageId] = useState<number | null>(null);
+  const [focusedMessageRequestId, setFocusedMessageRequestId] = useState(0);
   const chatNotice = useTeamChatNotice(isAuthenticated && isChatOpen, team.member ? `member:${team.member.id}` : myId ? `user:${myId}` : '');
   
   // 알림 상태
@@ -136,8 +141,7 @@ export default function IntegratedPortal() {
     upload: async (item) => {
       const { error } = await supabase.storage.from('files').upload(item.storagePath, item.file, { upsert: true });
       if (error) throw new Error(`파일 전송 실패: ${error.message}`);
-      const { data } = supabase.storage.from('files').getPublicUrl(item.storagePath);
-      return { url: data.publicUrl };
+      return { url: getNewDocumentReference(item.storagePath) };
     },
     ensureMetadata: async (item) => {
       if (metadataAvailableRef.current) {
@@ -168,6 +172,7 @@ export default function IntegratedPortal() {
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(() => getLocalDateKey());
   const [koreanHolidays, setKoreanHolidays] = useState<Record<string, string[]>>({});
   const [selectedSchedule, setSelectedSchedule] = useState<any | null>(null);
+  const [scheduleShare, setScheduleShare] = useState<{ id: number; busy: boolean; error: string } | null>(null);
   const [draggedScheduleId, setDraggedScheduleId] = useState<number | null>(null);
   const [scheduleFormDate, setScheduleFormDate] = useState<string | null>(null);
   const [editingSchedule, setEditingSchedule] = useState<any | null>(null);
@@ -178,6 +183,7 @@ export default function IntegratedPortal() {
   const [isKioskOpen, setIsKioskOpen] = useState(isDedicatedKioskLocation);
   const [kioskLaunchNotice, setKioskLaunchNotice] = useState('');
   const [isDedicatedKiosk] = useState(isDedicatedKioskLocation);
+  const importantSchedules = useImportantSchedules(isAuthenticated && !isDedicatedKiosk ? myId : null, true, team.member?.id);
   const [isAbsenceBoardOpen, setIsAbsenceBoardOpen] = useState(false);
   const [isQuickScheduleOpen, setIsQuickScheduleOpen] = useState(false);
   const [isYearlyCleanupOpen, setIsYearlyCleanupOpen] = useState(false);
@@ -276,14 +282,14 @@ export default function IntegratedPortal() {
       const maxId = Math.max(...messages.map(m => m.id));
       const lastSeenId = parseInt(localStorage.getItem('last_seen_chat_id') || '0', 10);
       
-      if (isChatOpen) {
+      if (isChatOpen && shareRoomTab === 'chat') {
         localStorage.setItem('last_seen_chat_id', maxId.toString());
         setHasUnread(false);
       } else if (maxId > lastSeenId) {
         setHasUnread(true);
       }
     }
-  }, [messages, isChatOpen]);
+  }, [messages, isChatOpen, shareRoomTab]);
 
   // 2. 부서 공유 달력 영구 읽음 처리
   useEffect(() => {
@@ -416,6 +422,8 @@ export default function IntegratedPortal() {
   };
 
   const effectiveScheduleName = team.member?.display_name ?? myScheduleName;
+  const currentPublication = importantSchedules.items.find((entry) => entry.schedule_id === Number(selectedSchedule?.id));
+  const canManageOpenSchedule = !currentPublication || isDeviceAdmin || Boolean(team.member && selectedSchedule?.owner_member_id === team.member.id);
   const visibleSchedules = showMySchedules ? schedules.filter((schedule) => team.available && team.member
     ? (Array.isArray(schedule.attendee_member_ids) && schedule.attendee_member_ids.includes(team.member.id)) || (schedule.owner_member_id ? schedule.owner_member_id === team.member.id : schedule.owner_name === team.member.display_name)
     : scheduleMatchesPerson(schedule, myScheduleName)) : schedules;
@@ -638,9 +646,11 @@ export default function IntegratedPortal() {
         const { error: categoryError } = await supabase.from('categories').delete().eq('id', id);
         if (categoryError) throw new Error(`분류를 삭제하지 못했습니다: ${categoryError.message}`);
         if (targetFiles.length > 0) {
-          const filePaths = targetFiles.map(f => f.url.split('/').pop() || "");
-          const { error: storageError } = await supabase.storage.from('files').remove(filePaths);
-          if (storageError) throw new Error(`파일 저장소를 정리하지 못했습니다: ${storageError.message}`);
+          const filePaths = [...new Set(targetFiles.map((file) => getDocumentStoragePath(file.url)).filter((path): path is string => path !== null))];
+          if (filePaths.length) {
+            const { error: storageError } = await supabase.storage.from('files').remove(filePaths);
+            if (storageError) throw new Error(`파일 저장소를 정리하지 못했습니다: ${storageError.message}`);
+          }
         }
       },
     });
@@ -665,7 +675,7 @@ export default function IntegratedPortal() {
 
   const onDeleteFile = (file: any) => {
     if (!confirm('파일을 삭제하시겠습니까?')) return;
-    const path = file.url.split('/').pop() || "";
+    const path = getDocumentStoragePath(file.url);
     queueUndoableDeletion({
       label: `'${file.name}' 파일이 삭제 대기 중입니다.`,
       keys: [`file:${file.id}`],
@@ -674,8 +684,10 @@ export default function IntegratedPortal() {
       commit: async () => {
         const { error: fileError } = await supabase.from('files').delete().eq('id', file.id);
         if (fileError) throw new Error(`파일 정보를 삭제하지 못했습니다: ${fileError.message}`);
-        const { error: storageError } = await supabase.storage.from('files').remove([path]);
-        if (storageError) throw new Error(`파일 저장소를 정리하지 못했습니다: ${storageError.message}`);
+        if (path) {
+          const { error: storageError } = await supabase.storage.from('files').remove([path]);
+          if (storageError) throw new Error(`파일 저장소를 정리하지 못했습니다: ${storageError.message}`);
+        }
       },
     });
   };
@@ -749,14 +761,60 @@ export default function IntegratedPortal() {
     void team.refreshNotifications();
   };
 
+  const openShareRoom = (tab: 'chat' | 'important') => {
+    setChatTabRequest((previous) => ({ tab, requestId: (previous?.requestId ?? 0) + 1 }));
+    setShareRoomTab(tab);
+    setIsChatOpen(true);
+  };
+
+  const closeShareRoom = () => {
+    setIsChatOpen(false);
+    setFocusedMessageId(null);
+  };
+
+  const focusSharedMessage = (id: number) => {
+    setFocusedMessageId(id);
+    setFocusedMessageRequestId((current) => current + 1);
+    openShareRoom('chat');
+  };
+
+  const openExactSchedule = async (id: number) => {
+    const result = await supabase.from('schedules').select('*').eq('id', id).maybeSingle();
+    if (result.error) throw new Error('일정을 불러오지 못했습니다. 잠시 후 다시 확인해 주세요.');
+    if (!result.data || result.data.recurrence_status === 'cancelled') return false;
+    setSelectedSchedule(result.data);
+    return true;
+  };
+
+  const viewImportantSchedule = async (id: number) => {
+    if (!await openExactSchedule(id)) {
+      void importantSchedules.refresh();
+      throw new Error('삭제되었거나 취소된 일정입니다.');
+    }
+  };
+
+  const publishSelectedSchedule = async (id: number) => {
+    if (scheduleShare?.id !== id || scheduleShare.busy) return;
+    setScheduleShare({ id, busy: true, error: '' });
+    try {
+      await importantSchedules.publish(id);
+      setScheduleShare(null);
+      setSelectedSchedule(null);
+      setRecurrenceScope('this');
+      openShareRoom('important');
+    } catch (error) {
+      setScheduleShare({ id, busy: false, error: error instanceof Error ? error.message : '중요 일정에 공유하지 못했습니다.' });
+    }
+  };
+
   const openTeamNotification = async (notification: PortalNotification) => {
     try {
-      if (notification.kind === 'schedule_attendee') {
-        const result = await supabase.from('schedules').select('*').eq('id', notification.source_id).maybeSingle();
-        if (result.error) throw new Error('일정을 불러오지 못했습니다. 잠시 후 다시 확인해 주세요.');
-        const schedule = result.data;
-        if (!schedule || schedule.recurrence_status === 'cancelled') throw new Error('삭제되었거나 취소된 일정입니다.');
-        setSelectedSchedule(schedule);
+      if (notification.kind !== 'chat_mention') {
+        const opened = await openExactSchedule(Number(notification.source_id));
+        if (!opened) {
+          if (notification.kind === 'schedule_attendee') throw new Error('삭제되었거나 취소된 일정입니다.');
+          openShareRoom('important');
+        }
       } else {
         const result = await supabase.from('messages').select('*').eq('id', notification.source_id).maybeSingle();
         if (result.error) throw new Error('대화를 불러오지 못했습니다. 잠시 후 다시 확인해 주세요.');
@@ -765,8 +823,7 @@ export default function IntegratedPortal() {
         chatReconciler.upsert(message);
         remoteDeletedMessageIdsRef.current.delete(String(message.id));
         setMessages((current) => upsertTeamChatMessages(current, [message]));
-        setFocusedMessageId(Number(message.id));
-        setIsChatOpen(true);
+        focusSharedMessage(Number(message.id));
       }
       await team.markRead([notification.id]);
     } catch (failure) { alert(failure instanceof Error ? failure.message : '알림 내용을 열지 못했습니다.'); }
@@ -781,9 +838,7 @@ export default function IntegratedPortal() {
         let name = String(file.name).replace(/[\\/]/gu, '_');
         while (usedNames.has(name)) name = `${file.id}_${name}`;
         usedNames.add(name);
-        const res = await fetch(file.url);
-        if (!res.ok) throw new Error(`${file.name} 다운로드 실패`);
-        zip.file(name, await res.blob());
+        zip.file(name, await downloadDocumentBlob(file.url));
       });
       await Promise.all(promises); const content = await zip.generateAsync({ type: "blob" });
       const link = document.createElement('a'); const url = window.URL.createObjectURL(content); link.href = url; link.download = `${selectedCategory}_백업_${new Date().toLocaleDateString()}.zip`; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -793,12 +848,8 @@ export default function IntegratedPortal() {
     if (targetFiles.length === 0) return;
     const zip = new JSZip();
     for (const [index, file] of targetFiles.entries()) {
-      const url = typeof file.url === 'string' ? file.url : '';
-      if (!url) throw new Error(`${file.name} 파일의 다운로드 주소가 없습니다.`);
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(`${file.name} 파일을 내려받지 못했습니다.`);
       const duplicateSafeName = index === 0 ? file.name : `${String(index + 1).padStart(3, '0')}_${file.name}`;
-      zip.file(duplicateSafeName, await response.blob());
+      zip.file(duplicateSafeName, await downloadDocumentBlob(file.url));
     }
     const content = await zip.generateAsync({ type: 'blob' });
     const downloadUrl = window.URL.createObjectURL(content);
@@ -811,14 +862,6 @@ export default function IntegratedPortal() {
     window.setTimeout(() => window.URL.revokeObjectURL(downloadUrl), 1000);
   };
 
-  const getStoragePathFromPublicUrl = (url: unknown) => {
-    if (typeof url !== 'string' || !url) return '';
-    const marker = '/storage/v1/object/public/files/';
-    const markerIndex = url.indexOf(marker);
-    if (markerIndex >= 0) return decodeURIComponent(url.slice(markerIndex + marker.length));
-    try { return decodeURIComponent(new URL(url).pathname.split('/').pop() ?? ''); } catch { return decodeURIComponent(url.split('/').pop() ?? ''); }
-  };
-
   const executeYearlyDocumentCleanup = async (targets: YearlyDocumentCleanupTarget[]) => {
     if (!isDeviceAdmin) throw new Error('관리자 기기에서만 연도 문서를 정리할 수 있습니다.');
     const conflictingTarget = targets.find((target) => categories.some((category) => category.id !== target.category.id && category.name.trim().toLocaleLowerCase('ko-KR') === target.nextCategoryName.trim().toLocaleLowerCase('ko-KR')));
@@ -827,10 +870,10 @@ export default function IntegratedPortal() {
     const targetFiles = targets.flatMap((target) => target.files);
     const fileIds = targetFiles.map((file) => file.id);
     if (fileIds.length > 0) {
-      const filesWithPaths = targetFiles.map((file) => ({ file, path: getStoragePathFromPublicUrl(file.url) }));
+      const filesWithPaths = targetFiles.map((file) => ({ file, path: getDocumentStoragePath(file.url) }));
       const missingPathFile = filesWithPaths.find((item) => !item.path);
       if (missingPathFile) throw new Error(`${missingPathFile.file.name} 문서의 Storage 경로를 확인하지 못했습니다.`);
-      const storagePaths = [...new Set(filesWithPaths.map((item) => item.path))];
+      const storagePaths = [...new Set(filesWithPaths.map((item) => item.path).filter((path): path is string => path !== null))];
       for (let index = 0; index < storagePaths.length; index += 100) {
         const { error: storageError } = await supabase.storage.from('files').remove(storagePaths.slice(index, index + 100));
         if (storageError) throw new Error(`문서 저장공간을 정리하지 못했습니다: ${storageError.message}`);
@@ -847,7 +890,7 @@ export default function IntegratedPortal() {
     }
     await Promise.all([fetchFiles(), fetchCategories()]);
   };
-  const handleDownload = async (url: string, originalName: string) => { try { const response = await fetch(url); if (!response.ok) throw new Error('파일 응답 오류'); const blob = await response.blob(); const downloadUrl = window.URL.createObjectURL(blob); const link = document.createElement('a'); link.href = downloadUrl; link.download = originalName; document.body.appendChild(link); link.click(); link.remove(); window.setTimeout(() => window.URL.revokeObjectURL(downloadUrl), 1000); } catch { alert('파일을 내려받지 못했습니다. 연결 상태를 확인한 뒤 다시 시도해 주세요.'); } };
+  const handleDownload = async (url: string, originalName: string) => { try { const blob = await downloadDocumentBlob(url); const downloadUrl = window.URL.createObjectURL(blob); const link = document.createElement('a'); link.href = downloadUrl; link.download = originalName; document.body.appendChild(link); link.click(); link.remove(); window.setTimeout(() => window.URL.revokeObjectURL(downloadUrl), 1000); } catch { alert('파일을 내려받지 못했습니다. 접근 권한과 연결 상태를 확인해 주세요.'); } };
   
   const runUploads = async (items: UploadItem[]) => {
     if (uploadBusyRef.current || items.length === 0) return;
@@ -1263,7 +1306,7 @@ export default function IntegratedPortal() {
         <PortalDesktopActions
           currentView={viewMode}
           onView={setViewMode}
-          onChat={() => setIsChatOpen(!isChatOpen)}
+          onChat={() => isChatOpen ? closeShareRoom() : openShareRoom(shareRoomTab)}
           onSearch={() => setIsCommandPaletteOpen(true)}
           onQuickAdd={() => setIsQuickScheduleOpen(true)}
           onKiosk={openKioskWindow}
@@ -1273,11 +1316,11 @@ export default function IntegratedPortal() {
           onExit={handlePortalExit}
           isAdmin={isDeviceAdmin}
           isChatOpen={isChatOpen}
-          hasUnread={hasUnread}
+          hasUnread={hasUnread || importantSchedules.unreadCount > 0}
           hasNewSchedule={hasNewSchedule}
           notificationControl={notificationControl}
         />
-        <PortalMobileActions view={viewMode} onView={setViewMode} onChat={() => setIsChatOpen(true)} onSearch={() => setIsCommandPaletteOpen(true)} onQuickAdd={() => setIsQuickScheduleOpen(true)} onKiosk={openKioskWindow} onHistory={() => void openActivityHistory()} onDevices={() => setIsDeviceManagerOpen(true)} onCleanup={() => setIsYearlyCleanupOpen(true)} onExit={handlePortalExit} isAdmin={isDeviceAdmin} notificationControl={notificationControl} />
+        <PortalMobileActions view={viewMode} onView={setViewMode} onChat={() => openShareRoom(shareRoomTab)} onSearch={() => setIsCommandPaletteOpen(true)} onQuickAdd={() => setIsQuickScheduleOpen(true)} onKiosk={openKioskWindow} onHistory={() => void openActivityHistory()} onDevices={() => setIsDeviceManagerOpen(true)} onCleanup={() => setIsYearlyCleanupOpen(true)} onExit={handlePortalExit} isAdmin={isDeviceAdmin} notificationControl={notificationControl} />
       </header>
 
       <main className="flex-1 flex overflow-hidden relative">
@@ -1390,6 +1433,7 @@ export default function IntegratedPortal() {
               {viewMode === 'dashboard' ? (
                 <SharedDashboard
                   schedules={visibleSchedules}
+                  teamSchedules={schedules}
                   members={team.members}
                   holidaysByDate={koreanHolidays}
                   onChangeView={setViewMode}
@@ -1400,7 +1444,7 @@ export default function IntegratedPortal() {
                     setSelectedCalendarDate(date);
                     setViewMode('calendar');
                   }}
-                  onOpenChat={() => setIsChatOpen(true)}
+                  onOpenChat={() => openShareRoom(shareRoomTab)}
                   onOpenSchedule={setSelectedSchedule}
                   onToggleScheduleComplete={onToggleScheduleComplete}
                   onOpenAbsenceBoard={() => setIsAbsenceBoardOpen(true)}
@@ -1681,7 +1725,20 @@ export default function IntegratedPortal() {
       </main>
 
       {isWeeklyPrintOpen && <WeeklySchedulePrint schedules={visibleSchedules} initialStartDate={todayStr} scopeLabel={showMySchedules ? `${effectiveScheduleName} 님의 일정` : '팀 전체 일정'} onClose={() => setIsWeeklyPrintOpen(false)} />}
-      <DocumentPreviewModal file={previewFile} onClose={() => setPreviewFile(null)} onDownload={(file) => void handleDownload(file.url, file.name)} />
+      <DocumentPreviewModal
+        file={previewFile}
+        onClose={() => setPreviewFile(null)}
+        onDownload={(file) => void handleDownload(file.url, file.name)}
+        relatedSchedules={previewFile ? schedules.filter((schedule) => Array.isArray(schedule.linked_file_ids) && schedule.linked_file_ids.some((id: number | string) => Number(id) === Number(previewFile.id)))
+          .sort((a, b) => a.date.localeCompare(b.date)).map((schedule) => ({ id: Number(schedule.id), title: formatScheduleTitle(schedule), date: formatScheduleDateRange(schedule) })) : []}
+        onOpenSchedule={(id) => {
+          const schedule = schedules.find((row) => Number(row.id) === id);
+          if (!schedule) return;
+          setPreviewFile(null);
+          setRecurrenceScope('this');
+          setSelectedSchedule(schedule);
+        }}
+      />
 
       {isWhiteboardImportOpen && (
         <WhiteboardImportModal
@@ -1706,10 +1763,13 @@ export default function IntegratedPortal() {
         categories={categories}
         schedules={schedules}
         messages={messages}
-        onSelectFile={(file) => handleDownload(String(file.url), file.name)}
+        onSelectFile={(result) => {
+          const file = files.find((entry) => String(entry.id) === String(result.id));
+          if (file) setPreviewFile(file);
+        }}
         onSelectCategory={(category) => { setViewMode('files'); setSelectedCategory(category.name); setIsMobileSidebarOpen(false); }}
         onSelectSchedule={(schedule) => setSelectedSchedule(schedule)}
-        onSelectMessage={() => setIsChatOpen(true)}
+        onSelectMessage={(message) => focusSharedMessage(Number(message.id))}
       />
 
       {isDeviceAdmin && isActivityHistoryOpen && (
@@ -1768,6 +1828,9 @@ export default function IntegratedPortal() {
           teamMembersLoading={team.loading}
           teamMembersError={team.error}
           ownerAssignmentAvailable={team.available && responsibilityAvailable}
+          currentMemberId={team.member?.id ?? null}
+          recurrenceEditScope={recurrenceScope}
+          publishedSchedule={importantSchedules.items.some((entry) => entry.schedule_id === Number(editingSchedule?.id))}
           onClose={() => { setScheduleFormDate(null); setEditingSchedule(null); setIsCopyingSchedule(false); setRecurrenceScope('this'); }}
           onSubmit={onSaveSchedule}
         />
@@ -1806,11 +1869,25 @@ export default function IntegratedPortal() {
                 {recurrenceScope !== 'this' && <p className="mt-2 text-[9px] font-bold text-slate-400">날짜를 옮기면 모든 회차가 같은 일수만큼 함께 이동합니다.</p>}
               </div>
             )}
+            {importantSchedules.available && (isDeviceAdmin || (team.member && selectedSchedule.owner_member_id === team.member.id)) && (
+              <div className="mb-4 w-full rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
+                {scheduleShare?.id === Number(selectedSchedule.id) ? <>
+                  <p className="text-sm font-bold text-indigo-950">공유방의 중요 일정에 올릴까요?</p>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-600">팀이 원본 일정을 볼 수 있고, 참석자에게 사이트 알림이 갑니다.</p>
+                  {scheduleShare.error && <p role="alert" className="mt-2 text-xs font-semibold text-red-700">{scheduleShare.error}</p>}
+                  <div className="mt-3 flex justify-end gap-2">
+                    <button type="button" disabled={scheduleShare.busy} onClick={() => setScheduleShare(null)} className="min-h-10 rounded-lg px-3 text-sm font-bold text-slate-700 hover:bg-white">취소</button>
+                    <button type="button" disabled={scheduleShare.busy} onClick={() => void publishSelectedSchedule(Number(selectedSchedule.id))} className="min-h-10 rounded-lg bg-indigo-700 px-4 text-sm font-bold text-white hover:bg-indigo-800 disabled:opacity-50">{scheduleShare.busy ? '공유 중…' : '공유하기'}</button>
+                  </div>
+                </> : <button type="button" onClick={() => setScheduleShare({ id: Number(selectedSchedule.id), busy: false, error: '' })} className="flex min-h-10 w-full items-center justify-center gap-2 rounded-lg bg-white px-3 text-sm font-bold text-indigo-800 ring-1 ring-indigo-200 hover:bg-indigo-100"><Pin size={16} /> 중요 일정에 공유</button>}
+              </div>
+            )}
+            {!canManageOpenSchedule && <p className="mb-3 w-full text-xs font-semibold text-slate-600">공유된 중요 일정은 담당자 또는 관리자가 수정할 수 있습니다.</p>}
             <div className="grid w-full grid-cols-3 gap-3">
-              <button onClick={() => onEditSchedule(selectedSchedule)} className="flex items-center justify-center gap-2 rounded-2xl bg-blue-50 py-4 font-black text-blue-600 transition-all hover:bg-blue-600 hover:text-white"><Pencil size={17}/> 일정 수정</button>
-              <button onClick={() => onCopySchedule(selectedSchedule)} className="flex items-center justify-center gap-2 rounded-2xl bg-slate-100 py-4 font-black text-slate-600 transition-all hover:bg-slate-700 hover:text-white"><Copy size={17}/> 일정 복사</button>
-              <button onClick={() => isRecurringSchedule(selectedSchedule) ? onCancelRecurringSchedule(selectedSchedule) : onDeleteSchedule(Number((selectedSchedule as { id: number }).id))} className="flex items-center justify-center gap-2 rounded-2xl bg-red-50 py-4 font-black text-red-500 transition-all hover:bg-red-500 hover:text-white"><Trash2 size={18}/> {isRecurringSchedule(selectedSchedule) ? '일정 취소' : '일정 삭제'}</button>
-              <button onClick={() => { setSelectedSchedule(null); setRecurrenceScope('this'); }} className="col-span-3 rounded-2xl bg-slate-900 py-4 font-black text-white transition-all hover:bg-black">닫기</button>
+              {canManageOpenSchedule && <button onClick={() => onEditSchedule(selectedSchedule)} className="flex items-center justify-center gap-2 rounded-2xl bg-blue-50 py-4 font-black text-blue-600 transition-all hover:bg-blue-600 hover:text-white"><Pencil size={17}/> 일정 수정</button>}
+              <button onClick={() => onCopySchedule(selectedSchedule)} className={`flex items-center justify-center gap-2 rounded-2xl bg-slate-100 py-4 font-black text-slate-600 transition-all hover:bg-slate-700 hover:text-white ${canManageOpenSchedule ? '' : 'col-span-3'}`}><Copy size={17}/> 일정 복사</button>
+              {canManageOpenSchedule && <button onClick={() => isRecurringSchedule(selectedSchedule) ? onCancelRecurringSchedule(selectedSchedule) : onDeleteSchedule(Number((selectedSchedule as { id: number }).id))} className="flex items-center justify-center gap-2 rounded-2xl bg-red-50 py-4 font-black text-red-500 transition-all hover:bg-red-500 hover:text-white"><Trash2 size={18}/> {isRecurringSchedule(selectedSchedule) ? '일정 취소' : '일정 삭제'}</button>}
+              <button onClick={() => { setSelectedSchedule(null); setScheduleShare(null); setRecurrenceScope('this'); }} className="col-span-3 rounded-2xl bg-slate-900 py-4 font-black text-white transition-all hover:bg-black">닫기</button>
             </div>
           </div>
         </div>
@@ -1842,13 +1919,19 @@ export default function IntegratedPortal() {
         </div>
       )}
 
-      {isChatOpen && <TeamChatPanel
+      {isChatOpen && <div inert={Boolean(selectedSchedule || previewFile || scheduleFormDate)}><TeamChatPanel
         messages={messages}
         members={team.members}
         currentUserId={myId}
         currentMemberId={team.member?.id}
         canMention={team.available}
         focusedMessageId={focusedMessageId}
+        focusedMessageRequestId={focusedMessageRequestId}
+        importantSchedules={importantSchedules}
+        tabRequest={chatTabRequest}
+        onTabChange={setShareRoomTab}
+        onOpenSchedule={viewImportantSchedule}
+        isAdmin={isDeviceAdmin}
         notice={chatNotice.notice}
         noticeAvailable={chatNotice.available}
         noticeLoading={chatNotice.loading}
@@ -1862,8 +1945,8 @@ export default function IntegratedPortal() {
         onRefreshNotice={chatNotice.refresh}
         onSend={onSendTeamMessage}
         onDelete={onDeleteMessage}
-        onClose={() => { setIsChatOpen(false); setFocusedMessageId(null); }}
-      />}
+        onClose={closeShareRoom}
+      /></div>}
 
       <UndoToast notices={undoNotices} onUndo={undoDeletion} onDismiss={dismissUndoNotice} />
 

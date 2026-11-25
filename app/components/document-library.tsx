@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { CircleAlert, Download, Eye, FileImage, FileText, FolderOpen, LoaderCircle, Pencil, RotateCcw, Trash2, X } from 'lucide-react';
 import { getDocumentListRows, type UploadItem } from '@/lib/document-upload';
+import { getDocumentStoragePath } from '@/lib/document-access';
 import TeamMemberPicker, { type TeamMember } from '@/app/components/team-member-picker';
 
 export interface DocumentFile {
@@ -42,12 +43,7 @@ interface DocumentLibraryProps {
 }
 
 export function getDocumentPreviewKind(file: Pick<DocumentFile, 'name' | 'url'>): 'pdf' | 'image' | null {
-  try {
-    const url = new URL(file.url);
-    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return null;
-  } catch {
-    return null;
-  }
+  if (!getDocumentStoragePath(file.url)) return null;
   const extension = file.name.split('.').pop()?.toLowerCase();
   if (extension === 'pdf') return 'pdf';
   return ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(extension ?? '') ? 'image' : null;
@@ -182,7 +178,7 @@ export default function DocumentLibrary({ files, allFiles = files, categories, u
     const kind = getDocumentPreviewKind(file);
     const owner = teamMembers.find((member) => member.id === file.owner_member_id);
     const extension = file.name.includes('.') ? file.name.split('.').pop()?.toUpperCase() : 'FILE';
-    return <button type="button" onClick={() => kind ? onPreview(file) : onDownload(file)} className="flex min-w-0 items-center gap-3 text-left focus-visible:rounded-xl focus-visible:ring-2 focus-visible:ring-blue-500" title={kind ? '미리보기' : '다운로드'}>
+    return <button type="button" onClick={() => onPreview(file)} className="flex min-w-0 items-center gap-3 text-left focus-visible:rounded-xl focus-visible:ring-2 focus-visible:ring-blue-500" title={kind ? '미리보기' : '문서 열기'}>
       <span className={`flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-xl ${kind === 'image' ? 'bg-emerald-50 text-emerald-600' : kind === 'pdf' ? 'bg-red-50 text-red-500' : 'bg-blue-50 text-blue-500'}`}>{kind === 'image' ? <FileImage size={19} /> : <FileText size={19} />}<span className="mt-0.5 max-w-9 truncate text-[8px] font-black">{extension}</span></span>
       <span className="min-w-0"><span className="block break-all text-sm font-bold text-slate-900 transition-colors hover:text-blue-600">{file.name}</span>{file.owner_member_id && <span data-document-owner={file.owner_member_id} className="mt-1 block text-xs font-medium text-slate-500" title={owner ? `@${owner.handle}` : '현재 팀원 목록에 없는 기존 담당자입니다.'}>담당 {owner?.display_name ?? '기존 담당자'}</span>}</span>
     </button>;

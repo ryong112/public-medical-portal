@@ -6,24 +6,26 @@ const test = require('node:test');
 const vm = require('node:vm');
 const ts = require('typescript');
 
-function loadHelpers(filename) {
-  const source = readFileSync(path.join(__dirname, '..', 'app', 'components', filename), 'utf8');
+function loadHelpers(filename, requireMock = () => ({})) {
+  const source = readFileSync(path.join(__dirname, '..', filename), 'utf8');
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   const helpers = {};
-  vm.runInNewContext(compiled, { exports: helpers, require: () => ({}), URL });
+  vm.runInNewContext(compiled, { exports: helpers, require: requireMock, URL, process: { env: { NEXT_PUBLIC_SUPABASE_URL: 'https://portal-test.invalid' } } });
   return helpers;
 }
-const { getDocumentPreviewKind, formatDocumentSize } = loadHelpers('document-library.tsx');
-const { getVerifiedDocumentMime } = loadHelpers('document-preview-modal.tsx');
+const access = loadHelpers('lib/document-access.ts');
+const mockedImports = (name) => name === '@/lib/document-access' ? access : {};
+const { getDocumentPreviewKind, formatDocumentSize } = loadHelpers('app/components/document-library.tsx', mockedImports);
+const { getVerifiedDocumentMime } = loadHelpers('app/components/document-preview-modal.tsx', mockedImports);
 
-test('inline preview accepts only http(s) stored PDF and raster image names', () => {
-  for (const name of ['report.pdf', 'REPORT.PDF']) assert.equal(getDocumentPreviewKind({ name, url: 'https://files.example/file' }), 'pdf');
-  for (const name of ['image.png', 'image.JPG', 'image.jpeg', 'image.webp', 'image.gif']) assert.equal(getDocumentPreviewKind({ name, url: 'http://localhost/image' }), 'image');
-  for (const name of ['image.svg', 'page.html', 'page.htm', 'document.hwp', 'document.hwpx', 'document.docx', 'slides.pptx', 'sheet.xlsx', 'file.txt', 'file.pdf.exe']) assert.equal(getDocumentPreviewKind({ name, url: 'https://files.example/file' }), null, name);
+test('inline preview accepts only portal-stored PDF and raster image names', () => {
+  for (const name of ['report.pdf', 'REPORT.PDF']) assert.equal(getDocumentPreviewKind({ name, url: 'storage://files/file' }), 'pdf');
+  for (const name of ['image.png', 'image.JPG', 'image.jpeg', 'image.webp', 'image.gif']) assert.equal(getDocumentPreviewKind({ name, url: 'https://portal-test.invalid/storage/v1/object/public/files/image' }), 'image');
+  for (const name of ['image.svg', 'page.html', 'page.htm', 'document.hwp', 'document.hwpx', 'document.docx', 'slides.pptx', 'sheet.xlsx', 'file.txt', 'file.pdf.exe']) assert.equal(getDocumentPreviewKind({ name, url: 'storage://files/file' }), null, name);
 });
 
 test('unsafe, relative, malformed and credential-bearing URLs cannot become inline previews', () => {
-  for (const url of ['javascript:alert(1)', 'data:application/pdf,abc', 'blob:https://files.example/id', 'file:///tmp/report.pdf', '/report.pdf', '//files.example/report.pdf', 'not a URL', 'https://user:password@files.example/report.pdf']) assert.equal(getDocumentPreviewKind({ name: 'report.pdf', url }), null, url);
+  for (const url of ['javascript:alert(1)', 'data:application/pdf,abc', 'blob:https://files.example/id', 'file:///tmp/report.pdf', '/report.pdf', '//files.example/report.pdf', 'not a URL', 'https://user:password@portal-test.invalid/storage/v1/object/public/files/report.pdf', 'https://files.example/storage/v1/object/public/files/report.pdf']) assert.equal(getDocumentPreviewKind({ name: 'report.pdf', url }), null, url);
 });
 
 test('actual format signatures must agree with the allowed extension', () => {

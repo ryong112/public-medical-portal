@@ -1,11 +1,12 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { Clock3 } from 'lucide-react';
 
 interface DirectTimeInputProps {
   label: string;
   value: string;
+  helpId?: string;
   disabled?: boolean;
   minimumTime?: string;
   durationFrom?: string;
@@ -61,27 +62,35 @@ const formatTwelveHourTime = (time: string) => {
 export default function DirectTimeInput({
   label,
   value,
+  helpId,
   disabled = false,
   minimumTime,
   durationFrom,
   onChange,
 }: DirectTimeInputProps) {
   const inputId = useId();
-  const [draft, setDraft] = useState(value);
+  const displayTime = /^(\d{2}:\d{2})(?::\d{2}(?:\.\d+)?)?$/u.exec(value)?.[1] ?? value;
+  const [draft, setDraft] = useState(displayTime);
   const [isEditing, setIsEditing] = useState(false);
   const [error, setError] = useState('');
+  const cancelEdit = useRef(false);
 
   const commit = () => {
     if (disabled) return;
+    if (cancelEdit.current) {
+      cancelEdit.current = false;
+      setIsEditing(false);
+      return;
+    }
     const parsed = parseDirectTime(draft);
     if (!parsed) {
-      setDraft(value);
+      setDraft(displayTime);
       setIsEditing(false);
       setError('0~23시로 입력하세요. 예: 930 또는 14:20');
       return;
     }
     if (minimumTime && toMinutes(parsed) <= toMinutes(minimumTime)) {
-      setDraft(value);
+      setDraft(displayTime);
       setIsEditing(false);
       setError('시작 시간 이후로 입력해 주세요.');
       return;
@@ -89,13 +98,13 @@ export default function DirectTimeInput({
     setDraft(parsed);
     setIsEditing(false);
     setError('');
-    if (parsed !== value) onChange(parsed);
+    if (parsed !== displayTime) onChange(parsed);
   };
 
-  const hour = /^\d{2}:\d{2}$/u.test(value) ? Number(value.slice(0, 2)) : null;
+  const hour = /^\d{2}:\d{2}$/u.test(displayTime) ? Number(displayTime.slice(0, 2)) : null;
   const period = hour === null ? '' : hour < 12 ? '오전' : '오후';
-  const duration = durationFrom && /^\d{2}:\d{2}$/u.test(value)
-    ? formatDuration(toMinutes(value) - toMinutes(durationFrom))
+  const duration = durationFrom && /^\d{2}:\d{2}$/u.test(displayTime)
+    ? formatDuration(toMinutes(displayTime) - toMinutes(durationFrom))
     : '';
 
   return (
@@ -113,13 +122,13 @@ export default function DirectTimeInput({
           inputMode="numeric"
           autoComplete="off"
           disabled={disabled}
-          value={disabled ? '' : isEditing ? draft : formatTwelveHourTime(value)}
+          value={disabled ? '' : isEditing ? draft : formatTwelveHourTime(displayTime)}
           placeholder={disabled ? '선택 안 함' : '예: 1030'}
           aria-label={`${label} 시간 직접 입력`}
           aria-invalid={Boolean(error)}
-          aria-describedby={`${inputId}-help${error ? ` ${inputId}-error` : ''}`}
+          aria-describedby={`${helpId ?? `${inputId}-help`}${error ? ` ${inputId}-error` : ''}`}
           onFocus={(event) => {
-            setDraft(value);
+            setDraft(displayTime);
             setIsEditing(true);
             setError('');
             event.currentTarget.select();
@@ -137,7 +146,8 @@ export default function DirectTimeInput({
             if (event.key === 'Escape') {
               event.preventDefault();
               event.stopPropagation();
-              setDraft(value);
+              cancelEdit.current = true;
+              setDraft(displayTime);
               setIsEditing(false);
               setError('');
               event.currentTarget.blur();
@@ -147,7 +157,7 @@ export default function DirectTimeInput({
         />
         {!disabled && period && <span className="mr-2.5 shrink-0 whitespace-nowrap rounded-md bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700">{period}</span>}
       </span>
-      <span id={`${inputId}-help`} className="mt-1.5 block text-xs leading-relaxed text-slate-500">{disabled ? '사용하지 않는 시간입니다.' : '24시간 기준 입력 · 예: 930, 14:20'}</span>
+      {!helpId && <span id={`${inputId}-help`} className="mt-1.5 block text-xs leading-relaxed text-slate-500">{disabled ? '사용하지 않는 시간입니다.' : '24시간 기준 입력 · 예: 930, 14:20'}</span>}
       {error && <span id={`${inputId}-error`} role="alert" className="mt-1 block text-xs font-semibold leading-relaxed text-red-600">{error}</span>}
     </label>
   );

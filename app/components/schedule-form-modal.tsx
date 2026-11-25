@@ -1,12 +1,13 @@
 'use client';
 
 import { useEffect, useId, useRef, useState } from 'react';
-import { AlertTriangle, Bell, CalendarPlus, CalendarRange, Check, ChevronDown, Clock3, FileText, ListChecks, MapPin, Paperclip, RotateCcw, Search, Siren, Users, X } from 'lucide-react';
+import { AlertTriangle, Bell, CalendarDays, CalendarPlus, CalendarRange, Check, ChevronDown, Clock3, FileText, ListChecks, MapPin, Paperclip, RotateCcw, Search, Siren, Users, X } from 'lucide-react';
 import DirectTimeInput from '@/app/components/direct-time-input';
 import TeamMemberPicker, { type TeamMember } from '@/app/components/team-member-picker';
 import { scheduleCategoryStyles } from '@/lib/schedule-category';
 import { getLegacyAttendeeText, getScheduleAttendeeNames, normalizeAttendeeMemberIds } from '@/lib/schedule-team-attendees';
 import { changeScheduleOwner, getScheduleOwnerName, normalizeOwnerMemberId } from '@/lib/schedule-team-owner';
+import { previewScheduleAttendeeNotifications } from '@/lib/schedule-form-notifications';
 
 export type ScheduleType = 'meeting' | 'business_trip' | 'internal' | 'leave' | 'unclassified';
 export type AbsenceType = 'annual' | 'early' | 'outing';
@@ -52,6 +53,9 @@ interface ScheduleFormModalProps {
   teamMembersLoading?: boolean;
   teamMembersError?: string | null;
   ownerAssignmentAvailable?: boolean;
+  currentMemberId?: string | null;
+  recurrenceEditScope?: 'this' | 'future' | 'all';
+  publishedSchedule?: boolean;
   onClose: () => void;
   onSubmit: (schedules: NewScheduleInput[], recurrence?: ScheduleRecurrenceSubmission) => Promise<void>;
 }
@@ -159,7 +163,7 @@ const removeStoredDraft = (key: string) => {
 
 const fieldClassName = 'w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-base font-medium text-slate-900 outline-none transition-colors placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-500 sm:text-sm';
 
-export default function ScheduleFormModal({ date, initialSchedule, existingSchedules = [], copyMode = false, availableFiles = [], people = [], metadataAvailable = true, teamMembers = [], teamMembersAvailable = false, teamMembersLoading = false, teamMembersError = null, ownerAssignmentAvailable = false, onClose, onSubmit }: ScheduleFormModalProps) {
+export default function ScheduleFormModal({ date, initialSchedule, existingSchedules = [], copyMode = false, availableFiles = [], people = [], metadataAvailable = true, teamMembers = [], teamMembersAvailable = false, teamMembersLoading = false, teamMembersError = null, ownerAssignmentAvailable = false, currentMemberId, recurrenceEditScope = 'this', publishedSchedule = false, onClose, onSubmit }: ScheduleFormModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const formId = useId();
@@ -188,7 +192,7 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
   const [location, setLocation] = useState(initialSchedule?.location ?? '');
   const [linkedFileIds, setLinkedFileIds] = useState(() => normalizeFileIds(initialSchedule?.linked_file_ids));
   const [fileSearch, setFileSearch] = useState('');
-  const [detailsOpen, setDetailsOpen] = useState(Boolean(initialSchedule?.owner_name || initialSchedule?.owner_member_id || initialSchedule?.attendee_names?.length || initialSchedule?.attendee_member_ids?.length || initialSchedule?.location || initialSchedule?.linked_file_ids?.length));
+  const [detailsOpen, setDetailsOpen] = useState(Boolean(initialSchedule?.owner_name && !initialSchedule.owner_member_id || initialSchedule?.attendee_names?.length && !initialSchedule?.attendee_member_ids?.length || initialSchedule?.location || initialSchedule?.linked_file_ids?.length));
   const [recurrenceMode, setRecurrenceMode] = useState<RecurrenceMode>('none');
   const [monthlyWeek, setMonthlyWeek] = useState<MonthlyWeek>('first');
   const [error, setError] = useState('');
@@ -298,7 +302,7 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
     setAttendeeBaselineIds(savedDraft.legacy_attendee_names ? [] : normalizeAttendeeMemberIds(savedDraft.attendee_member_ids));
     setLocation(savedDraft.location ?? '');
     setLinkedFileIds(normalizeFileIds(savedDraft.linked_file_ids));
-    setDetailsOpen(Boolean(savedDraft.owner_name || savedDraft.owner_member_id || savedDraft.attendee_names?.length || savedDraft.attendee_member_ids?.length || savedDraft.location || savedDraft.linked_file_ids?.length));
+    setDetailsOpen(Boolean(savedDraft.owner_name && !savedDraft.owner_member_id || savedDraft.legacy_attendee_names?.length || savedDraft.attendee_names?.length && !savedDraft.attendee_member_ids?.length || savedDraft.location || savedDraft.linked_file_ids?.length));
     setRecurrenceMode(savedDraft.recurrenceMode ?? 'none');
     setMonthlyWeek(savedDraft.monthlyWeek ?? 'first');
     setSavedDraft(null);
@@ -345,6 +349,7 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
         } : {}),
       };
       const recurringDates = initialSchedule || dateMode === 'range' ? [dateValue] : createRecurringDates(dateValue, recurrenceMode, monthlyWeek);
+      if (recurringDates.length === 0) throw new Error('선택한 연도 안에 해당 반복 일정이 없습니다. 시작일 또는 반복 방식을 바꿔 주세요.');
       const recurrence = !initialSchedule && dateMode === 'single' && recurrenceMode !== 'none'
         ? {
             recurrence_type: recurrenceMode,
@@ -369,7 +374,28 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
   const selectedFiles = linkedFileIds.map((id) => availableFiles.find((file) => file.id === id) ?? { id, name: '문서 #' + id + ' (현재 목록에서 확인할 수 없음)' });
   const filteredFiles = availableFiles.filter((file) => [file.name, file.category].filter(Boolean).join(' ').toLocaleLowerCase().includes(fileSearch.trim().toLocaleLowerCase()));
   const personSuggestions = [...new Set(people.map((person) => person.trim()).filter(Boolean))];
-  const recurrenceCount = createRecurringDates(dateValue, recurrenceMode, monthlyWeek).length;
+  const recurringDates = createRecurringDates(dateValue, recurrenceMode, monthlyWeek);
+  const recurrenceCount = recurringDates.length;
+  const editingMultipleOccurrences = !copyMode && Boolean(initialSchedule) && recurrenceEditScope !== 'this';
+  const notifications = editingMultipleOccurrences ? null : previewScheduleAttendeeNotifications({
+    current: {
+      title,
+      date: dateValue,
+      end_date: dateMode === 'range' ? endDateValue : null,
+      start_time: timeMode === 'both' || timeMode === 'start' ? startTime : null,
+      end_time: timeMode === 'both' || timeMode === 'end' ? endTime : null,
+      location: metadataAvailable ? location.trim() || null : initialSchedule?.location,
+      attendee_member_ids: attendeeMemberIds,
+    },
+    original: copyMode ? undefined : initialSchedule,
+    members: teamMembers,
+    actorMemberId: currentMemberId,
+    supportsNotifications: teamMembersAvailable && !teamMembersError,
+    published: publishedSchedule && !copyMode,
+  });
+  const notificationNames = notifications?.map((member) => teamMembers.some((other) => other.id !== member.id && other.display_name === member.display_name)
+    ? `${member.display_name} @${member.handle.replace(/^@/u, '')}`
+    : member.display_name);
   const scheduleTitle = copyMode ? '일정 복사' : initialSchedule ? '일정 수정' : '일정 추가';
   const toggleFile = (id: number) => setLinkedFileIds((current) => current.includes(id) ? current.filter((fileId) => fileId !== id) : [...current, id]);
   const changeOwner = (memberIds: string[]) => {
@@ -399,7 +425,7 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
         if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
         if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
       }}
-      className="fixed inset-0 m-auto max-h-[calc(100dvh-1.5rem)] w-[calc(100%-1.5rem)] max-w-2xl overflow-hidden rounded-3xl bg-white p-0 text-slate-900 shadow-2xl backdrop:bg-slate-950/55 backdrop:backdrop-blur-sm"
+      className="fixed inset-0 m-auto max-h-[calc(100dvh-1.5rem)] w-[calc(100%-1.5rem)] max-w-5xl overflow-hidden rounded-[22px] bg-white p-0 text-slate-900 shadow-2xl backdrop:bg-slate-950/55 backdrop:backdrop-blur-sm sm:rounded-3xl"
     >
       <form onSubmit={handleSubmit} aria-busy={isSaving} className="flex max-h-[calc(100dvh-1.5rem)] flex-col">
         <header className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-100 px-4 py-4 sm:px-6">
@@ -407,13 +433,13 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600"><CalendarPlus size={21} /></span>
             <div>
               <h2 id={formId + '-heading'} className="text-lg font-extrabold text-slate-900">{scheduleTitle}</h2>
-              <p id={formId + '-description'} className="mt-0.5 text-xs leading-relaxed text-slate-500">제목과 날짜를 입력하세요. 나머지 정보는 선택할 수 있습니다.</p>
+              <p id={formId + '-description'} className="sr-only">제목과 날짜를 입력하세요. 나머지 정보는 선택할 수 있습니다.</p>
             </div>
           </div>
           <button type="button" disabled={isSaving} onClick={onClose} aria-label="일정 창 닫기" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-slate-100 disabled:opacity-40"><X size={20} /></button>
         </header>
 
-        <div inert={isSaving} className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-4 py-5 sm:px-6">
+        <div inert={isSaving} className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-3.5 py-4 sm:px-6 md:space-y-5">
           {savedDraft && (
             <div className="flex flex-wrap items-center gap-2 rounded-xl border border-blue-100 bg-blue-50 p-3">
               <RotateCcw size={17} className="shrink-0 text-blue-600" />
@@ -426,11 +452,14 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
             </div>
           )}
 
-          <label className="block">
+          <label className="block" data-schedule-form-title>
             <span className="mb-2 block text-sm font-bold text-slate-700">일정 제목 <span className="text-xs font-medium text-blue-600">필수</span></span>
             <input ref={titleRef} required maxLength={500} name="title" value={title} onChange={(event) => { setTitle(event.target.value); setError(''); }} placeholder="예: 신규 사업 협의회" className={fieldClassName} />
           </label>
 
+          <div data-schedule-form-grid className="grid items-start gap-4 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+          <section aria-labelledby={formId + '-timing'} className="min-w-0 space-y-4 rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
+          <h3 id={formId + '-timing'} className="flex items-center gap-2 text-sm font-bold text-slate-900"><CalendarDays size={16} className="text-blue-600" aria-hidden="true" />일정 정보</h3>
           <fieldset className="min-w-0">
             <legend className="mb-2 text-sm font-bold text-slate-700">날짜 <span className="text-xs font-medium text-blue-600">필수</span></legend>
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -443,7 +472,7 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
             {dateMode === 'single' ? (
               <input type="date" aria-label="일정 날짜" required value={dateValue} onChange={(event) => { setDateValue(event.target.value); setEndDateValue(event.target.value); setError(''); }} className={fieldClassName} />
             ) : (
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-3 min-[380px]:grid-cols-2">
                 <label className="min-w-0"><span className="mb-1.5 block text-xs font-semibold text-slate-600">시작일</span><input type="date" required value={dateValue} max={endDateValue} onChange={(event) => { const nextStart = event.target.value; setDateValue(nextStart); if (nextStart && endDateValue <= nextStart) { const nextDate = parseLocalDate(nextStart); nextDate.setDate(nextDate.getDate() + 1); setEndDateValue(formatLocalDate(nextDate)); } setError(''); }} className={fieldClassName} /></label>
                 <label className="min-w-0"><span className="mb-1.5 block text-xs font-semibold text-slate-600">종료일</span><input type="date" required value={endDateValue} min={dateValue} onChange={(event) => { setEndDateValue(event.target.value); setError(''); }} className={fieldClassName} /></label>
               </div>
@@ -452,18 +481,17 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
 
           <fieldset className="min-w-0">
             <legend className="mb-2 text-sm font-bold text-slate-700">일정 유형</legend>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+            <div className="grid grid-cols-3 gap-1.5 min-[380px]:grid-cols-5">
               {[
                 { value: 'meeting' as const, label: '회의' },
                 { value: 'business_trip' as const, label: '출장' },
                 { value: 'internal' as const, label: '내부일정' },
-                { value: 'leave' as const, label: '연차·조퇴·외출' },
+                { value: 'leave' as const, label: '휴가' },
                 { value: 'unclassified' as const, label: '미분류' },
               ].map((type) => (
-                <button key={type.value} type="button" aria-pressed={scheduleType === type.value} onClick={() => setScheduleType(type.value)} className={'inline-flex min-h-10 items-center justify-center gap-1.5 rounded-xl border px-2 py-2 text-xs font-bold transition-colors ' + (scheduleType === type.value ? scheduleCategoryStyles[type.value === 'unclassified' ? 'general' : type.value].filterActive : scheduleCategoryStyles[type.value === 'unclassified' ? 'general' : type.value].filter)}><span aria-hidden="true" className={'h-1.5 w-1.5 shrink-0 rounded-full ' + (scheduleType === type.value ? 'bg-white' : scheduleCategoryStyles[type.value === 'unclassified' ? 'general' : type.value].dot)} />{type.label}</button>
+                <button key={type.value} type="button" aria-label={type.value === 'leave' ? '휴가 (연차·조퇴·외출)' : undefined} aria-pressed={scheduleType === type.value} onClick={() => setScheduleType(type.value)} className={'inline-flex min-h-10 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border px-1 py-2 text-xs font-bold transition-colors ' + (scheduleType === type.value ? scheduleCategoryStyles[type.value === 'unclassified' ? 'general' : type.value].filterActive : scheduleCategoryStyles[type.value === 'unclassified' ? 'general' : type.value].filter)}><span aria-hidden="true" className={'hidden h-1.5 w-1.5 shrink-0 rounded-full lg:inline-block ' + (scheduleType === type.value ? 'bg-white' : scheduleCategoryStyles[type.value === 'unclassified' ? 'general' : type.value].dot)} />{type.label}</button>
               ))}
             </div>
-            {scheduleType === 'internal' && <p className="mt-2 text-xs leading-relaxed text-slate-500">내부에서 진행하는 협의회·간담회·업무협약식 등</p>}
             {scheduleType === 'leave' && (
               <fieldset className="mt-3 rounded-xl bg-orange-50 p-3">
                 <legend className="sr-only">휴가 구분</legend>
@@ -474,10 +502,10 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
             )}
           </fieldset>
 
-          <fieldset className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
+          <fieldset className="min-w-0 rounded-xl bg-slate-50 p-2.5 sm:p-3">
             <legend className="sr-only">일정 시간</legend>
-            <p className="mb-3 flex items-center gap-2 text-sm font-bold text-slate-700"><Clock3 size={16} />일정 시간</p>
-            <div className="mb-3 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+            <p className="mb-2 flex items-center gap-2 text-sm font-bold text-slate-700"><Clock3 size={16} />일정 시간</p>
+            <div className="mb-2 grid grid-cols-4 gap-1">
               {[
                 { value: 'both' as const, label: '시작·종료' },
                 { value: 'start' as const, label: '시작만' },
@@ -486,30 +514,20 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
               ].map((mode) => <button key={mode.value} type="button" aria-pressed={timeMode === mode.value} onClick={() => { setTimeMode(mode.value); if ((mode.value === 'both' || mode.value === 'start') && !startTime) setStartTime(defaults.start); if ((mode.value === 'both' || mode.value === 'end') && !endTime) setEndTime(defaults.end); setError(''); }} className={'rounded-lg px-2 py-2 text-xs font-bold transition-colors ' + (timeMode === mode.value ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 hover:bg-slate-200')}>{mode.label}</button>)}
             </div>
             {timeMode !== 'none' ? (
-              <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
-                <DirectTimeInput label="시작" disabled={timeMode === 'end'} value={timeMode === 'end' ? '' : startTime} onChange={(nextTime) => { setStartTime(nextTime); if (timeMode === 'both' && dateMode === 'single') setEndTime(addMinutes(nextTime, 60)); setError(''); }} />
-                <DirectTimeInput label="종료" disabled={timeMode === 'start'} value={timeMode === 'start' ? '' : endTime} minimumTime={timeMode === 'both' && dateMode === 'single' ? startTime : undefined} durationFrom={timeMode === 'both' && dateMode === 'single' ? startTime : undefined} onChange={(nextTime) => { setEndTime(nextTime); setError(''); }} />
-              </div>
-            ) : <p className="text-xs leading-relaxed text-slate-500">시간 없이 날짜만 저장합니다.</p>}
-          </fieldset>
-
-          <fieldset>
-            <legend className="mb-2 text-sm font-bold text-slate-700">표시 설정 <span className="font-normal text-slate-500">선택</span></legend>
-            <div className="grid grid-cols-3 gap-2">
-              {[
-                { label: '공지사항', active: isNotice, onToggle: () => setIsNotice((current) => !current), Icon: Bell, activeClass: 'border-violet-300 bg-violet-50 text-violet-800', title: '이 일정을 공지사항에 추가합니다.' },
-                { label: 'TO DO', active: isTodo, onToggle: () => setIsTodo((current) => !current), Icon: ListChecks, activeClass: 'border-blue-300 bg-blue-50 text-blue-800', title: '이 일정을 TO DO LIST에 추가합니다.' },
-                { label: '긴급', active: isUrgent, onToggle: () => setIsUrgent((current) => !current), Icon: Siren, activeClass: 'border-rose-300 bg-rose-50 text-rose-800', title: '브리핑과 공지사항에 긴급 표시를 추가합니다.' },
-              ].map(({ label, active, onToggle, Icon, activeClass, title: description }) => (
-                <button key={label} type="button" aria-pressed={active} title={description} onClick={onToggle} className={'relative flex min-h-11 min-w-0 items-center justify-center gap-1.5 rounded-xl border px-1 py-2 text-xs font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ' + (active ? activeClass : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50')}><Icon size={15} className="shrink-0" /><span>{label}</span>{active && <Check aria-hidden="true" size={12} className="absolute right-1 top-1" />}</button>
-              ))}
-            </div>
+              <>
+                <div className={timeMode === 'both' ? 'grid grid-cols-1 items-start gap-2 min-[380px]:grid-cols-2' : 'grid max-w-xs'}>
+                  {timeMode !== 'end' && <DirectTimeInput label="시작" helpId={formId + '-time-hint'} value={startTime} onChange={(nextTime) => { setStartTime(nextTime); if (timeMode === 'both' && dateMode === 'single') setEndTime(addMinutes(nextTime, 60)); setError(''); }} />}
+                  {timeMode !== 'start' && <DirectTimeInput label="종료" helpId={formId + '-time-hint'} value={endTime} minimumTime={timeMode === 'both' && dateMode === 'single' ? startTime : undefined} durationFrom={timeMode === 'both' && dateMode === 'single' ? startTime : undefined} onChange={(nextTime) => { setEndTime(nextTime); setError(''); }} />}
+                </div>
+                <p id={formId + '-time-hint'} className="mt-1.5 text-xs text-slate-500">24시간 기준 · 예: 930, 14:20</p>
+              </>
+            ) : null}
           </fieldset>
 
           {!initialSchedule && dateMode === 'single' && (
             <details className="group rounded-2xl border border-slate-200">
               <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-bold text-slate-700 [&::-webkit-details-marker]:hidden">
-                <span>반복 일정 <span className="ml-1 text-xs font-normal text-slate-500">{recurrenceMode === 'none' ? '반복 안 함' : String(recurrenceCount) + '건 · 올해 말까지'}</span></span>
+                <span>반복 일정 <span className="ml-1 text-xs font-normal text-slate-500">{recurrenceMode === 'none' ? '반복 안 함' : recurrenceCount ? String(recurrenceCount) + '건' : '해당 날짜 없음'}</span></span>
                 <ChevronDown size={16} className="shrink-0 transition-transform group-open:rotate-180" />
               </summary>
               <div className="border-t border-slate-100 p-3 sm:p-4">
@@ -523,14 +541,24 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
                   ].map((option) => <button key={option.value} type="button" aria-pressed={recurrenceMode === option.value} onClick={() => setRecurrenceMode(option.value)} className={'rounded-lg px-2 py-2.5 text-xs font-bold ' + (recurrenceMode === option.value ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-blue-50')}>{option.label}</button>)}
                 </div>
                 {recurrenceMode === 'monthly' && <label className="mt-3 block"><span className="mb-1.5 block text-xs font-semibold text-slate-600">매월 반복할 주</span><select value={monthlyWeek} onChange={(event) => setMonthlyWeek(event.target.value as MonthlyWeek)} className={fieldClassName}>{(Object.keys(monthlyWeekLabels) as MonthlyWeek[]).map((week) => <option key={week} value={week}>{monthlyWeekLabels[week]} {weekdayNames[parseLocalDate(dateValue).getDay()]}요일</option>)}</select></label>}
-                {recurrenceMode !== 'none' && <p className="mt-3 text-xs font-semibold text-blue-700">총 {recurrenceCount}개 일정이 함께 등록됩니다.</p>}
+                {recurrenceMode !== 'none' && <p className="mt-3 text-xs font-semibold text-blue-700">{recurrenceCount ? `${recurringDates[0]}${recurrenceCount > 1 ? ' ~ ' + recurringDates.at(-1) : ''} · 총 ${recurrenceCount}건` : '선택한 연도 안에 해당하는 날짜가 없습니다.'}</p>}
               </div>
             </details>
           )}
+          </section>
 
-          <details open={detailsOpen} onToggle={(event) => setDetailsOpen(event.currentTarget.open)} className="group rounded-2xl border border-slate-200">
+          <section aria-labelledby={formId + '-members'} className="min-w-0 space-y-4 rounded-2xl border border-slate-200 bg-slate-50/75 p-3 sm:p-4">
+          <h3 id={formId + '-members'} className="flex items-center gap-2 text-sm font-bold text-slate-900"><Users size={16} className="text-blue-600" aria-hidden="true" />참석과 준비</h3>
+          <div data-schedule-form-team className="space-y-3">
+            {(teamMembersAvailable || teamMembersLoading || teamMembersError) ? (
+              <TeamMemberPicker members={teamMembers} selectedIds={attendeeMemberIds} onChange={setAttendeeMemberIds} label="참석 팀원" loading={teamMembersLoading} error={teamMembersError} unavailable={!teamMembersAvailable && !teamMembersLoading && !teamMembersError} disabled={isSaving} />
+            ) : <p className="text-xs text-slate-600">{metadataAvailable ? '참석자는 추가 정보에서 입력할 수 있습니다.' : '기본 일정만 저장할 수 있습니다.'}</p>}
+            {ownerAssignmentAvailable && <TeamMemberPicker members={teamMembers} selectedIds={ownerMemberId ? [ownerMemberId] : []} onChange={changeOwner} multiple={false} label="담당 팀원" loading={teamMembersLoading} error={teamMembersError} unavailable={!teamMembersAvailable && !teamMembersLoading && !teamMembersError} disabled={isSaving || !metadataAvailable} />}
+          </div>
+
+          <details open={detailsOpen} onToggle={(event) => setDetailsOpen(event.currentTarget.open)} className="group rounded-xl border border-slate-200 bg-white">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-bold text-slate-700 [&::-webkit-details-marker]:hidden">
-              <span>추가 정보 <span className="ml-1 text-xs font-normal text-slate-500">담당자·참석자·장소·문서</span></span>
+              <span>추가 정보 <span className="ml-1 text-xs font-normal text-slate-500">장소·문서·직접 입력</span></span>
               <ChevronDown size={16} className="shrink-0 transition-transform group-open:rotate-180" />
             </summary>
             <div className="space-y-4 border-t border-slate-100 p-3 sm:p-4">
@@ -539,15 +567,13 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
                 <legend className="sr-only">선택 일정 정보</legend>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="min-w-0">
-                    {ownerAssignmentAvailable && <TeamMemberPicker members={teamMembers} selectedIds={ownerMemberId ? [ownerMemberId] : []} onChange={changeOwner} multiple={false} label="담당 팀원" loading={teamMembersLoading} error={teamMembersError} unavailable={!teamMembersAvailable && !teamMembersLoading && !teamMembersError} disabled={isSaving || !metadataAvailable} />}
-                    {(!ownerMemberId || !ownerAssignmentAvailable) && <label className={ownerAssignmentAvailable ? 'mt-3 block min-w-0' : 'block min-w-0'}><span className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-slate-700"><Users size={14} />{ownerAssignmentAvailable ? '담당자 직접 입력' : '담당자'}</span><input value={ownerName} maxLength={120} disabled={Boolean(ownerMemberId)} onChange={(event) => setOwnerName(event.target.value)} list={formId + '-people'} placeholder="담당자 이름" autoComplete="off" className={fieldClassName} /></label>}
+                    {(!ownerMemberId || !ownerAssignmentAvailable) && <label className="block min-w-0"><span className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-slate-700"><Users size={14} />{ownerAssignmentAvailable ? '담당자 직접 입력' : '담당자'}</span><input value={ownerName} maxLength={120} disabled={Boolean(ownerMemberId)} onChange={(event) => setOwnerName(event.target.value)} list={formId + '-people'} placeholder="담당자 이름" autoComplete="off" className={fieldClassName} /></label>}
                     {ownerMemberId && !teamMembers.some((member) => member.id === ownerMemberId) && ownerName.trim() && <p className="mt-1.5 break-words text-xs text-slate-500">기존 담당자: {ownerName.trim()}</p>}
                   </div>
                   <label className="min-w-0"><span className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-slate-700"><MapPin size={14} />장소</span><input value={location} maxLength={300} onChange={(event) => setLocation(event.target.value)} placeholder="예: 본관 2층 회의실" className={fieldClassName} /></label>
                 </div>
                 <datalist id={formId + '-people'}>{personSuggestions.map((name) => <option key={name} value={name} />)}</datalist>
                 <div>
-                  {(teamMembersAvailable || teamMembersLoading || teamMembersError) && <TeamMemberPicker members={teamMembers} selectedIds={attendeeMemberIds} onChange={setAttendeeMemberIds} label="참석 팀원" loading={teamMembersLoading} error={teamMembersError} unavailable={!teamMembersAvailable && !teamMembersLoading && !teamMembersError} disabled={isSaving || !metadataAvailable} className="mb-3" />}
                   <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-700">참석자</span><input value={legacyAttendeeText} maxLength={2000} onChange={(event) => setAttendees(event.target.value)} onBlur={() => setAttendees(normalizeAttendees(legacyAttendeeText).join(', '))} aria-describedby={formId + '-attendees-help'} placeholder="예: 김민수, 이지영" className={fieldClassName} /></label>
                   <p id={formId + '-attendees-help'} className="mt-1.5 text-xs leading-relaxed text-slate-500">{teamMembersAvailable ? '직접 입력 이름은 기존 기록으로만 저장되며 개인 알림을 보내지 않습니다. 여러 명은 쉼표로 구분하세요.' : '여러 명은 쉼표로 구분하세요. 중복된 이름은 한 번만 저장합니다.'}</p>
                   {personSuggestions.some((name) => !attendeeNames.includes(name)) && <div className="mt-2 flex flex-wrap gap-1.5" aria-label="참석자 빠른 추가">{personSuggestions.filter((name) => !attendeeNames.includes(name)).slice(0, 8).map((name) => <button key={name} type="button" onClick={() => setAttendees([...attendeeNames, name].join(', '))} className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-600 hover:border-blue-300 hover:text-blue-700">+ {name}</button>)}</div>}
@@ -568,14 +594,38 @@ export default function ScheduleFormModal({ date, initialSchedule, existingSched
             </div>
           </details>
 
+          <fieldset className="min-w-0">
+            <legend className="mb-2 text-xs font-bold text-slate-700">표시 설정</legend>
+            <div className="grid grid-cols-3 gap-1.5">
+              {[
+                { label: '공지사항', active: isNotice, onToggle: () => setIsNotice((current) => !current), Icon: Bell, activeClass: 'border-violet-300 bg-violet-50 text-violet-800', title: '이 일정을 공지사항에 추가합니다.' },
+                { label: 'TO DO', active: isTodo, onToggle: () => setIsTodo((current) => !current), Icon: ListChecks, activeClass: 'border-blue-300 bg-blue-50 text-blue-800', title: '이 일정을 TO DO LIST에 추가합니다.' },
+                { label: '긴급', active: isUrgent, onToggle: () => setIsUrgent((current) => !current), Icon: Siren, activeClass: 'border-rose-300 bg-rose-50 text-rose-800', title: '브리핑과 공지사항에 긴급 표시를 추가합니다.' },
+              ].map(({ label, active, onToggle, Icon, activeClass, title: description }) => (
+                <button key={label} type="button" aria-pressed={active} title={description} onClick={onToggle} className={'relative flex min-h-10 min-w-0 items-center justify-center gap-1 rounded-xl border px-1 py-2 text-xs font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ' + (active ? activeClass : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50')}><Icon size={15} className="shrink-0" /><span>{label}</span>{active && <Check aria-hidden="true" size={12} className="absolute right-1 top-1" />}</button>
+              ))}
+            </div>
+          </fieldset>
+          </section>
+          </div>
+
           {conflicts.length > 0 && <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800"><div className="flex items-center gap-2 text-xs font-bold"><AlertTriangle size={15} />시간이 겹칠 수 있는 일정 {conflicts.length}건</div><p className="mt-1.5 text-xs leading-relaxed">{conflicts.slice(0, 3).map((schedule) => schedule.title).join(' · ')}</p><p className="mt-1 text-xs">시간 겹침 안내이며, 저장은 계속할 수 있습니다.</p></div>}
         </div>
 
-        <footer className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
+        <footer className="shrink-0 border-t border-slate-200 bg-white px-3.5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
           {error && <p role="alert" className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-semibold leading-relaxed text-red-700">{error}</p>}
-          <div className="flex gap-3">
-            <button type="button" disabled={isSaving} onClick={onClose} className="min-h-11 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50">취소</button>
-            <button type="submit" disabled={isSaving} className="min-h-11 flex-[2] rounded-xl bg-blue-600 px-3 py-3 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60">{isSaving ? '저장 중...' : copyMode ? '복사한 일정 추가' : initialSchedule ? '변경사항 저장' : recurrenceMode !== 'none' && dateMode === 'single' ? String(recurrenceCount) + '개 일정 추가' : '일정 추가'}</button>
+          <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-5">
+            <div data-schedule-notification-preview aria-live="polite" className="flex min-w-0 items-start gap-2 text-xs leading-5 text-slate-600">
+              <Bell size={14} className="mt-0.5 shrink-0 text-blue-600" aria-hidden="true" />
+              <div className="min-w-0">
+                <span className="font-bold text-slate-700">{editingMultipleOccurrences ? '참석 알림은 회차별로 달라집니다' : notifications === null ? teamMembersLoading ? '알림 대상 확인 중' : teamMembersError ? '알림 대상 확인 불가' : '개인 알림을 사용할 수 없습니다' : notifications.length > 0 ? `참석 알림 ${notifications.length}명` : '보낼 참석 알림 없음'}</span>
+                {notificationNames && notificationNames.length > 0 && <span className="ml-1.5 break-words" title={notificationNames.join(', ')}>{notificationNames.slice(0, 2).join(', ')}{notificationNames.length > 2 ? ` 외 ${notificationNames.length - 2}명` : ''}{recurrenceCount > 1 ? ' · 회차마다' : ''}</span>}
+              </div>
+            </div>
+            <div className="flex shrink-0 gap-2.5">
+              <button type="button" disabled={isSaving} onClick={onClose} className="min-h-11 flex-1 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50 sm:flex-none">취소</button>
+              <button type="submit" disabled={isSaving} className="min-h-11 flex-[2] rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60 sm:flex-none sm:px-6">{isSaving ? '저장 중...' : copyMode ? '복사한 일정 추가' : initialSchedule ? '변경사항 저장' : recurrenceMode !== 'none' && dateMode === 'single' && recurrenceCount > 0 ? String(recurrenceCount) + '개 일정 추가' : '일정 추가'}</button>
+            </div>
           </div>
         </footer>
       </form>

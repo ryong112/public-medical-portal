@@ -1,10 +1,12 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.104.0';
 import { buildPhotoPrompt, flagColorDisagreements, normalizePhotoAnalysis, photoAnalysisSchema, relevantSpellingHints, validDate, type StoredCorrection } from './analysis.ts';
 import { fetchWithPhotoRetry } from './request.ts';
+import { authorizeWhiteboardRequest, extractUserBearer, MAX_IMAGE_BASE64_LENGTH, PhotoBodyError, readBoundedPhotoBody } from './access.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
 const allowedMimeTypes = new Set([
@@ -17,8 +19,17 @@ const allowedMimeTypes = new Set([
 
 const jsonResponse = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
-  headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
 });
+
+const clientKey = (): string | undefined => {
+  const newKeys = Deno.env.get('SUPABASE_PUBLISHABLE_KEYS');
+  if (newKeys) {
+    const parsed = JSON.parse(newKeys) as Record<string, unknown>;
+    if (typeof parsed.default === 'string') return parsed.default;
+  }
+  return Deno.env.get('SUPABASE_ANON_KEY');
+};
 
 class AnalysisError extends Error {
   constructor(message: string, readonly status = 502) { super(message); }
@@ -67,34 +78,60 @@ Deno.serve(async (request) => {
   if (request.method !== 'POST') return jsonResponse({ error: 'POST 요청만 지원합니다.' }, 405);
 
   try {
+    const token = extractUserBearer(request.headers.get('Authorization'));
+    if (!token) return jsonResponse({ error: '로그인 및 기기 승인이 필요합니다.' }, 401);
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const key = clientKey();
+    if (!supabaseUrl || !key) return jsonResponse({ error: '사진 분석 권한을 확인하지 못했습니다.' }, 503);
+    const caller = createClient(supabaseUrl, key, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    });
+    const access = await authorizeWhiteboardRequest(token, async (jwt) => {
+      const { data, error } = await caller.auth.getUser(jwt);
+      if (error && (error.status === undefined || error.status === 0 || error.status >= 500)) throw error;
+      return !error && !!data.user;
+    }, async () => {
+      const { data, error } = await caller.rpc('is_approved_human_device');
+      if (error) throw error;
+      return data === true;
+    });
+    if (!access.ok) {
+      const error = access.status === 503 ? '사진 분석 권한을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.'
+        : access.status === 401 ? '로그인 및 기기 승인이 필요합니다.' : '승인된 팀원 기기에서만 사진을 분석할 수 있습니다.';
+      return jsonResponse({ error }, access.status);
+    }
+
     const geminiApiKey = Deno.env.get('GEMINI_API_KEY');
     if (!geminiApiKey) return jsonResponse({ error: 'Gemini API 키가 설정되지 않았습니다.' }, 500);
 
-    const { imageBase64, mimeType, currentDate, targetMonth } = await request.json();
-    if (typeof imageBase64 !== 'string' || typeof mimeType !== 'string') {
+    const { imageBase64, mimeType, currentDate, targetMonth } = await readBoundedPhotoBody(request);
+    if (typeof imageBase64 !== 'string' || !imageBase64 || typeof mimeType !== 'string') {
       return jsonResponse({ error: '분석할 이미지가 없습니다.' }, 400);
     }
     if (!allowedMimeTypes.has(mimeType)) {
       return jsonResponse({ error: '지원하지 않는 이미지 형식입니다.' }, 400);
     }
-    if (imageBase64.length > 18_000_000) {
+    if (imageBase64.length > MAX_IMAGE_BASE64_LENGTH) {
       return jsonResponse({ error: '이미지가 너무 큽니다. 12MB 이하의 사진을 사용해 주십시오.' }, 413);
     }
+    if (imageBase64.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/u.test(imageBase64)) {
+      return jsonResponse({ error: '이미지 형식을 읽지 못했습니다. 사진을 다시 선택해 주세요.' }, 400);
+    }
 
-    const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-    if (!supabaseUrl || !serviceRoleKey) {
+    if (!serviceRoleKey) {
       return jsonResponse({ error: 'Supabase 함수 환경이 올바르지 않습니다.' }, 500);
     }
 
     const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
     const { data: claimed, error: claimError } = await supabaseAdmin.rpc('claim_whiteboard_analysis', { p_daily_limit: 20 });
-    if (claimError) return jsonResponse({ error: `분석 사용량을 확인하지 못했습니다: ${claimError.message}` }, 500);
+    if (claimError) return jsonResponse({ error: '분석 사용량을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.' }, 503);
     if (!claimed) return jsonResponse({ error: '오늘의 화이트보드 분석 한도에 도달했습니다. 내일 다시 시도해 주십시오.' }, 429);
 
     const { data: correctionRows, error: correctionLoadError } = await supabaseAdmin
       .from('whiteboard_corrections')
-      .select('source_text, ai_title, corrected_title, ai_schedule_type, corrected_schedule_type')
+      .select('ai_title, corrected_title, ai_schedule_type, corrected_schedule_type')
       .order('occurrence_count', { ascending: false })
       .order('updated_at', { ascending: false })
       .limit(60);
@@ -134,6 +171,9 @@ Deno.serve(async (request) => {
       verified,
     });
   } catch (error) {
+    if (error instanceof PhotoBodyError) return jsonResponse({ error: error.status === 413
+      ? '이미지가 너무 큽니다. 12MB 이하의 사진을 사용해 주십시오.'
+      : '사진 분석 요청을 읽지 못했습니다. 사진을 다시 선택해 주세요.' }, error.status);
     console.error('Whiteboard analysis failed:', error instanceof Error ? error.name : 'unknown');
     if (error instanceof AnalysisError) return jsonResponse({ error: error.message }, error.status);
     if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) return jsonResponse({ error: '사진 분석 시간이 초과되었습니다. 사진을 나누어 다시 분석해 주십시오.' }, 504);

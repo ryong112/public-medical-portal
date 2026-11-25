@@ -16,6 +16,7 @@ type DashboardView = 'files' | 'calendar' | 'external_calendar' | 'dashboard';
 type DetailKey = 'todo' | 'notice' | 'week' | 'absence' | 'today-absence' | `date:${string}`;
 interface SharedDashboardProps {
   schedules: Schedule[];
+  teamSchedules?: Schedule[];
   members?: AbsenceMember[];
   holidaysByDate?: Record<string, string[]>;
   onChangeView: (view: DashboardView) => void;
@@ -227,7 +228,7 @@ function UpcomingAbsences({ items, today, members, onOpen }: { items: Schedule[]
   }) : <p className={styles.previewEmpty}>예정된 휴가가 없습니다.</p>}</div>;
 }
 
-export default function SharedDashboard({ schedules, members = [], holidaysByDate = {}, onChangeView, onOpenChat, onOpenSchedule, onToggleScheduleComplete, onOpenAbsenceBoard, onPrintWeek, onOpenCalendarDate }: SharedDashboardProps) {
+export default function SharedDashboard({ schedules, teamSchedules = schedules, members = [], holidaysByDate = {}, onChangeView, onOpenChat, onOpenSchedule, onToggleScheduleComplete, onOpenAbsenceBoard, onPrintWeek, onOpenCalendarDate }: SharedDashboardProps) {
   const [detailKey, setDetailKey] = useState<DetailKey | null>(null);
   const [detailOpener, setDetailOpener] = useState<HTMLElement | null>(null);
   const [previewRowHeight, setPreviewRowHeight] = useState(64);
@@ -271,10 +272,10 @@ export default function SharedDashboard({ schedules, members = [], holidaysByDat
   const todos = getDashboardTodos(schedules, today);
   const pendingTodos = todos.filter((schedule) => !schedule.is_completed);
   const overdue = pendingTodos.filter((schedule) => getScheduleEndDate(schedule) < today).length;
-  const notices = schedules.filter((schedule) => schedule.is_notice && getScheduleEndDate(schedule) >= today).sort((a, b) => Number(Boolean(b.is_urgent)) - Number(Boolean(a.is_urgent)) || sortSchedules(a, b));
+  const notices = teamSchedules.filter((schedule) => schedule.is_notice && getScheduleEndDate(schedule) >= today).sort((a, b) => Number(Boolean(b.is_urgent)) - Number(Boolean(a.is_urgent)) || sortSchedules(a, b));
   const week = schedules.filter((schedule) => scheduleOverlaps(schedule, today, weekEnd)).sort(sortSchedules);
-  const absences = schedules.filter((schedule) => getScheduleCategory(schedule) === 'leave' && scheduleOverlaps(schedule, monthStart, monthEnd)).sort(sortSchedules);
-  const upcomingAbsences = schedules.filter((schedule) => getScheduleCategory(schedule) === 'leave' && getScheduleEndDate(schedule) >= today).sort((a, b) => (a.date < today ? today : a.date).localeCompare(b.date < today ? today : b.date) || sortSchedules(a, b));
+  const absences = teamSchedules.filter((schedule) => getScheduleCategory(schedule) === 'leave' && scheduleOverlaps(schedule, monthStart, monthEnd)).sort(sortSchedules);
+  const upcomingAbsences = teamSchedules.filter((schedule) => getScheduleCategory(schedule) === 'leave' && getScheduleEndDate(schedule) >= today).sort((a, b) => (a.date < today ? today : a.date).localeCompare(b.date < today ? today : b.date) || sortSchedules(a, b));
   const todayAbsences = absencePeople(absences.filter((schedule) => scheduleOccursOn(schedule, today)), members);
   const todayAbsenceItems = absences.filter((schedule) => scheduleOccursOn(schedule, today));
   const cards = [
@@ -358,7 +359,7 @@ export default function SharedDashboard({ schedules, members = [], holidaysByDat
       </aside>
     </div>
     <AnchoredPreview controller={peek} title={preview?.label ?? ''} preferredHeight={peek.active?.key === 'absence' ? 480 : Math.min(620, Math.max(155, Math.max(1, preview?.items.length ?? 0) * (previewRowHeight + 6) + 98))}>
-      {peek.active?.key === 'absence' ? <AbsenceMiniCalendar schedules={schedules} members={members} referenceDate={today} onOpenSchedule={openSchedule} onOpenAbsenceBoard={onOpenAbsenceBoard ? () => { peek.close({ immediate: true }); onOpenAbsenceBoard(); } : undefined} /> : preview && <div className={styles.peekList}>
+      {peek.active?.key === 'absence' ? <AbsenceMiniCalendar schedules={teamSchedules} members={members} referenceDate={today} onOpenSchedule={openSchedule} onOpenAbsenceBoard={onOpenAbsenceBoard ? () => { peek.close({ immediate: true }); onOpenAbsenceBoard(); } : undefined} /> : preview && <div className={styles.peekList}>
         <SchedulePages key={`peek:${preview.key}`} items={preview.items} label={preview.label} listKey="detail" today={today} showDate showProximity={peek.active?.key === 'week' || Boolean(peek.active?.key.startsWith('date:'))} proximityDate={peek.active?.key.startsWith('date:') ? peek.active.key.slice(5) : undefined} onOpen={openSchedule} onComplete={onToggleScheduleComplete} navigation="dots" />
         <button type="button" className={styles.peekAll} onClick={() => openAll(peek.active!.key)}>전체 목록 보기 <ArrowUpRight size={14} /></button>
       </div>}

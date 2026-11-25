@@ -1,2 +1,5 @@
 [functions.analyze-whiteboard]
-verify_jwt = false
+verify_jwt = true
+
+[storage.buckets.files]
+public = false

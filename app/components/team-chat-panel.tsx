@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
-import { AtSign, Grip, LoaderCircle, MessageCircle, Move, Pin, RotateCcw, Send, Trash2, X } from 'lucide-react';
+import { ArrowDown, AtSign, CalendarDays, Ellipsis, Grip, LoaderCircle, MessageCircle, Move, Pin, RotateCcw, Send, Trash2, X } from 'lucide-react';
 import ChatNoticeCard, { type TeamChatNotice } from '@/app/components/chat-notice-card';
+import ImportantScheduleFeed from '@/app/components/important-schedule-feed';
+import type { ImportantSchedules } from '@/lib/use-important-schedules';
 import { CHAT_WINDOW_DESKTOP_WIDTH, CHAT_WINDOW_STORAGE_KEY, clampChatWindow, defaultChatWindow, parseChatWindow, type ChatWindowGeometry } from '@/lib/team-chat-window';
 import { upsertTeamChatMessages } from '@/lib/team-chat-feed';
 import {
@@ -14,6 +16,7 @@ import {
 } from '@/lib/team-chat-mentions';
 
 export type TeamChatMember = ChatMentionMember;
+export type ShareRoomTab = 'chat' | 'important';
 export type { TeamChatNotice } from '@/app/components/chat-notice-card';
 
 export interface TeamChatMessage {
@@ -36,6 +39,12 @@ interface TeamChatPanelProps {
   onClose: () => void;
   canMention?: boolean;
   focusedMessageId?: number | null;
+  focusedMessageRequestId?: number;
+  importantSchedules?: ImportantSchedules;
+  tabRequest?: { tab: ShareRoomTab; requestId: number };
+  onTabChange?: (tab: ShareRoomTab) => void;
+  onOpenSchedule?: (id: number) => void | Promise<void>;
+  isAdmin?: boolean;
   notice?: TeamChatNotice | null;
   noticeAvailable?: boolean;
   noticeLoading?: boolean;
@@ -58,6 +67,10 @@ const messageDate = (value: string) => {
   return Number.isNaN(date.getTime()) ? null : date;
 };
 
+// Keep unsent text in this open portal session only, never in local storage or
+// exposed to a different approved identity when the window is reopened.
+const rememberedDrafts = new Map<string, { text: string; recipients: TeamChatMember[] }>();
+
 export default function TeamChatPanel({
   messages,
   members,
@@ -68,6 +81,12 @@ export default function TeamChatPanel({
   onClose,
   canMention = true,
   focusedMessageId = null,
+  focusedMessageRequestId = 0,
+  importantSchedules,
+  tabRequest,
+  onTabChange,
+  onOpenSchedule,
+  isAdmin = false,
   notice = null,
   noticeAvailable = false,
   noticeLoading = false,
@@ -80,9 +99,11 @@ export default function TeamChatPanel({
   onRemoveNotice,
   onRefreshNotice,
 }: TeamChatPanelProps) {
-  const [draft, setDraft] = useState('');
-  const [caret, setCaret] = useState(0);
-  const [selectedMembers, setSelectedMembers] = useState<TeamChatMember[]>([]);
+  const draftKey = currentMemberId ? `member:${currentMemberId}` : currentUserId ? `user:${currentUserId}` : '';
+  const [draftScope, setDraftScope] = useState(draftKey);
+  const [draft, setDraft] = useState(() => rememberedDrafts.get(draftKey)?.text ?? '');
+  const [caret, setCaret] = useState(-1);
+  const [selectedMembers, setSelectedMembers] = useState<TeamChatMember[]>(() => rememberedDrafts.get(draftKey)?.recipients ?? []);
   const [activeSuggestion, setActiveSuggestion] = useState(0);
   const [dismissedQuery, setDismissedQuery] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
@@ -91,6 +112,23 @@ export default function TeamChatPanel({
   const [desktopGeometry, setDesktopGeometry] = useState<ChatWindowGeometry | null>(null);
   const [isDesktop, setIsDesktop] = useState(false);
   const [manipulating, setManipulating] = useState<'move' | 'resize' | null>(null);
+  const [tab, setTab] = useState<ShareRoomTab>(tabRequest?.tab ?? 'chat');
+  const [tabVersion, setTabVersion] = useState(tabRequest?.requestId);
+  const [menuMessageId, setMenuMessageId] = useState<number | null>(null);
+  const [unseenMessages, setUnseenMessages] = useState(0);
+  if (tabRequest && tabVersion !== tabRequest.requestId) {
+    setTabVersion(tabRequest.requestId);
+    setTab(tabRequest.tab);
+  }
+  if (draftScope !== draftKey) {
+    setDraftScope(draftKey);
+    setDraft(rememberedDrafts.get(draftKey)?.text ?? '');
+    setSelectedMembers(rememberedDrafts.get(draftKey)?.recipients ?? []);
+    setCaret(-1);
+    setDismissedQuery(null);
+    setError(null);
+    setIsSending(false);
+  }
   const noticeActionScope = `${currentUserId ?? ''}:${currentMemberId ?? ''}:${notice?.id ?? ''}`;
   const [noticeAction, setNoticeAction] = useState<{ scope: string; version: number; request: symbol | null; pending: boolean; error: string }>({ scope: noticeActionScope, version: 0, request: null, pending: false, error: '' });
   // Reset before painting a new identity/notice, not later in an effect. Async
@@ -101,10 +139,14 @@ export default function TeamChatPanel({
   const [noticeSourceFocus, setNoticeSourceFocus] = useState<{ scope: string; version: number; messageId: number } | null>(null);
   const noticeSourceFocusId = noticeSourceFocus?.scope === noticeActionScope && noticeSourceFocus.version === noticeAction.version ? noticeSourceFocus.messageId : null;
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const logRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLElement>(null);
-  const lastFocusedMessageRef = useRef<number | null>(null);
-  const sendingRef = useRef(false);
+  const tabListRef = useRef<HTMLDivElement>(null);
+  const lastFocusedMessageRef = useRef<string | null>(null);
+  const followingRef = useRef(true);
+  const previousMessages = useRef<Set<number> | null>(null);
+  const sendingRef = useRef(new Set<string>());
+  const liveDraftScope = useRef(draftKey);
   const deletingRef = useRef(new Set<number>());
   const noticeActionRef = useRef<{ scope: string; version: number; request: symbol } | null>(null);
   const geometryRef = useRef<ChatWindowGeometry | null>(null);
@@ -117,6 +159,7 @@ export default function TeamChatPanel({
   const queryKey = `${caret}:${draft}`;
   const mentionQuery = canMention && !isSending && dismissedQuery !== queryKey ? getChatMentionQuery(draft, caret) : null;
   const noticeLocked = noticeBusy || noticeActionPending || noticeLoading;
+  const railTabs = isDesktop && (desktopGeometry?.width ?? 0) >= 620;
 
   const availableMembers = useMemo(() => {
     const ids = new Set<string>();
@@ -221,29 +264,78 @@ export default function TeamChatPanel({
   };
 
   useEffect(() => {
-    inputRef.current?.focus();
+    if (tab === 'chat' && focusedMessageId === null) inputRef.current?.focus();
+    else if (tab === 'important') tabListRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus();
+  // On opening the window, focus the requested pane without stealing focus on subsequent tab clicks.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    if (focusedMessageId === null) bottomRef.current?.scrollIntoView?.({ block: 'nearest' });
-  }, [focusedMessageId, messages.length]);
+  useEffect(() => { onTabChange?.(tab); }, [tab, onTabChange]);
 
   useEffect(() => {
-    if (focusedMessageId === null) {
-      lastFocusedMessageRef.current = null;
-      return;
-    }
-    if (lastFocusedMessageRef.current === focusedMessageId) return;
-    const message = panelRef.current?.querySelector<HTMLElement>(`[data-team-message-id="${focusedMessageId}"]`);
-    if (!message) return;
-    message.scrollIntoView?.({ block: 'center' });
-    lastFocusedMessageRef.current = focusedMessageId;
-  }, [focusedMessageId, messages]);
+    liveDraftScope.current = draftKey;
+    return () => { liveDraftScope.current = ''; };
+  }, [draftKey]);
+
+  useEffect(() => {
+    if (tab !== 'chat') return;
+    const frame = requestAnimationFrame(() => {
+      const log = logRef.current;
+      if (!log) return;
+      const ids = new Set(sortedMessages.map((message) => message.id));
+      const previous = previousMessages.current;
+      previousMessages.current = ids;
+      const focusKey = focusedMessageId === null ? null : `${focusedMessageId}:${focusedMessageRequestId}`;
+      if (focusKey !== null && lastFocusedMessageRef.current !== focusKey) {
+        const message = log.querySelector<HTMLElement>(`[data-team-message-id="${focusedMessageId}"]`);
+        if (message) {
+          followingRef.current = false;
+          const offset = message.getBoundingClientRect().top - log.getBoundingClientRect().top;
+          log.scrollTop += offset - Math.max(0, (log.clientHeight - message.offsetHeight) / 2);
+          message.focus({ preventScroll: true });
+          lastFocusedMessageRef.current = focusKey;
+          return;
+        }
+      }
+      if (focusKey === null) lastFocusedMessageRef.current = null;
+      if (followingRef.current) {
+        log.scrollTop = log.scrollHeight;
+        setUnseenMessages(0);
+      } else if (previous) {
+        const newIds = [...ids].filter((id) => !previous.has(id)).length;
+        if (newIds) setUnseenMessages((count) => count + newIds);
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusedMessageId, focusedMessageRequestId, sortedMessages, tab]);
+
+  useEffect(() => {
+    if (menuMessageId === null) return;
+    const closeOutside = (event: globalThis.PointerEvent) => {
+      if (event.target instanceof Element && !event.target.closest('[data-chat-message-menu]')) setMenuMessageId(null);
+    };
+    document.addEventListener('pointerdown', closeOutside);
+    return () => document.removeEventListener('pointerdown', closeOutside);
+  }, [menuMessageId]);
+
+  const jumpToLatest = () => {
+    followingRef.current = true;
+    const log = logRef.current;
+    if (log) log.scrollTop = log.scrollHeight;
+    setUnseenMessages(0);
+  };
+  const storeDraft = (text: string, recipients: TeamChatMember[]) => {
+    if (!draftKey) return;
+    if (text) rememberedDrafts.set(draftKey, { text, recipients });
+    else rememberedDrafts.delete(draftKey);
+  };
 
   const updateDraft = (value: string, nextCaret: number) => {
+    const recipients = selectedMembers.filter((member) => getChatMentionRanges(value, member.handle).length > 0);
     setDraft(value);
     setCaret(nextCaret);
-    setSelectedMembers((previous) => previous.filter((member) => getChatMentionRanges(value, member.handle).length > 0));
+    setSelectedMembers(recipients);
+    storeDraft(value, recipients);
     setActiveSuggestion(0);
     setDismissedQuery(null);
     setError(null);
@@ -257,8 +349,10 @@ export default function TeamChatPanel({
     const nextCaret = mentionQuery.start + token.length;
     setDraft(nextDraft);
     setCaret(nextCaret);
-    setSelectedMembers((previous) => [...previous.filter((item) => item.id !== member.id
-      && getChatMentionRanges(nextDraft, item.handle).length > 0), member]);
+    const recipients = [...selectedMembers.filter((item) => item.id !== member.id
+      && getChatMentionRanges(nextDraft, item.handle).length > 0), member];
+    setSelectedMembers(recipients);
+    storeDraft(nextDraft, recipients);
     setActiveSuggestion(0);
     setError(null);
     requestAnimationFrame(() => {
@@ -268,24 +362,30 @@ export default function TeamChatPanel({
   };
 
   const sendMessage = async () => {
-    if (!draft.trim() || sendingRef.current) return;
+    if (!draft.trim() || sendingRef.current.has(draftKey)) return;
     const content = draft.trim();
     const mentionedIds = canMention ? getSelectedChatMentionIds(content, activeRecipients) : [];
-    sendingRef.current = true;
+    sendingRef.current.add(draftKey);
     setIsSending(true);
     setError(null);
     try {
       await onSend(content, mentionedIds);
-      setDraft('');
-      setCaret(0);
-      setSelectedMembers([]);
-      setDismissedQuery(null);
+      if (rememberedDrafts.get(draftKey)?.text === draft) storeDraft('', []);
+      if (liveDraftScope.current === draftKey) {
+        followingRef.current = true;
+        setDraft('');
+        setCaret(0);
+        setSelectedMembers([]);
+        setDismissedQuery(null);
+      }
     } catch {
-      setError('메시지를 보내지 못했습니다. 작성한 내용은 그대로 보관되어 있습니다. 다시 시도해 주세요.');
+      if (liveDraftScope.current === draftKey) setError('메시지를 보내지 못했습니다. 작성한 내용은 그대로 보관되어 있습니다. 다시 시도해 주세요.');
     } finally {
-      sendingRef.current = false;
-      setIsSending(false);
-      requestAnimationFrame(() => inputRef.current?.focus());
+      sendingRef.current.delete(draftKey);
+      if (liveDraftScope.current === draftKey) {
+        setIsSending(false);
+        requestAnimationFrame(() => inputRef.current?.focus());
+      }
     }
   };
 
@@ -330,6 +430,7 @@ export default function TeamChatPanel({
     if (!notice) return;
     const source = panelRef.current?.querySelector<HTMLElement>(`[data-team-message-id="${notice.message_id}"]`);
     if (!source) return;
+    followingRef.current = false;
     setNoticeSourceFocus({ scope: noticeActionScope, version: noticeAction.version, messageId: notice.message_id });
     source.scrollIntoView?.({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
     source.focus({ preventScroll: true });
@@ -346,7 +447,11 @@ export default function TeamChatPanel({
       onKeyDown={(event) => {
         if (event.key !== 'Escape' || event.nativeEvent.isComposing) return;
         event.stopPropagation();
-        if (mentionQuery) {
+        if (menuMessageId !== null) {
+          event.preventDefault();
+          setMenuMessageId(null);
+          panelRef.current?.querySelector<HTMLButtonElement>(`[data-chat-menu-trigger="${menuMessageId}"]`)?.focus();
+        } else if (tab === 'chat' && mentionQuery) {
           event.preventDefault();
           setDismissedQuery(queryKey);
         } else onClose();
@@ -355,7 +460,7 @@ export default function TeamChatPanel({
       <header data-chat-drag-handle tabIndex={isDesktop ? 0 : undefined} aria-label={isDesktop ? '채팅창 위치 이동' : undefined} title={isDesktop ? '드래그 또는 방향키로 이동' : undefined} onPointerDown={(event) => startManipulation(event, 'move')} onPointerMove={moveManipulation} onPointerUp={endManipulation} onPointerCancel={endManipulation} onLostPointerCapture={endManipulation} onKeyDown={(event) => keyboardManipulation(event, 'move')} className={`flex shrink-0 items-center justify-between gap-3 border-b border-slate-950 bg-slate-900 px-4 py-3.5 text-white outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400 ${isDesktop ? `touch-none ${manipulating === 'move' ? 'cursor-grabbing' : 'cursor-grab'}` : ''}`}>
         <div className="flex min-w-0 items-center gap-3">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-500/20 text-blue-300 ring-1 ring-blue-400/25"><MessageCircle size={19} /></span>
-          <div className="min-w-0"><h2 id={titleId} className="text-sm font-black tracking-tight text-white">정보공유방</h2><p className="mt-1 flex items-center gap-1 text-[10px] font-medium text-slate-300">{isDesktop ? <><Move size={10} aria-hidden="true" />상단을 드래그해 이동</> : '팀의 소식과 이야기를 나눠 보세요'}</p></div>
+          <div className="min-w-0"><h2 id={titleId} aria-label="정보공유방" className="text-[15px] font-extrabold tracking-tight text-white">공유방</h2>{isDesktop && <p className="mt-0.5 flex items-center gap-1 text-[11px] font-medium text-slate-300"><Move size={11} aria-hidden="true" />상단을 드래그해 이동</p>}</div>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           {isDesktop && <button type="button" onClick={resetGeometry} aria-label="채팅창 위치와 크기 초기화" title="기본 위치·크기로 복원" className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-300 transition hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-blue-400"><RotateCcw size={15} /></button>}
@@ -363,10 +468,36 @@ export default function TeamChatPanel({
         </div>
       </header>
 
+      <div className={`flex min-h-0 flex-1 ${railTabs ? 'flex-row' : 'flex-col'}`}>
+      <div ref={tabListRef} role="tablist" aria-label="공유방 메뉴" aria-orientation={railTabs ? 'vertical' : 'horizontal'} data-share-room-rail={railTabs ? 'true' : 'false'} className={`flex shrink-0 gap-1 bg-white ${railTabs ? 'w-[144px] flex-col border-r border-slate-200 px-2.5 py-3' : 'border-b border-slate-200 px-2.5 py-1.5'}`} onKeyDown={(event) => {
+        const direction = railTabs ? ['ArrowUp', 'ArrowDown'] : ['ArrowLeft', 'ArrowRight'];
+        if (![...direction, 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const nextTab: ShareRoomTab = event.key === 'Home' ? 'chat' : event.key === 'End' ? 'important' : tab === 'chat' ? 'important' : 'chat';
+        setMenuMessageId(null);
+        setTab(nextTab);
+        document.getElementById(`${identifier}-tab-${nextTab}`)?.focus();
+      }}>
+        {(['chat', 'important'] as const).map((entry) => {
+          const active = tab === entry;
+          const count = entry === 'important' ? importantSchedules?.unreadCount ?? 0 : 0;
+          return <button key={entry} id={`${identifier}-tab-${entry}`} type="button" role="tab" aria-selected={active} aria-controls={`${identifier}-panel-${entry}`} tabIndex={active ? 0 : -1} onClick={() => { setMenuMessageId(null); setTab(entry); }} className={`flex min-h-10 min-w-0 items-center gap-1.5 rounded-lg px-2.5 text-[13px] font-bold transition-colors focus-visible:outline-2 focus-visible:outline-blue-600 ${railTabs ? 'justify-start' : 'flex-1 justify-center'} ${active ? 'bg-blue-50 text-blue-800' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'}`}>
+            {entry === 'chat' ? <MessageCircle size={16} aria-hidden="true" className="shrink-0" /> : <CalendarDays size={16} aria-hidden="true" className="shrink-0" />}
+            <span className="whitespace-nowrap">{entry === 'chat' ? '정보 공유' : '중요 일정'}</span>
+            {count > 0 && <span aria-label={`안 읽음 ${count}건`} className="rounded-full bg-blue-800 px-1.5 py-0.5 text-[10px] font-bold tabular-nums leading-none text-white">{count}</span>}
+          </button>;
+        })}
+      </div>
+      <div role="tabpanel" id={`${identifier}-panel-chat`} aria-labelledby={`${identifier}-tab-chat`} hidden={tab !== 'chat'} className={`${tab === 'chat' ? 'flex' : 'hidden'} min-h-0 min-w-0 flex-1 flex-col`}>
       {noticeAvailable && notice && <ChatNoticeCard notice={notice} collapsed={noticeCollapsed} hidden={noticeHidden} busy={noticeLocked} canOpenSource={sortedMessages.some((message) => message.id === notice.message_id)} onPreference={(collapsed, hidden) => { if (onNoticePreference) void runNoticeAction(() => onNoticePreference(collapsed, hidden)); }} onOpenSource={openNoticeSource} onRemove={onRemoveNotice ? removeNotice : undefined} />}
       {(noticeError || noticeActionError) && <div role="alert" className="flex max-h-16 shrink-0 items-start justify-between gap-2 overflow-y-auto border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-950"><span className="min-w-0 flex-1 break-words">{noticeActionError || noticeError}</span>{onRefreshNotice && <button type="button" disabled={noticeLocked} onClick={() => { setNoticeAction((current) => current.scope === noticeActionScope ? { ...current, error: '' } : current); onRefreshNotice(); }} className="shrink-0 rounded px-1 font-bold underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-amber-600 disabled:opacity-40">다시 시도</button>}</div>}
 
-      <div role="log" aria-label="정보공유방 메시지" aria-live="polite" aria-relevant="additions" className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-[#e9eff6] px-4 py-5">
+      <div className="relative flex min-h-0 flex-1 flex-col">
+      <div ref={logRef} role="log" aria-label="정보공유방 메시지" aria-live="polite" aria-relevant="additions" onScroll={(event) => {
+        const log = event.currentTarget;
+        followingRef.current = log.scrollHeight - log.scrollTop - log.clientHeight <= 36;
+        if (followingRef.current) setUnseenMessages(0);
+      }} className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-[#e9eff6] px-3.5 py-4">
         {!sortedMessages.length && <div className="flex min-h-36 flex-col items-center justify-center gap-2 text-center"><MessageCircle size={26} className="text-slate-300" /><p className="text-sm font-bold text-slate-500">아직 나눈 이야기가 없어요</p><p className="text-xs text-slate-400">첫 소식을 남겨 보세요.</p></div>}
         {sortedMessages.map((message, index) => {
           const date = messageDate(message.created_at);
@@ -379,28 +510,41 @@ export default function TeamChatPanel({
             : Boolean(currentUserId && message.sender_id === currentUserId);
           const author = message.sender_member_id ? memberById.get(message.sender_member_id) : null;
           const authorName = message.sender_display_name || author?.display_name || (isOwn ? '나' : message.sender_member_id ? '이전 팀원' : '이전 대화 참여자');
+          const previous = sortedMessages[index - 1];
+          const sameAuthor = message.sender_member_id ? previous?.sender_member_id === message.sender_member_id
+            : Boolean(message.sender_id && previous?.sender_id === message.sender_id && !previous?.sender_member_id);
+          const grouped = !showDate && sameAuthor && date !== null && previousDate !== null && date.getTime() - previousDate.getTime() <= 300_000;
+          const showPin = Boolean(noticeAvailable && onPublishNotice);
+          const showDelete = isOwn || isAdmin;
+          const menuOpen = menuMessageId === message.id;
           return (
             <div key={message.id}>
-              {showDate && <div className="mb-5 mt-2 flex items-center justify-center" aria-label={date ? dateLabelFormatter.format(date) : '날짜 정보 없음'}><span className="rounded-full border border-slate-300/60 bg-white/75 px-3 py-1 text-[10px] font-semibold text-slate-600">{date ? dateLabelFormatter.format(date) : '날짜 정보 없음'}</span></div>}
-              <article data-team-message-id={message.id} data-chat-notice-source={notice?.message_id === message.id ? 'true' : undefined} tabIndex={-1} className={`group mb-4 flex min-w-0 gap-2 outline-none ${isOwn ? 'flex-row-reverse' : ''} ${focusedMessageId === message.id || noticeSourceFocusId === message.id ? 'rounded-2xl bg-amber-50/70 ring-2 ring-amber-200 ring-offset-4' : ''}`} aria-label={`${authorName}의 메시지`}>
-                <span aria-hidden="true" className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-xs font-black ${isOwn ? 'bg-blue-100 text-blue-700 ring-1 ring-blue-200' : 'bg-slate-600 text-white ring-1 ring-slate-600'}`}>{authorName.slice(0, 1)}</span>
+              {showDate && <div className="my-3 flex items-center justify-center" aria-label={date ? dateLabelFormatter.format(date) : '날짜 정보 없음'}><span className="rounded-full border border-slate-300/60 bg-white/80 px-3 py-1 text-[11px] font-semibold text-slate-700">{date ? dateLabelFormatter.format(date) : '날짜 정보 없음'}</span></div>}
+              <article data-team-message-id={message.id} data-chat-notice-source={notice?.message_id === message.id ? 'true' : undefined} tabIndex={-1} className={`group flex min-w-0 gap-2 outline-none ${grouped ? 'mb-1.5' : 'mb-3'} ${isOwn ? 'flex-row-reverse' : ''} ${focusedMessageId === message.id || noticeSourceFocusId === message.id ? 'rounded-xl bg-amber-50/70 ring-2 ring-amber-300 ring-offset-2' : ''}`} aria-label={`${authorName}의 메시지`}>
+                <span aria-hidden="true" className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-xs font-black ${grouped ? 'invisible' : ''} ${isOwn ? 'bg-blue-100 text-blue-700 ring-1 ring-blue-200' : 'bg-slate-600 text-white ring-1 ring-slate-600'}`}>{authorName.slice(0, 1)}</span>
                 <div className={`flex min-w-0 max-w-[calc(100%-3rem)] flex-col ${isOwn ? 'items-end' : 'items-start'}`}>
-                  <div className={`mb-1.5 flex max-w-full items-baseline gap-2 ${isOwn ? 'flex-row-reverse' : ''}`}><span className="truncate text-[11px] font-bold text-slate-700">{authorName}</span><time dateTime={date ? date.toISOString() : undefined} className="shrink-0 text-[10px] text-slate-500">{date ? timeFormatter.format(date) : '--:--'}</time>{notice?.message_id === message.id && <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-bold text-amber-900"><Pin size={9} />공지</span>}</div>
-                  <div className={`max-w-full whitespace-pre-wrap break-words rounded-2xl px-3.5 py-3 text-[13px] font-medium leading-relaxed shadow-sm [overflow-wrap:anywhere] ${isOwn ? 'rounded-tr-sm bg-blue-600 text-white shadow-blue-950/10' : 'rounded-tl-sm border border-slate-300/80 bg-white text-slate-900 shadow-slate-900/5'}`}>
+                  {(!grouped || notice?.message_id === message.id) && <div className={`mb-1 flex max-w-full items-baseline gap-2 ${isOwn ? 'flex-row-reverse' : ''}`}>{!grouped && <span className="truncate text-[12px] font-bold text-slate-800">{authorName}</span>}<time dateTime={date ? date.toISOString() : undefined} className="shrink-0 text-[11px] text-slate-600">{date ? timeFormatter.format(date) : '--:--'}</time>{notice?.message_id === message.id && <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-amber-100 px-1 py-0.5 text-[10px] font-bold text-amber-900"><Pin size={10} />공지</span>}</div>}
+                  <div className={`flex min-w-0 max-w-full items-end gap-1 ${isOwn ? 'flex-row-reverse' : ''}`}>
+                  <div className={`min-w-0 whitespace-pre-wrap break-words rounded-xl px-3 py-2 text-sm font-medium leading-relaxed shadow-sm [overflow-wrap:anywhere] ${isOwn ? 'rounded-tr-sm bg-blue-700 text-white shadow-blue-950/10' : 'rounded-tl-sm border border-slate-300/80 bg-white text-slate-900 shadow-slate-900/5'}`}>
                     {getChatTextSegments(message.content, availableMembers, message.mentioned_member_ids ?? []).map((segment, segmentIndex) => segment.memberId
                       ? <span key={segmentIndex} title={memberById.get(segment.memberId)?.display_name} className={`rounded px-0.5 font-bold ${isOwn ? 'bg-white/20 text-white' : 'bg-blue-50 text-blue-700'}`}>{segment.text}</span>
                       : <span key={segmentIndex}>{segment.text}</span>)}
                   </div>
-                  <div className="mt-1 flex min-h-7 flex-wrap items-center gap-2 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100">
-                    {noticeAvailable && onPublishNotice && <button type="button" aria-label={`${authorName}의 메시지 공지로 등록`} disabled={noticeLocked || notice?.message_id === message.id} onClick={() => publishNotice(message.id)} className="inline-flex min-h-7 items-center gap-1 rounded px-1 text-[10px] font-semibold text-slate-600 transition hover:bg-amber-100 hover:text-amber-900 focus-visible:outline-2 focus-visible:outline-amber-600 disabled:opacity-50"><Pin size={11} />{notice?.message_id === message.id ? '공지 중' : '공지로 등록'}</button>}
-                    <button type="button" aria-label={`${authorName}의 메시지 삭제`} disabled={deletingIds.includes(message.id)} onClick={() => void deleteMessage(message.id)} className="flex min-h-7 items-center gap-1 rounded px-1 text-[10px] text-slate-500 transition hover:text-red-500 focus-visible:outline-2 focus-visible:outline-blue-500 disabled:opacity-50">{deletingIds.includes(message.id) ? <LoaderCircle size={11} className="animate-spin" /> : <Trash2 size={11} />}삭제</button>
+                  {(showPin || showDelete) && <div className="relative shrink-0" data-chat-message-menu>
+                    <button type="button" data-chat-menu-trigger={message.id} aria-label={`${authorName}의 메시지 메뉴`} aria-expanded={menuOpen} onClick={() => setMenuMessageId(menuOpen ? null : message.id)} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-600 hover:bg-white/80 hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-blue-600"><Ellipsis size={17} aria-hidden="true" /></button>
+                    {menuOpen && <div className={`absolute bottom-full z-20 mb-1 min-w-[134px] rounded-lg border border-slate-200 bg-white p-1 text-slate-700 shadow-xl ${isOwn ? 'left-0' : 'right-0'}`}>
+                      {showPin && <button type="button" aria-label={`${authorName}의 메시지 공지로 등록`} disabled={noticeLocked || notice?.message_id === message.id} onClick={() => { setMenuMessageId(null); publishNotice(message.id); }} className="flex min-h-9 w-full items-center gap-2 whitespace-nowrap rounded-md px-2.5 text-left text-xs font-bold hover:bg-amber-50 focus-visible:outline-2 focus-visible:outline-amber-600 disabled:opacity-50"><Pin size={13} aria-hidden="true" />{notice?.message_id === message.id ? '공지 중' : '공지로 등록'}</button>}
+                      {showDelete && <button type="button" aria-label={`${authorName}의 메시지 삭제`} disabled={deletingIds.includes(message.id)} onClick={() => { setMenuMessageId(null); void deleteMessage(message.id); }} className="flex min-h-9 w-full items-center gap-2 rounded-md px-2.5 text-left text-xs font-bold text-rose-700 hover:bg-rose-50 focus-visible:outline-2 focus-visible:outline-blue-500 disabled:opacity-50"><Trash2 size={13} aria-hidden="true" />삭제</button>}
+                    </div>}
+                  </div>}
                   </div>
                 </div>
               </article>
             </div>
           );
         })}
-        <div ref={bottomRef} />
+      </div>
+      {unseenMessages > 0 && <button type="button" onClick={jumpToLatest} className="absolute bottom-2 left-1/2 z-10 inline-flex min-h-9 -translate-x-1/2 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border border-blue-200 bg-white px-3 text-xs font-bold text-blue-800 shadow-lg hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-blue-700" aria-label={`새 메시지 ${unseenMessages}건으로 이동`}><ArrowDown size={14} aria-hidden="true" />새 메시지 {unseenMessages}건</button>}
       </div>
 
       <form onSubmit={(event) => { event.preventDefault(); void sendMessage(); }} className="relative shrink-0 border-t border-slate-300 bg-slate-50 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:p-4">
@@ -441,6 +585,11 @@ export default function TeamChatPanel({
         </div>
         <p id={hintId} className="mt-2 px-1 text-[10px] leading-relaxed text-slate-500 md:pr-5">{canMention ? '@ 입력 후 목록에서 선택한 팀원에게만 알림 · ' : '팀원 연결 후 @멘션 사용 가능 · '}Enter 전송 / Shift+Enter 줄바꿈</p>
       </form>
+      </div>
+      <div role="tabpanel" id={`${identifier}-panel-important`} aria-labelledby={`${identifier}-tab-important`} hidden={tab !== 'important'} className={`${tab === 'important' ? 'flex' : 'hidden'} min-h-0 min-w-0 flex-1 flex-col`}>
+        {tab === 'important' && <ImportantScheduleFeed feed={importantSchedules} onOpenSchedule={onOpenSchedule} />}
+      </div>
+      </div>
       {isDesktop && <button type="button" data-chat-resize-handle aria-label="채팅창 크기 조절" title="드래그 또는 방향키로 크기 조절" onPointerDown={(event) => startManipulation(event, 'resize')} onPointerMove={moveManipulation} onPointerUp={endManipulation} onPointerCancel={endManipulation} onLostPointerCapture={endManipulation} onKeyDown={(event) => keyboardManipulation(event, 'resize')} className="absolute bottom-0 right-0 z-10 flex h-7 w-7 touch-none cursor-nwse-resize items-center justify-center rounded-tl-xl bg-slate-200/90 text-slate-500 hover:bg-blue-100 hover:text-blue-600 focus-visible:outline-2 focus-visible:outline-offset-[-3px] focus-visible:outline-blue-500"><Grip size={15} aria-hidden="true" /></button>}
     </section>
   );

@@ -6,7 +6,7 @@ import { Bell, CalendarDays, Check, CheckCheck, LoaderCircle, MessageCircle, Ref
 
 export interface PortalNotification {
   id: string;
-  kind: 'schedule_attendee' | 'chat_mention';
+  kind: 'schedule_attendee' | 'chat_mention' | 'important_schedule';
   source_id: string;
   title: string;
   body?: string | null;
@@ -177,11 +177,11 @@ export default function PortalNotifications({
           {loading && <p role="status" className="flex items-center justify-center gap-2 px-4 py-4 text-xs text-slate-500"><LoaderCircle size={14} aria-hidden="true" className="animate-spin motion-reduce:animate-none" />알림을 불러오는 중입니다.</p>}
           {items.length > 0 ? <ul aria-label="받은 개인 알림" aria-busy={loading} className="divide-y divide-slate-100">{items.map((item) => {
             const unread = !item.read_at;
-            const isSchedule = item.kind === 'schedule_attendee';
+            const isSchedule = item.kind !== 'chat_mention';
             return <li key={item.id} className={`flex items-start gap-1 px-2 py-1 ${unread ? 'bg-blue-50/60' : ''}`}>
               <button type="button" onClick={() => { changeOpen(false); onSelect(item); }} className={`flex min-h-16 min-w-0 flex-1 items-start gap-2 rounded-xl px-2 py-3 text-left hover:bg-slate-100/80 ${focusClass}`}>
                 <span className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${unread ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-400'}`}>{isSchedule ? <CalendarDays size={14} aria-hidden="true" /> : <MessageCircle size={14} aria-hidden="true" />}</span>
-                <span className="min-w-0 flex-1"><span className="mb-1 block text-[10px] font-semibold text-slate-500">{isSchedule ? '일정 참석' : '대화에서 나를 언급'}{unread && <span className="ml-1.5 text-blue-600">· 안 읽음</span>}</span><span className="block break-words text-xs font-bold leading-relaxed text-slate-800 [overflow-wrap:anywhere]">{item.title || (isSchedule ? '참석 일정' : '새로운 언급')}</span>{item.body && <span className="mt-0.5 line-clamp-2 block break-words text-xs leading-relaxed text-slate-500 [overflow-wrap:anywhere]">{item.body}</span>}<time dateTime={item.updated_at ?? item.created_at} className="mt-1 block text-[10px] text-slate-400">{formatTimestamp(item.updated_at ?? item.created_at)}</time></span>
+                <span className="min-w-0 flex-1"><span className="mb-1 block text-[10px] font-semibold text-slate-500">{item.kind === 'important_schedule' ? '중요 일정' : isSchedule ? '일정 참석' : '대화에서 나를 언급'}{unread && <span className="ml-1.5 text-blue-600">· 안 읽음</span>}</span><span className="block break-words text-xs font-bold leading-relaxed text-slate-800 [overflow-wrap:anywhere]">{item.title || (isSchedule ? '참석 일정' : '새로운 언급')}</span>{item.body && <span className="mt-0.5 line-clamp-2 block break-words text-xs leading-relaxed text-slate-500 [overflow-wrap:anywhere]">{item.body}</span>}<time dateTime={item.updated_at ?? item.created_at} className="mt-1 block text-[10px] text-slate-400">{formatTimestamp(item.updated_at ?? item.created_at)}</time></span>
               </button>
               {unread && <button type="button" disabled={busy(item.id)} aria-label={`${item.title || '알림'} 읽음으로 표시`} title="읽음으로 표시" onClick={() => void markRead(item.id)} className={`mt-3 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-blue-100 hover:text-blue-700 disabled:cursor-wait disabled:opacity-40 ${focusClass}`}>{busy(item.id) ? <LoaderCircle size={14} aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <Check size={15} aria-hidden="true" />}</button>}
             </li>;

@@ -1,13 +1,16 @@
 'use client';
 
 import { useEffect, useId, useState } from 'react';
-import { Download, FileText, LoaderCircle, X } from 'lucide-react';
+import { ArrowUpRight, CalendarDays, Download, FileText, LoaderCircle, X } from 'lucide-react';
 import { type DocumentFile, formatDocumentSize, getDocumentPreviewKind, useDocumentDialog } from './document-library';
+import { downloadDocumentBlob } from '@/lib/document-access';
 
 interface DocumentPreviewModalProps {
   file: DocumentFile | null;
   onClose: () => void;
   onDownload: (file: DocumentFile) => void;
+  relatedSchedules?: readonly { id: number; date: string; title: string }[];
+  onOpenSchedule?: (id: number) => void;
 }
 
 const MAX_PREVIEW_BYTES = 50 * 1024 * 1024;
@@ -35,12 +38,7 @@ function PreviewContent({ file, onDownload }: Pick<DocumentPreviewModalProps, 'o
     const load = async () => {
       try {
         if (file.size && file.size > MAX_PREVIEW_BYTES) throw new Error('50 MB보다 큰 문서는 다운로드하여 확인해 주세요.');
-        const response = await fetch(file.url, { signal: controller.signal, credentials: 'omit', referrerPolicy: 'no-referrer', redirect: 'error' });
-        if (!response.ok) throw new Error(`문서를 불러오지 못했습니다. (HTTP ${response.status})`);
-        const advertisedSize = Number(response.headers.get('content-length'));
-        if (advertisedSize > MAX_PREVIEW_BYTES) throw new Error('50 MB보다 큰 문서는 다운로드하여 확인해 주세요.');
-        const blob = await response.blob();
-        if (blob.size > MAX_PREVIEW_BYTES) throw new Error('50 MB보다 큰 문서는 다운로드하여 확인해 주세요.');
+        const blob = await downloadDocumentBlob(file.url, controller.signal, MAX_PREVIEW_BYTES);
         const bytes = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
         const mime = getVerifiedDocumentMime(bytes, file.name.split('.').pop()?.toLowerCase() ?? '');
         if (!mime) throw new Error('문서 형식을 확인할 수 없어 미리보기를 열지 않았습니다. 다운로드하여 확인해 주세요.');
@@ -68,9 +66,10 @@ function PreviewContent({ file, onDownload }: Pick<DocumentPreviewModalProps, 'o
   return <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-slate-100 p-3 sm:p-5"><img src={source} alt={file.name} onError={() => setError('이미지를 표시하지 못했습니다. 다운로드하여 확인해 주세요.')} className="max-h-full max-w-full rounded-lg object-contain shadow-sm" /></div>;
 }
 
-function PreviewDialog({ file, onClose, onDownload }: Omit<DocumentPreviewModalProps, 'file'> & { file: DocumentFile }) {
+function PreviewDialog({ file, onClose, onDownload, relatedSchedules, onOpenSchedule }: Omit<DocumentPreviewModalProps, 'file'> & { file: DocumentFile }) {
   const dialog = useDocumentDialog(onClose);
   const id = useId();
+  const [showRelated, setShowRelated] = useState(false);
   return (
     <div className="fixed inset-0 z-[310] flex items-center justify-center bg-slate-950/70 p-2 backdrop-blur-sm sm:p-5" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} className="flex h-[88dvh] max-h-[1000px] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl outline-none sm:rounded-3xl">
@@ -79,11 +78,20 @@ function PreviewDialog({ file, onClose, onDownload }: Omit<DocumentPreviewModalP
           <div className="flex shrink-0 items-center gap-2"><button type="button" onClick={() => onDownload(file)} aria-label={`${file.name} 다운로드`} className="inline-flex items-center gap-2 rounded-xl bg-blue-50 p-2.5 text-xs font-bold text-blue-600 hover:bg-blue-100"><Download size={17} /><span className="hidden sm:inline">다운로드</span></button><button type="button" onClick={onClose} aria-label="미리보기 닫기" className="rounded-xl bg-slate-100 p-2.5 text-slate-600 hover:bg-slate-200"><X size={18} /></button></div>
         </header>
         <PreviewContent key={`${file.id}:${file.url}:${file.name}:${file.size}`} file={file} onDownload={onDownload} />
+        {relatedSchedules && relatedSchedules.length > 0 && onOpenSchedule && <footer className="shrink-0 border-t border-slate-200 bg-white px-4 py-2 sm:px-6">
+          <button type="button" aria-expanded={showRelated} aria-controls={`${id}-schedules`} onClick={() => setShowRelated(!showRelated)} className="flex min-h-10 w-full items-center gap-2 rounded-lg text-left text-sm font-bold text-blue-800 hover:text-blue-600 focus-visible:ring-2 focus-visible:ring-blue-500">
+            <CalendarDays size={17} aria-hidden="true" /> 연결된 일정 <span className="rounded-md bg-blue-50 px-1.5 text-xs text-blue-800">{relatedSchedules.length}건</span>
+            <span className="ml-auto text-xs text-slate-600">{showRelated ? '접기' : '보기'}</span>
+          </button>
+          {showRelated && <ul id={`${id}-schedules`} className="max-h-32 space-y-1 overflow-auto pb-1">
+            {relatedSchedules.map((schedule) => <li key={schedule.id}><button type="button" onClick={() => onOpenSchedule(schedule.id)} className="flex min-h-10 w-full items-center gap-2 rounded-lg bg-slate-50 px-3 py-1.5 text-left text-sm font-semibold text-slate-900 hover:bg-blue-50"><span className="min-w-0 flex-1 break-words">{schedule.title}</span><time className="shrink-0 text-xs text-slate-600">{schedule.date}</time><ArrowUpRight size={14} aria-hidden="true" /></button></li>)}
+          </ul>}
+        </footer>}
       </section>
     </div>
   );
 }
 
-export default function DocumentPreviewModal({ file, onClose, onDownload }: DocumentPreviewModalProps) {
-  return file ? <PreviewDialog key={file.id} file={file} onClose={onClose} onDownload={onDownload} /> : null;
+export default function DocumentPreviewModal({ file, ...props }: DocumentPreviewModalProps) {
+  return file ? <PreviewDialog key={file.id} file={file} {...props} /> : null;
 }

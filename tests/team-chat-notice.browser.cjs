@@ -51,6 +51,7 @@ const refresh = (page) => page.evaluate(() => window.dispatchEvent(new Event('fo
       if (url.pathname.endsWith('/get_my_team_member')) return reply(state.currentMember);
       if (url.pathname.endsWith('/team_responsibility_available')) return reply(false);
       if (url.pathname.endsWith('/list_my_team_notifications')) return reply([]);
+      if (url.pathname.endsWith('/list_important_schedules')) return reply([]);
       if (url.pathname.endsWith('/get_team_chat_notice_state')) {
         state.reads += 1;
         if (!state.capable) return reply({ code: 'PGRST202', message: 'Notice capability not installed' }, 404);
@@ -124,6 +125,11 @@ const refresh = (page) => page.evaluate(() => window.dispatchEvent(new Event('fo
   const stateIs = async (panel, value) => {
     await panel.locator(`[data-chat-notice][data-chat-notice-state="${value}"]`).waitFor();
   };
+  const openMessageMenu = async (panel, id) => {
+    const trigger = panel.locator(`[data-chat-menu-trigger="${id}"]`);
+    await trigger.waitFor();
+    if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click();
+  };
   const capture = async (page, name) => {
     const destination = path.join(os.tmpdir(), `my-portal-chat-notice-${name}.png`);
     const style = await page.addStyleTag({ content: 'nextjs-portal { display: none !important; }' });
@@ -133,6 +139,7 @@ const refresh = (page) => page.evaluate(() => window.dispatchEvent(new Event('fo
   try {
     const first = await createPage(); currentPage = first.page;
     const { page, state, panel } = first;
+    await openMessageMenu(panel, 1);
     await panel.locator('[data-team-message-id="1"]').getByRole('button', { name: '김공지의 메시지 공지로 등록', exact: true }).waitFor();
     assert.equal(await card(panel).count(), 0, 'a room without a shared notice has no fixed notice area');
     await panel.locator('[data-team-message-id="1"]').getByRole('button', { name: '김공지의 메시지 공지로 등록', exact: true }).click();
@@ -176,9 +183,11 @@ const refresh = (page) => page.evaluate(() => window.dispatchEvent(new Event('fo
 
     const previousNoticeId = backend.notice.id, publishCount = state.publishes.length;
     state.confirmAnswers.push(false);
+    await openMessageMenu(panel, 2);
     await panel.locator('[data-team-message-id="2"]').getByRole('button', { name: '이확인의 메시지 공지로 등록', exact: true }).click();
     assert.equal(state.publishes.length, publishCount, 'cancelling room-wide replacement performs no mutation');
     assert.equal(backend.notice.id, previousNoticeId);
+    await openMessageMenu(panel, 2);
     await panel.locator('[data-team-message-id="2"]').getByRole('button', { name: '이확인의 메시지 공지로 등록', exact: true }).click();
     await stateIs(panel, 'expanded');
     await card(panel).getByText('월간 보고서 제출 안내', { exact: true }).waitFor();
@@ -245,6 +254,7 @@ const refresh = (page) => page.evaluate(() => window.dispatchEvent(new Event('fo
     await stateIs(panel, 'expanded');
 
     // A long expanded notice may scroll internally, not push the composer outside a small chat.
+    await openMessageMenu(panel, 3);
     await panel.locator('[data-team-message-id="3"]').getByRole('button', { name: '김공지의 메시지 공지로 등록', exact: true }).click();
     await stateIs(panel, 'expanded');
     assert.equal(await card(panel).locator('img,script').count(), 0, 'notice body must stay safe React text');
@@ -280,6 +290,7 @@ const refresh = (page) => page.evaluate(() => window.dispatchEvent(new Event('fo
     backend.messages = backend.messages.filter((message) => message.id !== 3);
     await refresh(page); await waitTurn(page);
     await card(panel).waitFor({ state: 'detached' });
+    await openMessageMenu(panel, 1);
     await panel.locator('[data-team-message-id="1"]').getByRole('button', { name: '김공지의 메시지 공지로 등록', exact: true }).click();
     await stateIs(panel, 'expanded');
     state.confirmAnswers.push(false);

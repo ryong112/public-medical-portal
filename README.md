@@ -171,4 +171,12 @@ node tests/whiteboard-import.browser.cjs
 node tests/whiteboard-attendees.browser.cjs
 node tests/absence-team.browser.cjs
 node tests/admin-participants.browser.cjs
+node tests/portal-workspace-preview.browser.cjs
+node tests/schedule-form-layout.browser.cjs
 ```
+
+### 공유방·문서 접근 개편 (2026-11-25)
+
+- 공유방 안에서 `정보 공유`와 `중요 일정`을 오갑니다. 중요 일정은 일정 상세에서 담당자 또는 관리자가 공유해야 올라오며, 문서와 일정은 원본 ID로 연결합니다.
+- 홈의 `내 일정만`은 개인 일정·할 일을 좁혀 보여줍니다. 팀 공지와 부재 현황은 그대로 유지합니다.
+- 운영 반영에는 `20261125090000_private_portal_documents_ocr.sql`, `20261125093000_important_schedule_sharing.sql`, 사진 분석 함수와 앱 배포가 필요합니다. 파일 버킷의 실제 공개 상태는 배포 작업에서 별도로 확인하고 전환합니다. [문서·사진 분석 배포 점검](supabase/PRIVATE_PORTAL_RELEASE.md)을 먼저 확인하세요.
