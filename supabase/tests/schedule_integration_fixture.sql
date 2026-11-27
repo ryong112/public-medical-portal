@@ -8,8 +8,8 @@ create table public.schedules (
   title text not null,
   date date not null,
   end_date date,
-  start_time time,
-  end_time time,
+  start_time text,
+  end_time text,
   location text,
   schedule_type text,
   recurrence_status text default 'active',
@@ -69,6 +69,14 @@ begin
   if result->>'status' <> 'existing' or result->>'id' <> created_id then raise exception 'semantic duplicate failed: %', result; end if;
   result := public.integration_create_schedule('gcal:event-03','수리센터 지도점검 (오후)',i,p_start_time=>time '13:00');
   if result->>'status' <> 'possible_duplicate' or result->>'id' <> created_id then raise exception 'possible duplicate failed: %', result; end if;
+  result := public.integration_create_schedule('gcal:timed-01','시간 지정 일정',i,p_start_time=>time '13:05',p_end_time=>time '14:10');
+  if result->>'status' <> 'created' then raise exception 'timed insert failed: %', result; end if;
+  result := public.integration_create_schedule('gcal:timed-02','시간 지정 일정',i,p_start_time=>time '13:05',p_end_time=>time '14:10');
+  if result->>'status' <> 'existing' then raise exception 'text-time duplicate failed: %', result; end if;
+  begin
+    perform public.integration_create_schedule('gcal:timed-03','초를 허용하지 않음',i,p_start_time=>time '13:05:01');
+    raise exception 'seconds should fail';
+  exception when invalid_parameter_value then null; end;
   begin
     perform public.integration_create_schedule('gcal:event-01','명칭이 바뀐 일정',i);
     raise exception 'same key collision should fail';
@@ -110,8 +118,10 @@ declare
   result jsonb;
 begin
   result := public.integration_list_schedules(i,i);
-  if jsonb_array_length(result) <> 1 or result->0->>'title' <> '수리센터 지도점검 (오후)'
-     or result->0->>'start_time' is not null or result->0->>'end_time' is not null or result->0 ? 'location' then
+  if jsonb_array_length(result) <> 2 or result->0->>'title' <> '시간 지정 일정'
+     or result->0->>'start_time' <> '13:05' or result->0->>'end_time' <> '14:10'
+     or result->1->>'title' <> '수리센터 지도점검 (오후)' or result->1->>'start_time' is not null
+     or result->1->>'end_time' is not null or result->0 ? 'location' or result->1 ? 'location' then
     raise exception 'wrong or overexposed list: %',result;
   end if;
   begin
