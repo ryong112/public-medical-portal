@@ -91,6 +91,9 @@ declare
   clean_location text := nullif(btrim(p_location), '');
   today_kst date := (now() at time zone 'Asia/Seoul')::date;
   normalized_end_date date := nullif(p_end_date, p_date);
+  -- The production schedules table stores wall times as TEXT, using HH:MM.
+  clean_start text := left(p_start_time::text, 5);
+  clean_end text := left(p_end_time::text, 5);
   fingerprint bytea;
   previous public.schedule_integration_requests%rowtype;
   candidate public.schedules%rowtype;
@@ -106,6 +109,7 @@ begin
      or (p_end_date is not null and (not isfinite(p_end_date) or p_end_date < p_date))
      or p_kind is null or p_kind not in ('unclassified', 'internal', 'meeting', 'business_trip')
      or p_start_time = time '24:00' or p_end_time = time '24:00'
+     or extract(second from p_start_time) <> 0 or extract(second from p_end_time) <> 0
      or (p_end_time is not null and (p_start_time is null or (normalized_end_date is null and p_end_time <= p_start_time))) then
     raise exception 'Invalid calendar entry' using errcode = '22023';
   end if;
@@ -113,7 +117,7 @@ begin
     raise exception 'Calendar entry lasts too many days' using errcode = '22023';
   end if;
   fingerprint := sha256(convert_to(jsonb_build_array(
-    clean_title, p_date, normalized_end_date, p_start_time, p_end_time, clean_location, p_kind
+    clean_title, p_date, normalized_end_date, clean_start, clean_end, clean_location, p_kind
   )::text, 'UTF8'));
   -- Scope serialized writes to this low-volume integration, not human actions.
   perform pg_advisory_xact_lock(140781002, 1);
@@ -138,8 +142,8 @@ begin
   order by id limit 1;
   if found then
     if nullif(candidate.end_date, p_date) is distinct from normalized_end_date
-       or candidate.start_time is distinct from p_start_time
-       or candidate.end_time is distinct from p_end_time
+       or nullif(regexp_replace(btrim(candidate.start_time), '^([0-9]{2}:[0-9]{2}):00$', '\1'), '') is distinct from clean_start
+       or nullif(regexp_replace(btrim(candidate.end_time), '^([0-9]{2}:[0-9]{2}):00$', '\1'), '') is distinct from clean_end
        or nullif(btrim(candidate.location), '') is distinct from clean_location then
       return jsonb_build_object('status', 'possible_duplicate', 'id', candidate.id);
     end if;
@@ -152,7 +156,7 @@ begin
     (title, date, end_date, start_time, end_time, location, schedule_type, is_notice, is_todo,
      is_urgent, is_completed)
   values
-    (clean_title, p_date, normalized_end_date, p_start_time, p_end_time, clean_location, p_kind,
+    (clean_title, p_date, normalized_end_date, clean_start, clean_end, clean_location, p_kind,
      false, false, false, false)
   returning id into new_id;
   insert into public.schedule_integration_requests(request_key, payload_digest, schedule_id)
